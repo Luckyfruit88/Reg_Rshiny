@@ -271,6 +271,8 @@ single_bam_server <- function(id, bundle, is_active = reactive(TRUE)) {
             lty = if (j$target_class[[i]] == "near") 2 else 1)
       text(mean(range(x)), height + .035, labels = paste0(j$score[[i]], " ", j$strand[[i]]), cex = .8)
     }
+    mtext("Labels: reads per junction. Arc height = 0.2 + 0.75 x reads / largest arc shown, so heights change with the display window.",
+          side = 3, line = .2, cex = .72)
   })
   output$junction_table <- DT::renderDT({
     j <- junction_rows()
