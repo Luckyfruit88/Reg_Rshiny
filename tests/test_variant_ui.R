@@ -57,7 +57,8 @@ await_task <- function(task, session) {
 stopifnot(inherits(variant_ui("test"), "shiny.tag"))
 # The depth display toggle defaults to raw depth.
 depth_toggle <- as.character(variant_ui("test"))
-stopifnot(grepl('id="test-depth_scale"', depth_toggle, fixed = TRUE),
+stopifnot(grepl('id="test-depth_scale"', depth_toggle, fixed = TRUE), grepl('value="relative"', depth_toggle, fixed = TRUE),
+          grepl('id="test-depth_reference"', depth_toggle, fixed = TRUE),
           grepl('value="raw" checked', depth_toggle, fixed = TRUE), !grepl('value="normalized" checked', depth_toggle, fixed = TRUE))
 # Normalized depth plot: values from the table, NA kept as NA, one shared axis.
 nd_fixture <- list(variant = data.frame(chrom = "c", pos1 = 12L), bin_ratio = list(disabled = TRUE),
@@ -474,7 +475,17 @@ shiny::testServer(variant_server,
     stopifnot(isolate(depth_scale()) == "normalized", nzchar(output$depth_plot$src),
               identical(isolate(result()$depth), raw_depth),
               attr(isolate(normalized_depth()), "method") %in% c("per_sample", "group_ratio"))
-    session$setInputs(depth_scale = "raw")
+    # Relative: a user region inside the interval; the plot shades it and draws the 1-line.
+    cfg_now <- isolate(launched_config())
+    session$setInputs(depth_scale = "relative", depth_reference = paste0(cfg_now$start1, "-", cfg_now$start1 + 10L))
+    rel <- isolate(depth_display())
+    stopifnot(attr(rel, "method") == "relative", identical(attr(rel, "reference")$start1, as.integer(cfg_now$start1)),
+              nzchar(output$depth_plot$src))
+    session$setInputs(depth_reference = "1-2")
+    stopifnot(grepl("inside the analysis interval", attr(isolate(depth_display()), "note"), fixed = TRUE),
+              all(is.na(isolate(depth_display())$normalized_depth)))
+    session$setInputs(depth_scale = "raw", depth_reference = "")
+    stopifnot(is.null(isolate(depth_display())))
     a <- isolate(bin_ratio_association())
     stopifnot(nrow(a) == 1L, a$status == "TOO_FEW_SAMPLES", a$ratio_mean_all_dosage1 == 0.9,
               a$bin_check == "EXON_SHORTER_THAN_BIN")

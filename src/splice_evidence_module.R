@@ -162,7 +162,8 @@ plot_splice_coverage <- function(model, annotation = NULL, normalized = NULL) {
   graphics::title(main = "RNA coverage at base resolution · saved genotype groups", line = if (is.null(normalized)) NA else 2.9)
   exon <- splice_exon_regions(annotation, w)
   graphics::mtext(paste0("One shared height scale: 0-", format(signif(ymax, 3), trim = TRUE),
-    if (is.null(normalized)) " mean RNA depth" else " mean depth per 1,000 interval reads",
+    if (is.null(normalized)) " mean RNA depth" else paste0(" ", tolower(if (is.null(attr(normalized, "label")))
+      "Mean depth per 1,000 interval reads" else attr(normalized, "label"))),
     " · each tile is one genomic base",
     if (nrow(exon)) paste0(" · gray: exon in ", attr(exon, "source")) else ""), side = 3, line = .5, cex = .8)
   if (!is.null(normalized)) graphics::mtext(attr(normalized, "note"), side = 3, line = 1.4, cex = .72)
@@ -309,8 +310,9 @@ splice_evidence_server <- function(id, result, reference, model_source,
                                    annotation_resources = NULL, annotation_source = NULL,
                                    depth_scale = NULL, normalized_depth = NULL) {
   shiny::moduleServer(id, function(input, output, session) {
-    # Display-only depth scale from the parent view; NULL keeps raw depth.
-    coverage_scale <- shiny::reactive(if (!is.null(depth_scale) && identical(depth_scale(), "normalized") &&
+    # Display-only depth scale from the parent view (per interval reads or
+    # relative to a reference region); NULL keeps raw depth.
+    coverage_scale <- shiny::reactive(if (!is.null(depth_scale) && !identical(depth_scale(), "raw") &&
                                           !is.null(normalized_depth)) normalized_depth() else NULL)
     compact_result <- shiny::reactive({
       r <- result()

@@ -666,16 +666,18 @@ variant_bin_ratio_samples <- function(result) {
 
 # Display-only depth normalized by interval reads (the Model 1 denominator):
 # mean over a group's successful samples of depth / retained_reads x per.
-# per_sample: computed so when every successful sample of the group kept its
-# per-position depth (preview results). group_ratio: full-cohort results keep
-# only group means, so the group mean depth is divided by the group's mean
-# retained_reads (a ratio of means, not a mean of ratios). Groups without
-# successful samples stay NA; samples with no retained reads have no defined
-# value and are left out of the per-sample mean. result$depth is not changed.
-variant_normalized_depth <- function(result, per = 1000) {
+# per_sample: exact, from per-position depth kept in the result (preview) or,
+# for full-cohort jobs, from the job's verified checkpoints (checkpoint_sums,
+# see variant_checkpoint_depth_sums()). group_ratio: neither is available, so
+# the group mean depth is divided by the group's mean retained_reads (a ratio
+# of means, not a mean of ratios). Groups without successful samples stay NA;
+# samples with no retained reads have no defined value and are left out of the
+# per-sample mean. result$depth is not changed.
+variant_normalized_depth <- function(result, per = 1000, checkpoint_sums = NULL) {
   d <- result$depth
   out <- data.frame(genotype = d$genotype, pos1 = d$pos1, normalized_depth = NA_real_, stringsAsFactors = FALSE)
   attr(out, "method") <- "none"; attr(out, "per") <- per
+  attr(out, "label") <- paste0("Mean depth per ", format(per, big.mark = ","), " interval reads")
   attr(out, "note") <- variant_normalized_depth_note("none", per)
   s <- result$samples
   if (!nrow(d) || !is.data.frame(s) || !"retained_reads" %in% names(s)) return(out)
@@ -695,6 +697,10 @@ variant_normalized_depth <- function(result, per = 1000) {
       if (any(usable)) out$normalized_depth[rows] <- Reduce(`+`, Map(function(z, n) z$depth * per / n,
         per_sample[usable], reads[usable])) / sum(usable)
       methods <- c(methods, "per_sample")
+    } else if (!is.null(checkpoint_sums) && g %in% names(checkpoint_sums$sum) && identical(checkpoint_sums$per, per)) {
+      n <- checkpoint_sums$usable[[g]]
+      if (n > 0) out$normalized_depth[rows] <- checkpoint_sums$sum[[g]] / n
+      methods <- c(methods, "checkpoint")
     } else {
       m <- mean(reads)
       if (is.finite(m) && m > 0) out$normalized_depth[rows] <- d$mean_depth[rows] * per / m
@@ -702,7 +708,7 @@ variant_normalized_depth <- function(result, per = 1000) {
     }
   }
   attr(out, "method") <- if (!length(methods)) "none" else if (all(methods == "per_sample")) "per_sample" else
-    if (all(methods == "group_ratio")) "group_ratio" else "mixed"
+    if (all(methods == "checkpoint")) "checkpoint" else if (all(methods == "group_ratio")) "group_ratio" else "mixed"
   attr(out, "note") <- variant_normalized_depth_note(attr(out, "method"), per)
   out
 }
@@ -712,10 +718,112 @@ variant_normalized_depth_note <- function(method, per = 1000) {
   per <- format(per, big.mark = ",")
   switch(method,
     per_sample = paste0("Depth / sample's interval reads x ", per, ", averaged over successful samples"),
+    checkpoint = paste0("Depth / sample's interval reads x ", per, ", averaged over successful samples (per-sample depth from the job's verified checkpoints)"),
     group_ratio = paste0("Approximation: group mean depth / group mean interval reads x ", per,
-                         " (ratio of means; per-sample depth was not saved)"),
-    mixed = paste0("Per-sample mean of depth / interval reads x ", per, " where per-sample depth was saved; otherwise ratio of group means"),
+                         " (ratio of means; per-sample depth unavailable)"),
+    mixed = paste0("Per-sample mean of depth / interval reads x ", per, " where per-sample depth was available; otherwise ratio of group means"),
     "No successful samples to normalize")
+}
+
+# Exact per-sample normalization for a full-cohort job, whose result keeps only
+# group means: streams the job's per-sample checkpoints and sums, per genotype,
+# depth / retained_reads x per (no per-sample matrix is held). Each checkpoint
+# must pass the job's own checks (run fingerprint, sample key, checksum,
+# SUCCESS, interval length, retained_reads equal to the result), and the summed
+# raw depth must reproduce the saved group means; otherwise this stops and the
+# caller falls back to the ratio-of-means approximation. Read only.
+variant_checkpoint_depth_sums <- function(job_dir, result, per = 1000) {
+  dir <- file.path(job_dir, "checkpoints")
+  run <- tryCatch(suppressWarnings(readRDS(file.path(dir, "run.rds"))), error = function(e) NULL)
+  if (is.null(run) || !identical(run$fingerprint, variant_hash_object(run$binding)))
+    stop("The job's checkpoint fingerprint is missing or does not match.")
+  d <- result$depth; s <- result$samples
+  need <- c("vcf_sample", "bam", "genotype", "raw_gt", "status", "retained_reads")
+  if (!all(need %in% names(s))) stop("Per-sample accounting lacks the fields that identify checkpoints.")
+  ok <- which(s$status == "SUCCESS")
+  groups <- unique(as.character(d$genotype))
+  n_pos <- sum(d$genotype == groups[[1L]])
+  sums <- raw <- stats::setNames(lapply(groups, function(g) numeric(n_pos)), groups)
+  usable <- analysed <- stats::setNames(as.list(integer(length(groups))), groups)
+  for (i in ok) {
+    g <- as.character(s$genotype[[i]])
+    if (!g %in% groups) stop("A successful sample's genotype has no depth row.")
+    key <- variant_hash_object(list(sample = s$vcf_sample[[i]], bam = s$bam[[i]], genotype = s$genotype[[i]], raw_gt = s$raw_gt[[i]]))
+    saved <- tryCatch(suppressWarnings(readRDS(file.path(dir, paste0("sample_", key, ".rds")))), error = function(e) NULL)
+    z <- saved$contribution
+    if (is.null(saved) || !identical(saved$fingerprint, run$fingerprint) || !identical(saved$sample_key, key) ||
+        !identical(saved$checksum, variant_hash_object(z)) || !identical(z$status, "SUCCESS") ||
+        length(z$depth) != n_pos || !identical(as.numeric(z$audit$retained_reads), as.numeric(s$retained_reads[[i]])))
+      stop("A checkpoint is missing or does not match the saved result.")
+    raw[[g]] <- raw[[g]] + z$depth; analysed[[g]] <- analysed[[g]] + 1L
+    n <- as.numeric(s$retained_reads[[i]])
+    if (is.finite(n) && n > 0) { sums[[g]] <- sums[[g]] + z$depth * per / n; usable[[g]] <- usable[[g]] + 1L }
+  }
+  for (g in groups) {
+    saved_mean <- d$mean_depth[d$genotype == g]
+    if (analysed[[g]] == 0L) { if (any(is.finite(saved_mean))) stop("Checkpoint coverage differs from the saved result."); next }
+    if (!isTRUE(all.equal(raw[[g]] / analysed[[g]], saved_mean, tolerance = 1e-9)))
+      stop("Checkpoint depth does not reproduce the saved group means.")
+  }
+  keep <- vapply(groups, function(g) analysed[[g]] > 0L, logical(1))
+  list(sum = sums[keep], usable = usable[keep], per = per)
+}
+
+# Reference region for relative depth: the GENCODE exon nearest the variant
+# that lies fully inside the analysis interval, at least `exclude` bp from the
+# variant (so the variant's own effect is not the reference). Exons of GENCODE
+# basic transcripts are used when tags exist. Returns NULL when none qualifies.
+variant_reference_exon <- function(annotation, chrom, start1, end1, pos1, exclude = 50L) {
+  e <- annotation$exons
+  if (!is.data.frame(e) || !nrow(e)) return(NULL)
+  tx <- annotation$transcripts
+  if (is.data.frame(tx) && "tags" %in% names(tx) && any(!is.na(tx$tags) & nzchar(tx$tags)))
+    e <- e[e$transcript_id %in% tx$transcript_id[grepl("(^|;)basic(;|$)", ifelse(is.na(tx$tags), "", tx$tags))], , drop = FALSE]
+  e <- e[e$chrom == chrom & e$start1 >= start1 & e$end1 <= end1 & (e$end1 <= pos1 - exclude | e$start1 >= pos1 + exclude), , drop = FALSE]
+  if (!nrow(e)) return(NULL)
+  e <- unique(e[, intersect(c("start1", "end1", "transcript_id"), names(e)), drop = FALSE])
+  distance <- pmin(abs(e$start1 - pos1), abs(e$end1 - pos1))
+  best <- order(distance, -(e$end1 - e$start1), e$start1)[[1L]]
+  hits <- e[e$start1 == e$start1[[best]] & e$end1 == e$end1[[best]], , drop = FALSE]
+  data.frame(start1 = as.integer(e$start1[[best]]), end1 = as.integer(e$end1[[best]]),
+             source = paste0("GENCODE exon (", paste(utils::head(sort(unique(hits$transcript_id)), 3L), collapse = ", "), ")"),
+             stringsAsFactors = FALSE)
+}
+
+# Parses a user reference region "START-END" (1-based, inclusive) for one chromosome.
+variant_parse_reference_region <- function(text, start1, end1) {
+  x <- gsub("[ ,]", "", as.character(text))
+  m <- regmatches(x, regexec("^(?:[^:]+:)?([0-9]+)-([0-9]+)$", x, perl = TRUE))[[1L]]
+  if (length(m) != 3L) stop("Enter the reference region as START-END (1-based), e.g. 224356900-224356990.")
+  a <- as.numeric(m[[2L]]); b <- as.numeric(m[[3L]])
+  if (a > b || a < start1 || b > end1) stop("The reference region must lie inside the analysis interval ", start1, "-", end1, ".")
+  data.frame(start1 = as.integer(a), end1 = as.integer(b), source = "user-entered region", stringsAsFactors = FALSE)
+}
+
+# Display-only depth relative to a reference region: each group's mean depth
+# divided by that same group's mean depth over the region, so the region is 1
+# for every genotype (a ratio of group means). A group with zero or unavailable
+# reference depth stays NA. If the reference itself depends on genotype, that
+# dependence is divided out, so choose a region the variant should not affect.
+variant_relative_depth <- function(result, reference) {
+  d <- result$depth
+  out <- data.frame(genotype = d$genotype, pos1 = d$pos1, normalized_depth = NA_real_, stringsAsFactors = FALSE)
+  attr(out, "method") <- "relative"
+  attr(out, "label") <- "Depth relative to reference region"
+  if (is.null(reference) || !nrow(reference)) {
+    attr(out, "note") <- "No reference region: no GENCODE exon inside the interval at least 50 bp from the variant; enter one."
+    return(out)
+  }
+  ref <- d$pos1 >= reference$start1[[1L]] & d$pos1 <= reference$end1[[1L]]
+  for (g in unique(as.character(d$genotype))) {
+    rows <- d$genotype == g
+    base <- mean(d$mean_depth[rows & ref])
+    if (is.finite(base) && base > 0) out$normalized_depth[rows] <- d$mean_depth[rows] / base
+  }
+  attr(out, "reference") <- reference
+  attr(out, "note") <- paste0("Relative to ", reference$source[[1L]], " ", reference$start1[[1L]], "-", reference$end1[[1L]],
+    ": group mean depth / the same group's mean depth there (= 1 on the region)")
+  out
 }
 
 variant_bind_bin_counts <- function(parts) {
