@@ -399,7 +399,7 @@ variant_empty_bin_sites <- function() data.frame(site_id = character(), chrom = 
   splice_site_position = integer(), strand = character(), splice_site_type = character(),
   intron_start1 = integer(), intron_end1 = integer(), exon_start1 = integer(), exon_end1 = integer(),
   distance = integer(), transcripts = integer(), adjacent_exon_min_bp = integer(), intron_min_bp = integer(),
-  stringsAsFactors = FALSE)
+  exon_bin_in_other_intron_tx = integer(), intron_bin_in_other_exon_tx = integer(), stringsAsFactors = FALSE)
 
 # Bin geometry. position b is the intronic base next to the splice site: the
 # intron start for a plus-strand donor or minus-strand acceptor, otherwise the
@@ -467,6 +467,23 @@ variant_bin_ratio_candidates <- function(annotation, chrom, pos1,
   safe_min <- function(x) if (all(is.na(x))) NA_integer_ else as.integer(min(x, na.rm = TRUE))
   out$adjacent_exon_min_bp <- as.integer(tapply(long$exon_bp, key, safe_min)[k])
   out$intron_min_bp <- as.integer(tapply(long$intron_bp, key, safe_min)[k])
+  # Other same-strand transcripts can disagree with the site's own model: the
+  # "exon" bin may lie inside their intron, or the "intron" bin inside their exon.
+  # Counted for the bins listed here; variant_bin_ratio_config() clears the
+  # counts if the frozen widths move the bins.
+  site_tx <- tapply(long$transcript_id, key, unique)[k]
+  all_introns <- annotation$introns[annotation$introns$chrom == chrom, , drop = FALSE]
+  overlap_tx <- function(f_start, f_end, f_strand, f_tx, a1, b1, strand, own)
+    length(setdiff(unique(f_tx[which(f_strand == strand & f_start <= b1 & f_end >= a1)]), own))
+  ex_all <- if (is.data.frame(exons) && nrow(exons)) exons[exons$chrom == chrom, , drop = FALSE] else NULL
+  ex_strand <- if (is.null(ex_all)) character() else if ("strand" %in% names(ex_all)) ex_all$strand else
+    introns$strand[match(ex_all$transcript_id, introns$transcript_id)]
+  out$exon_bin_in_other_intron_tx <- vapply(seq_len(nrow(out)), function(i)
+    as.integer(overlap_tx(all_introns$intron_start1, all_introns$intron_end1, all_introns$strand, all_introns$transcript_id,
+                          out$exon_start1[[i]], out$exon_end1[[i]], out$strand[[i]], site_tx[[i]])), integer(1))
+  out$intron_bin_in_other_exon_tx <- if (is.null(ex_all)) rep(NA_integer_, nrow(out)) else vapply(seq_len(nrow(out)), function(i)
+    as.integer(overlap_tx(ex_all$start1, ex_all$end1, ex_strand, ex_all$transcript_id,
+                          out$intron_start1[[i]], out$intron_end1[[i]], out$strand[[i]], site_tx[[i]])), integer(1))
   out <- out[order(out$distance, out$splice_site_type, out$strand, out$splice_site_position), , drop = FALSE]
   rownames(out) <- NULL
   out
@@ -475,11 +492,22 @@ variant_bin_ratio_candidates <- function(annotation, chrom, pos1,
 # Annotation check of each bin against the bordering features: a bin wider
 # than the shortest adjacent exon (or intron) reaches past that feature.
 variant_bin_check <- function(sites, intron_width, exon_width) {
-  exon_short <- !is.na(sites$adjacent_exon_min_bp) & sites$adjacent_exon_min_bp < exon_width
-  intron_short <- !is.na(sites$intron_min_bp) & sites$intron_min_bp < intron_width
-  ifelse(exon_short & intron_short, "EXON_AND_INTRON_SHORTER_THAN_BIN",
-    ifelse(exon_short, "EXON_SHORTER_THAN_BIN", ifelse(intron_short, "INTRON_SHORTER_THAN_BIN",
-      ifelse(is.na(sites$adjacent_exon_min_bp), "EXON_NOT_ANNOTATED", "OK"))))
+  n <- nrow(sites)
+  col <- function(name) if (name %in% names(sites)) sites[[name]] else rep(NA_integer_, n)
+  flags <- list(
+    EXON_SHORTER_THAN_BIN = !is.na(sites$adjacent_exon_min_bp) & sites$adjacent_exon_min_bp < exon_width,
+    INTRON_SHORTER_THAN_BIN = !is.na(sites$intron_min_bp) & sites$intron_min_bp < intron_width,
+    EXON_NOT_ANNOTATED = is.na(sites$adjacent_exon_min_bp),
+    # The exon bin is intronic, or the intron bin exonic, in another same-strand
+    # transcript: the bin ratio then mixes isoforms.
+    EXON_BIN_IN_OTHER_TRANSCRIPT_INTRON = !is.na(col("exon_bin_in_other_intron_tx")) & col("exon_bin_in_other_intron_tx") > 0L,
+    INTRON_BIN_IN_OTHER_TRANSCRIPT_EXON = !is.na(col("intron_bin_in_other_exon_tx")) & col("intron_bin_in_other_exon_tx") > 0L,
+    # Unknown is not OK: saved before the check existed, or the bins moved after listing.
+    OTHER_TRANSCRIPTS_NOT_CHECKED = is.na(col("exon_bin_in_other_intron_tx")) | is.na(col("intron_bin_in_other_exon_tx")))
+  vapply(seq_len(n), function(i) {
+    hit <- names(flags)[vapply(flags, `[[`, logical(1), i)]
+    if (length(hit)) paste(hit, collapse = ";") else "OK"
+  }, character(1))
 }
 
 # Builds the frozen cfg$bin_ratio. Every bin must lie inside the analysis
@@ -501,7 +529,12 @@ variant_bin_ratio_config <- function(sites, cfg, pos1,
     # Bins always follow the frozen widths, whatever widths listed the candidates.
     geometry <- variant_bin_geometry(sites$chrom, sites$splice_site_position, sites$strand, sites$splice_site_type,
                                      x$intron_width, x$exon_width)
-    for (k in c("intron_start1", "intron_end1", "exon_start1", "exon_end1")) sites[[k]] <- geometry[[k]]
+    bins <- c("intron_start1", "intron_end1", "exon_start1", "exon_end1")
+    moved <- !all(vapply(bins, function(k) identical(as.integer(sites[[k]]), geometry[[k]]), logical(1)))
+    for (k in bins) sites[[k]] <- geometry[[k]]
+    # Overlap counts were made for the listed bins; unknown once the bins move.
+    for (k in c("exon_bin_in_other_intron_tx", "intron_bin_in_other_exon_tx"))
+      if (moved || !k %in% names(sites)) sites[[k]] <- NA_integer_
     x$sites <- sites
     lo <- min(sites$intron_start1, sites$exon_start1); hi <- max(sites$intron_end1, sites$exon_end1)
     if (lo < cfg$start1 || hi > cfg$end1) {
@@ -521,7 +554,8 @@ variant_bin_ratio_value <- function(intron, exon)
 variant_empty_bin_ratio_association <- function() data.frame(site_id = character(), chrom = character(),
   splice_site_position = integer(), strand = character(), splice_site_type = character(),
   intron_start1 = integer(), intron_end1 = integer(), exon_start1 = integer(), exon_end1 = integer(),
-  adjacent_exon_min_bp = integer(), intron_min_bp = integer(), bin_check = character(),
+  adjacent_exon_min_bp = integer(), intron_min_bp = integer(), exon_bin_in_other_intron_tx = integer(),
+  intron_bin_in_other_exon_tx = integer(), bin_check = character(),
   n_successful = integer(), ratio_mean_all_dosage0 = numeric(), ratio_mean_all_dosage1 = numeric(),
   ratio_mean_all_dosage2 = numeric(), n_both_zero = integer(), n_exon_zero_intron_positive = integer(),
   n_below_min_exon = integer(), n = integer(), n_dosage0 = integer(), n_dosage1 = integer(),
@@ -576,9 +610,12 @@ variant_bin_ratio_association <- function(result, gates = NULL) {
       # Sensitivity: genotype as a factor (F test, levels - 1 df), not in the BH family.
       if (status == "OK") p3 <- stats::anova(stats::lm(y ~ factor(x)))[["Pr(>F)"]][[1L]]
     }
+    for (k in c("exon_bin_in_other_intron_tx", "intron_bin_in_other_exon_tx"))
+      if (!k %in% names(site)) site[[k]] <- NA_integer_
     data.frame(site[, c("site_id", "chrom", "splice_site_position", "strand", "splice_site_type",
                         "intron_start1", "intron_end1", "exon_start1", "exon_end1",
-                        "adjacent_exon_min_bp", "intron_min_bp")],
+                        "adjacent_exon_min_bp", "intron_min_bp", "exon_bin_in_other_intron_tx",
+                        "intron_bin_in_other_exon_tx")],
       bin_check = check[[i]], n_successful = nrow(s),
       ratio_mean_all_dosage0 = all_mean(0), ratio_mean_all_dosage1 = all_mean(1), ratio_mean_all_dosage2 = all_mean(2),
       n_both_zero = sum(intron == 0 & exon == 0), n_exon_zero_intron_positive = sum(exon == 0 & intron > 0),
@@ -597,6 +634,34 @@ variant_bin_ratio_association <- function(result, gates = NULL) {
   out$q_value_bh[tested] <- stats::p.adjust(out$p_value[tested], method = "BH")
   rownames(out) <- NULL
   finish(out)
+}
+
+# Per-sample values behind variant_bin_ratio_association(), for plotting: one
+# row per site and successful sample with a usable dosage. in_model marks the
+# samples Model 1 fits (exon reads >= the frozen threshold); ratio is the
+# per-sample value (0 for no reads in either bin, NA for intron reads only).
+variant_bin_ratio_samples <- function(result) {
+  settings <- result$bin_ratio
+  empty <- data.frame(site_id = character(), dosage = numeric(), intron_count = numeric(),
+                      exon_count = numeric(), ratio = numeric(), in_model = logical(), stringsAsFactors = FALSE)
+  if (is.null(settings) || isTRUE(settings$disabled) || is.null(settings$sites) || !nrow(settings$sites)) return(empty)
+  min_exon <- if (is.null(settings$min_exon_reads)) variant_bin_ratio_defaults()$min_exon_reads else settings$min_exon_reads
+  n_alt <- length(strsplit(as.character(result$variant$alt[[1L]]), ",", fixed = TRUE)[[1L]])
+  s <- result$samples[result$samples$status == "SUCCESS", c("vcf_sample", "genotype"), drop = FALSE]
+  s$dosage <- variant_genotype_dosage(s$genotype, n_alt)
+  s <- s[is.finite(s$dosage), , drop = FALSE]
+  rc <- result$bin_ratio_counts
+  out <- lapply(settings$sites$site_id, function(id) {
+    r <- rc[rc$site_id == id, , drop = FALSE]
+    m <- match(s$vcf_sample, r$vcf_sample)
+    if (anyNA(m)) stop("Splice-site bin counts are missing for a successful sample.")
+    intron <- r$intron_count[m]; exon <- r$exon_count[m]
+    data.frame(site_id = rep(id, nrow(s)), dosage = s$dosage, intron_count = intron, exon_count = exon,
+               ratio = variant_bin_ratio_value(intron, exon), in_model = exon >= min_exon, stringsAsFactors = FALSE)
+  })
+  out <- do.call(rbind, c(list(empty), out))
+  rownames(out) <- NULL
+  out
 }
 
 variant_bind_bin_counts <- function(parts) {

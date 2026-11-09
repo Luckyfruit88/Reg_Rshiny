@@ -99,6 +99,80 @@ variant_result_tables_server <- function(output, result) {
   })
 }
 
+# Shades each frozen splice-site bin on a coordinate plot (exon bin and intron
+# bin), so the depth track shows where the bin ratio counts its reads.
+variant_draw_bin_sites <- function(sites, top) {
+  if (!is.data.frame(sites) || !nrow(sites)) return(invisible(FALSE))
+  for (i in seq_len(nrow(sites))) {
+    graphics::rect(sites$exon_start1[[i]] - .5, 0, sites$exon_end1[[i]] + .5, top,
+                   col = grDevices::adjustcolor("#1b9e77", .18), border = NA)
+    graphics::rect(sites$intron_start1[[i]] - .5, 0, sites$intron_end1[[i]] + .5, top,
+                   col = grDevices::adjustcolor("#d95f02", .18), border = NA)
+    graphics::abline(v = sites$splice_site_position[[i]], col = "#7570b3", lty = 3)
+    graphics::text(sites$splice_site_position[[i]], top, paste(sites$splice_site_type[[i]], sites$strand[[i]]),
+                   pos = 1, cex = .7, col = "#7570b3")
+  }
+  invisible(TRUE)
+}
+
+# Model 1 bin ratio, drawn from the same samples and values the model fits:
+# per-sample ratio of the analysed samples by ALT dosage, their mean per dosage
+# (mean_ratio_dosage*) and the fitted OLS line (beta). Points beyond the 1st-99th
+# percentile range are drawn at the axis edge and counted in the subtitle.
+plot_bin_ratio_by_dosage <- function(samples, association) {
+  sites <- association$site_id
+  if (!length(sites)) { graphics::plot.new(); graphics::text(.5, .5, "No splice-site bin ratio for this result"); return(invisible(NULL)) }
+  old <- graphics::par(mfrow = c(1L, length(sites)), mar = c(4.1, 4.1, 3.6, 1.1)); on.exit(graphics::par(old))
+  for (i in seq_along(sites)) {
+    a <- association[i, , drop = FALSE]
+    s <- samples[samples$site_id == sites[[i]] & samples$in_model, , drop = FALSE]
+    if (!nrow(s)) { graphics::plot.new(); graphics::title(sites[[i]], cex.main = .8)
+      graphics::text(.5, .5, "No sample passed the exon-read threshold"); next }
+    means <- c(a$mean_ratio_dosage0, a$mean_ratio_dosage1, a$mean_ratio_dosage2)
+    lim <- range(c(stats::quantile(s$ratio, c(.01, .99), names = FALSE), means), na.rm = TRUE)
+    if (diff(lim) == 0) lim <- lim + c(-.5, .5)
+    y <- pmin(pmax(s$ratio, lim[[1L]]), lim[[2L]]); clipped <- sum(y != s$ratio)
+    graphics::plot(NA, xlim = c(-.5, 2.5), ylim = lim, xaxt = "n", xlab = "ALT dosage (analysed samples)",
+      ylab = "1 - intron reads / exon reads", main = sites[[i]], cex.main = .8)
+    graphics::axis(1, at = 0:2, labels = paste0(0:2, "\nn=", c(a$n_dosage0, a$n_dosage1, a$n_dosage2)), padj = .5)
+    graphics::points(s$dosage + ((seq_len(nrow(s)) * .618034) %% 1 - .5) / 2, y, pch = 16, cex = .45,
+                     col = grDevices::adjustcolor("gray30", .25))
+    graphics::points(0:2, means, pch = 23, bg = "#d95f02", cex = 1.6)
+    if (is.finite(a$beta)) {
+      xbar <- sum(c(0, 1, 2) * c(a$n_dosage0, a$n_dosage1, a$n_dosage2)) / a$n
+      ybar <- sum(c(a$n_dosage0, a$n_dosage1, a$n_dosage2) * ifelse(is.na(means), 0, means)) / a$n
+      graphics::abline(a = ybar - a$beta * xbar, b = a$beta, col = "#7570b3", lwd = 2)
+    }
+    graphics::mtext(paste0(a$status, if (is.finite(a$beta)) paste0(" · beta ", signif(a$beta, 3)) else "",
+      if (is.finite(a$p_value)) paste0(" · p ", variant_format_p_label(a$p_value)) else "",
+      if (clipped) paste0(" · ", clipped, " beyond axis") else ""), side = 3, line = .3, cex = .7)
+  }
+}
+
+# Model 1 junction rate: mean rate per dosage (mean_rate_dosage*, reads per 100
+# denominator reads) and the fitted OLS line for the OK pairs with the smallest p.
+plot_junction_rate_by_dosage <- function(association, top = 6L) {
+  a <- association[association$status == "OK", , drop = FALSE]
+  a <- utils::head(a[order(a$log10_p_value), , drop = FALSE], top)
+  if (!nrow(a)) { graphics::plot.new(); graphics::text(.5, .5, "No junction boundary pair was fitted (status OK)"); return(invisible(NULL)) }
+  old <- graphics::par(mfrow = c(1L, nrow(a)), mar = c(4.1, 4.1, 3.6, 1.1)); on.exit(graphics::par(old))
+  for (i in seq_len(nrow(a))) {
+    r <- a[i, , drop = FALSE]
+    n <- c(r$n_dosage0, r$n_dosage1, r$n_dosage2); m <- c(r$mean_rate_dosage0, r$mean_rate_dosage1, r$mean_rate_dosage2)
+    xbar <- sum(c(0, 1, 2) * n) / r$n; ybar <- sum(n * ifelse(is.na(m), 0, m)) / r$n
+    fit <- ybar + r$beta * (c(0, 2) - xbar)
+    lim <- range(c(m, fit), na.rm = TRUE); if (diff(lim) == 0) lim <- lim + c(-.5, .5)
+    graphics::plot(0:2, m, xlim = c(-.5, 2.5), ylim = lim + c(-.08, .08) * diff(lim), pch = 23, bg = "#d95f02", cex = 1.6,
+      xaxt = "n", xlab = "ALT dosage", ylab = "Exact reads per 100 denominator reads",
+      main = paste0(r$intron_start1, "-", r$intron_end1, " (", r$strands, ")"), cex.main = .8)
+    graphics::axis(1, at = 0:2, labels = paste0(0:2, "\nn=", n), padj = .5)
+    graphics::abline(a = ybar - r$beta * xbar, b = r$beta, col = "#7570b3", lwd = 2)
+    graphics::mtext(paste0("beta ", signif(r$beta, 3), " · p ", variant_format_p_label(r$p_value)), side = 3, line = .3, cex = .7)
+  }
+}
+
+variant_format_p_label <- function(p) if (!is.finite(p)) "NA" else if (p < 1e-300) "< 1e-300" else format(signif(p, 3))
+
 variant_ui <- function(id) {
   ns <- shiny::NS(id)
   bslib::layout_sidebar(
@@ -155,8 +229,10 @@ variant_ui <- function(id) {
         DT::DTOutput(ns("groups")),
         tags$details(tags$summary("Sample accounting definitions and exclusions"),
           p("dna_n counts calls in the VCF; available_n counts calls linked to the RNA manifest. selected_n is the actual number requested, analyzed_n succeeded, and failed_n failed. Missing RNA links and incomplete DNA calls are separate, potentially overlapping exclusions. An unavailable BAM or index remains a recorded failure. A genotype absent from the VCF is not invented, and a missing call is not reference homozygous.")),
-        bslib::card(bslib::card_header("Mean RNA read depth per successful sample"), plotOutput(ns("depth_plot"), height = 320)),
-        bslib::card(bslib::card_header("Junction support by genotype · top 20 per group"), uiOutput(ns("junction_chart"))),
+        bslib::card(bslib::card_header("Mean RNA read depth per successful sample"), plotOutput(ns("depth_plot"), height = 320),
+          helpText("Shaded: splice-site bin-ratio bins (green exon bin, orange intron bin) at the dotted site. The bin ratio counts reads that overlap each bin; it is not computed from this mean depth.")),
+        bslib::card(bslib::card_header("Junction support by genotype · mean exact reads per successful sample · top 20 per group"), uiOutput(ns("junction_chart")),
+          helpText("Labels are raw reads per successful sample for each strand-specific junction, not library-normalized. Arc height is scaled to the largest mean across all genotypes. Model 1 (Genotype association tab) instead uses exact reads per 100 denominator reads with strands combined.")),
         annotation_track_ui(ns("annotation")),
         p("Depth includes zero-coverage positions. Junction means include successful samples with zero support; failed samples are excluded and shown above. These raw counts are not normalized for library size. Arcs are not transcript annotations.")),
       bslib::nav_panel("Jobs",
@@ -185,12 +261,15 @@ variant_ui <- function(id) {
         uiOutput(ns("bin_ratio_status")),
         DT::DTOutput(ns("bin_ratio_table")),
         downloadButton(ns("download_bin_ratio"), "Bin ratio CSV"),
+        uiOutput(ns("bin_ratio_plot_ui")),
         uiOutput(ns("bin_ratio_legend")),
         hr(),
         h5("Model 1 · junction reads per 100 reads ~ additive ALT dosage"),
         uiOutput(ns("association_status")),
         DT::DTOutput(ns("association")),
         downloadButton(ns("download_association"), "Association CSV"),
+        plotOutput(ns("association_plot"), height = 300),
+        helpText("Up to six fitted (OK) boundary pairs with the smallest p: diamonds are mean_rate_dosage0/1/2 and the line is the fitted OLS slope (beta)."),
         p("Each observed intron boundary pair (strands combined) is tested separately by ordinary least squares across successful samples: rate = 100 × exact junction reads / denominator reads, where denominator reads are the sample's retained alignments overlapping the analysis interval. Dosage counts ALT alleles in a biallelic diploid DNA genotype; samples without a usable dosage or below the minimum denominator are excluded from every pair."),
         uiOutput(ns("association_legend")),
         p("Unadjusted model: no age, sex, batch, genetic PCs or relatedness. FHS participants are related, so p-values are nominal and may be anti-conservative. q_value_bh is Benjamini–Hochberg over the OK rows of this result only, not across batch variants. OK means the pair passed every gate and was fitted; it does not mean significant, and no significance cutoff is applied. This is not formal PSI or causal inference.")),
@@ -1041,6 +1120,23 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           "mean_exon_count_dosage0", "mean_exon_count_dosage1", "mean_exon_count_dosage2",
           "mean_ratio_dosage0", "mean_ratio_dosage1", "mean_ratio_dosage2", "beta", "se", "t_value", "log10_p_value"), 4)
     })
+    bin_ratio_samples <- reactive({
+      a <- bin_ratio_association()
+      req(!inherits(a, "error"), nrow(a) > 0L, is.function(backend$variant_bin_ratio_samples))
+      backend$variant_bin_ratio_samples(result())
+    })
+    output$bin_ratio_plot_ui <- renderUI({
+      a <- bin_ratio_association()
+      req(!inherits(a, "error"), nrow(a) > 0L)
+      tagList(plotOutput(session$ns("bin_ratio_plot"), height = 320),
+        helpText("Points: per-sample ratio of the samples Model 1 analyses (exon-bin reads at or above the threshold), jittered by ALT dosage. Diamonds: mean_ratio_dosage0/1/2. Line: fitted OLS slope (beta)."))
+    })
+    output$bin_ratio_plot <- renderPlot(plot_bin_ratio_by_dosage(bin_ratio_samples(), bin_ratio_association()))
+    output$association_plot <- renderPlot({
+      a <- association()
+      req(!inherits(a, "error"))
+      plot_junction_rate_by_dosage(a)
+    })
     output$download_bin_ratio <- downloadHandler("genotype_association_splice_site_bin_ratio.csv", function(file) {
       a <- bin_ratio_association()
       if (inherits(a, "error")) stop(conditionMessage(a))
@@ -1121,6 +1217,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         lines(x$pos1, x$mean_depth, col = cols[[g]], lwd = 1.8)
       }
       abline(v = r$variant$pos1[[1L]], lty = 2, col = "gray40")
+      variant_draw_bin_sites(if (is.list(r$bin_ratio) && !isTRUE(r$bin_ratio$disabled)) r$bin_ratio$sites else NULL, par("usr")[[4L]])
       shown <- unique(as.character(d$genotype[finite]))
       legend("topright", legend = shown, col = cols[shown], lty = 1, lwd = 2, bty = "n", cex = .85)
     })
@@ -1151,7 +1248,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           h <- .15 + .65 * j$count_mean[[k]] / max(1, r$junctions$count_mean, na.rm = TRUE)
           x <- j$intron_start1[[k]] + t * (j$intron_end1[[k]] - j$intron_start1[[k]])
           lines(x, 4 * h * t * (1 - t), col = cols[[g]], lwd = 1.6)
-          text(mean(range(x)), h + .08, paste0(format(round(j$count_mean[[k]], 2), trim = TRUE), " / sample ", j$strand[[k]]), cex = .7)
+          text(mean(range(x)), h + .08, paste0(format(signif(j$count_mean[[k]], 3), trim = TRUE), " reads/sample ", j$strand[[k]]), cex = .7)
         }
       }
     })

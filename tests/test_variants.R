@@ -139,6 +139,7 @@ run_model1_calibration <- function() {
 bin_ratio_fixture <- function(genotype, intron, exon, sites = variant_bin_geometry("c", 1000, "+", "donor")) {
   ids <- sprintf("s%05d", seq_along(genotype))
   sites$distance <- 0L; sites$transcripts <- 1L; sites$adjacent_exon_min_bp <- 100L; sites$intron_min_bp <- 500L
+  sites$exon_bin_in_other_intron_tx <- 0L; sites$intron_bin_in_other_exon_tx <- 0L
   counts <- do.call(rbind, lapply(sites$site_id, function(id) data.frame(vcf_sample = ids, genotype = genotype,
     site_id = id, intron_count = intron, exon_count = exon, stringsAsFactors = FALSE)))
   list(variant = data.frame(alt = "T"),
@@ -202,7 +203,24 @@ run_bin_ratio_tests <- function() {
             identical(variant_bin_check(cand, 25L, 20L), c("OK", "OK")),
             nrow(variant_bin_ratio_candidates(ann, "c", 4000)) == 0L)
   noexon <- ann; noexon$exons <- noexon$exons[0, ]
-  stopifnot(all(variant_bin_check(variant_bin_ratio_candidates(noexon, "c", 1010), 25L, 25L) == "EXON_NOT_ANNOTATED"))
+  stopifnot(all(variant_bin_check(variant_bin_ratio_candidates(noexon, "c", 1010), 25L, 25L) ==
+                "EXON_NOT_ANNOTATED;OTHER_TRANSCRIPTS_NOT_CHECKED"))
+  # Another same-strand transcript disagrees with the site's own model: T5's intron
+  # covers the exon bin of donor:+:c:1000 (975-999), T6's exon covers its intron bin.
+  iso <- ann
+  iso$introns <- rbind(iso$introns, data.frame(transcript_id = "T5", chrom = "c", strand = "+", intron_start1 = 950,
+                                               intron_end1 = 1500, donor1 = 950, acceptor1 = 1500))
+  iso$exons <- rbind(iso$exons, data.frame(transcript_id = "T6", chrom = "c", start1 = 1010, end1 = 1100))
+  iso$exons$strand <- c("+", "+", "-", "+")
+  ci <- variant_bin_ratio_candidates(iso, "c", 1010)
+  stopifnot(identical(ci$exon_bin_in_other_intron_tx, c(1L, 0L)), identical(ci$intron_bin_in_other_exon_tx, c(1L, 0L)),
+            identical(variant_bin_check(ci, 25L, 20L), c("EXON_BIN_IN_OTHER_TRANSCRIPT_INTRON;INTRON_BIN_IN_OTHER_TRANSCRIPT_EXON", "OK")),
+            identical(variant_bin_check(cand, 25L, 20L), c("OK", "OK")))
+  # Frozen widths that move the bins make the overlap unknown, never OK.
+  moved <- variant_bin_ratio_config(ci, validate_config(list(chrom = "c", start1 = 900L, end1 = 1100L, mapq = 20, baseq = 0,
+    anchor = 8, min_intron = 70, max_intron = 500000, strand_mode = "XS")), 1010L, intron_width = 10L)
+  stopifnot(all(is.na(moved$sites$exon_bin_in_other_intron_tx)),
+            all(grepl("OTHER_TRANSCRIPTS_NOT_CHECKED", variant_bin_check(moved$sites, 10L, 25L), fixed = TRUE)))
 
   # Frozen settings: bins must lie inside the analysis interval.
   cfg <- validate_config(list(chrom = "c", start1 = 960L, end1 = 1060L, mapq = 20, baseq = 0, anchor = 8, min_intron = 70,
@@ -236,6 +254,11 @@ run_bin_ratio_tests <- function() {
             isTRUE(all.equal(a$p_value, unname(g[4]))), isTRUE(all.equal(a$q_value_bh, a$p_value)),
             isTRUE(all.equal(a$p_genotype_3level, stats::anova(stats::lm(y ~ factor(xdose)))[["Pr(>F)"]][[1L]])),
             attr(a, "gates")$min_exon_reads == 10L, !"ratio_mean_legacy_dosage0" %in% names(a))
+  # The plotted per-sample values are exactly the model's samples and outcome.
+  ps <- variant_bin_ratio_samples(bin_ratio_fixture(geno, intron, exon))
+  stopifnot(nrow(ps) == 100L, sum(ps$in_model) == a$n, identical(ps$ratio, all_value),
+            isTRUE(all.equal(as.numeric(tapply(ps$ratio[ps$in_model], ps$dosage[ps$in_model], mean)),
+                             c(a$mean_ratio_dosage0, a$mean_ratio_dosage1, a$mean_ratio_dosage2))))
   # The frozen threshold drives the model; BH spans the OK sites of one result.
   two <- bin_ratio_fixture(geno, intron, exon, variant_bin_geometry("c", c(1000, 2000), c("+", "-"), c("donor", "acceptor")))
   two$bin_ratio$min_exon_reads <- 45L

@@ -81,6 +81,19 @@ grDevices::png(draw_png, width = 1800, height = 900, res = 160)
 layout <- plot_splice_coverage(m, annotation)
 grDevices::dev.off()
 stopifnot(layout$ymax == 15, 108L %in% layout$boundary_positions, file.info(draw_png)$size > 1000)
+# Boundary markers sit on the exon-intron edge and carry total reads across genotypes.
+b <- splice_rna_boundaries(m)
+stopifnot(identical(b$edge, c(100.5, 108.5)), identical(b$reads, c(32, 69)), identical(layout$boundary_edges, c(100.5, 108.5)))
+# Exon shading uses GENCODE basic transcripts when tags exist; a retained-intron model does not paint exon.
+tagged <- list(exons = data.frame(transcript_id = c("RI", "B"), chrom = "chr1", start1 = c(60L, 115L), end1 = c(110L, 160L)),
+  transcripts = data.frame(transcript_id = c("RI", "B"), tags = c("", "basic;MANE_Select")))
+ex <- splice_exon_regions(tagged, m$window)
+stopifnot(identical(as.numeric(ex$start1), 115), identical(as.numeric(ex$end1), 125), attr(ex, "source") == "GENCODE basic transcripts",
+          attr(splice_exon_regions(annotation, m$window), "source") == "all GENCODE transcripts")
+# Reference matched without a GT/AG site at the variant is not "unavailable".
+nosite <- m; nosite$sites$variant_overlaps <- FALSE; nosite$genotype_sites <- NULL; nosite$genotypes$motif_summary <- NULL
+nosite$metadata$focus_candidate_id <- NULL
+stopifnot(splice_motif_label(nosite, "0/1") == "no GT/AG site at variant")
 grDevices::png(file.path(scratch, "junctions.png"), width = 1600, height = 500, res = 140)
 matrix_layout <- plot_splice_junction_support(m)
 grDevices::dev.off()

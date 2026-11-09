@@ -54,26 +54,47 @@ splice_near_junctions <- function(model) {
 
 splice_rna_boundaries <- function(model) {
   j <- splice_near_junctions(model)
-  empty <- data.frame(pos1 = numeric(), role = character(), strand = character(), delta = numeric())
+  empty <- data.frame(pos1 = numeric(), role = character(), strand = character(), edge = numeric(),
+                      reads = numeric(), delta = numeric())
   if (!nrow(j)) return(empty)
   j <- j[is.finite(j$count_sum) & j$count_sum > 0, , drop = FALSE]
   if (!nrow(j)) return(empty)
+  # Total supporting reads of each boundary across genotype groups.
+  reads <- stats::aggregate(count_sum ~ intron_start1 + intron_end1 + strand, data = j, FUN = sum)
+  j <- reads
+  if (!nrow(j)) return(empty)
   w <- model$window
+  # edge is the exon-intron edge: left of the first intronic base, right of the last.
   left <- data.frame(pos1 = j$intron_start1,
-    role = ifelse(j$strand == "+", "donor", ifelse(j$strand == "-", "acceptor", "boundary")), strand = j$strand)
+    role = ifelse(j$strand == "+", "donor", ifelse(j$strand == "-", "acceptor", "boundary")), strand = j$strand,
+    edge = j$intron_start1 - .5, reads = j$count_sum)
   right <- data.frame(pos1 = j$intron_end1,
-    role = ifelse(j$strand == "+", "acceptor", ifelse(j$strand == "-", "donor", "boundary")), strand = j$strand)
-  b <- unique(rbind(left, right))
+    role = ifelse(j$strand == "+", "acceptor", ifelse(j$strand == "-", "donor", "boundary")), strand = j$strand,
+    edge = j$intron_end1 + .5, reads = j$count_sum)
+  b <- rbind(left, right)
+  b <- stats::aggregate(reads ~ pos1 + role + strand + edge, data = b, FUN = sum)
   b <- b[b$pos1 >= w$start1 & b$pos1 <= w$end1, , drop = FALSE]
   b$delta <- b$pos1 - w$variant_pos1
   b[order(abs(b$delta), b$pos1, b$role, b$strand), , drop = FALSE]
 }
 
+# Exons shaded behind the coverage tiles. Only GENCODE "basic" transcripts are
+# used when tags are available, so retained-intron and NMD models do not paint
+# an intron of the main isoforms as exon; attr(, "source") names the rule.
 splice_exon_regions <- function(annotation, window) {
   empty <- data.frame(start1 = numeric(), end1 = numeric())
+  attr(empty, "source") <- "none"
   if (is.null(annotation) || inherits(annotation, "error") || is.null(annotation$exons) || !nrow(annotation$exons)) return(empty)
   e <- annotation$exons
+  source <- "all GENCODE transcripts"
+  tx <- annotation$transcripts
+  if (is.data.frame(tx) && nrow(tx) && "tags" %in% names(tx) && any(!is.na(tx$tags) & nzchar(tx$tags))) {
+    basic <- tx$transcript_id[grepl("(^|;)basic(;|$)", ifelse(is.na(tx$tags), "", tx$tags))]
+    e <- e[e$transcript_id %in% basic, , drop = FALSE]
+    source <- "GENCODE basic transcripts"
+  }
   e <- e[e$chrom == window$chrom & e$start1 <= window$end1 & e$end1 >= window$start1, , drop = FALSE]
+  attr(empty, "source") <- source
   if (!nrow(e)) return(empty)
   x <- data.frame(start1 = pmax(e$start1, window$start1), end1 = pmin(e$end1, window$end1))
   x <- unique(x[order(x$start1, x$end1), , drop = FALSE])
@@ -86,6 +107,7 @@ splice_exon_regions <- function(annotation, window) {
   }
   merged[[length(merged) + 1L]] <- c(start, end)
   z <- as.data.frame(do.call(rbind, merged)); names(z) <- c("start1", "end1")
+  attr(z, "source") <- source
   z
 }
 
@@ -104,13 +126,22 @@ splice_motif_label <- function(model, genotype) {
   if (is.na(i)) return("unavailable")
   if ("motif_summary" %in% names(g) && length(g$motif_summary[[i]]) == 1L &&
       !is.na(g$motif_summary[[i]]) && nzchar(g$motif_summary[[i]])) return(as.character(g$motif_summary[[i]]))
-  "unavailable"
+  # Reference matched but the variant overlaps no GT/AG site: not a failure.
+  if (is.null(primary)) "no GT/AG site at variant" else "unavailable"
 }
 
 # Public plotting function reused by the UI, downloads and independent checks.
 plot_splice_coverage <- function(model, annotation = NULL) {
   w <- model$window; g <- splice_called_groups(model)
-  old <- graphics::par(mar = c(4.8, 9.5, 4.2, 3.2))
+  labels <- vapply(seq_len(nrow(g)), function(i) {
+    dna <- if (!is.na(g$dna_alleles[[i]]) && nzchar(g$dna_alleles[[i]])) g$dna_alleles[[i]] else "DNA alleles unavailable"
+    motif <- splice_motif_label(model, g$genotype[[i]])
+    if (nchar(motif) > 46L) motif <- paste0(substr(motif, 1L, 43L), "...")
+    paste0(dna, " (", g$genotype[[i]], ")\nDNA motif: ", motif, "\nsuccessful RNA N = ", g$analyzed_n[[i]])
+  }, character(1))
+  # Left margin wide enough for the longest genotype label, so it is never clipped.
+  need <- if (length(labels)) max(graphics::strwidth(labels, units = "inches", cex = .76)) / graphics::par("csi") + 2 else 0
+  old <- graphics::par(mar = c(4.8, max(9.5, need), 4.2, 3.2))
   on.exit(graphics::par(old))
   if (!nrow(g)) { graphics::plot.new(); graphics::text(.5, .5, "No called DNA genotype groups in this saved result"); return(invisible(NULL)) }
   positions <- seq.int(w$start1, w$end1)
@@ -121,10 +152,11 @@ plot_splice_coverage <- function(model, annotation = NULL) {
   graphics::plot(NA, xlim = c(w$start1 - .5, w$end1 + .5), ylim = c(0, top), xaxs = "i", yaxs = "i",
     xlab = paste0(w$chrom, " · genomic position (1-based)"), ylab = "", yaxt = "n",
     main = "RNA coverage at base resolution · saved genotype groups")
-  graphics::mtext(paste0("One shared height scale: 0-", format(round(ymax, 3), trim = TRUE),
-    " mean RNA depth · each tile is one genomic base"), side = 3, line = .5, cex = .8)
-  colors <- grDevices::hcl.colors(max(3L, n), "Dark 3")[seq_len(n)]
   exon <- splice_exon_regions(annotation, w)
+  graphics::mtext(paste0("One shared height scale: 0-", format(signif(ymax, 3), trim = TRUE),
+    " mean RNA depth · each tile is one genomic base",
+    if (nrow(exon)) paste0(" · gray: exon in ", attr(exon, "source")) else ""), side = 3, line = .5, cex = .8)
+  colors <- grDevices::hcl.colors(max(3L, n), "Dark 3")[seq_len(n)]
   for (i in seq_len(n)) {
     baseline <- 2 + (n - i) * 1.3
     if (nrow(exon)) graphics::rect(exon$start1 - .5, baseline, exon$end1 + .5, baseline + .84,
@@ -132,13 +164,8 @@ plot_splice_coverage <- function(model, annotation = NULL) {
     row <- d[d$genotype == g$genotype[[i]], , drop = FALSE]
     values <- row$mean_depth[match(positions, row$pos1)]
     usable <- is.finite(values)
-    dna <- if (!is.na(g$dna_alleles[[i]]) && nzchar(g$dna_alleles[[i]])) g$dna_alleles[[i]] else "DNA alleles unavailable"
-    motif <- splice_motif_label(model, g$genotype[[i]])
-    if (nchar(motif) > 46L) motif <- paste0(substr(motif, 1L, 43L), "...")
-    label <- paste0(dna, " (", g$genotype[[i]], ")\nDNA motif: ", motif,
-      "\nsuccessful RNA N = ", g$analyzed_n[[i]])
     graphics::text(w$start1 - .5 - length(positions) * .018, baseline + .43,
-      label, adj = c(1, .5), cex = .76, xpd = NA, col = colors[[i]])
+      labels[[i]], adj = c(1, .5), cex = .76, xpd = NA, col = colors[[i]])
     if (any(usable)) {
       graphics::segments(w$start1 - .5, baseline, w$end1 + .5, baseline, col = "#C3C3C3")
       graphics::rect(positions[usable] - .44, baseline, positions[usable] + .44,
@@ -176,15 +203,16 @@ plot_splice_coverage <- function(model, annotation = NULL) {
   boundaries <- head(splice_rna_boundaries(model), 6L)
   if (nrow(boundaries)) for (i in seq_len(nrow(boundaries))) {
     b <- boundaries[i, , drop = FALSE]
-    graphics::abline(v = b$pos1, lty = 3, col = "#596A7A", lwd = .8)
+    graphics::abline(v = b$edge, lty = 3, col = "#596A7A", lwd = .8)
     delta <- if (b$delta > 0) paste0("+", b$delta) else as.character(b$delta)
-    graphics::text(b$pos1, .93 + (i %% 2L) * .22,
-      paste0(if (b$role == "acceptor") "A" else if (b$role == "donor") "D" else "B", " ", delta),
+    graphics::text(b$edge, .93 + (i %% 2L) * .22,
+      paste0(if (b$role == "acceptor") "A" else if (b$role == "donor") "D" else "B", " ", delta, " (", b$reads, if (b$reads == 1) " read)" else " reads)"),
       cex = .66, col = "#465B70")
   }
   graphics::abline(v = w$variant_pos1, lty = 2, col = "#B13F32", lwd = 1.5)
   invisible(list(ymax = ymax, genotypes = g$genotype, positions = positions,
-    boundary_positions = boundaries$pos1, primary_site = primary))
+    boundary_positions = boundaries$pos1, boundary_edges = boundaries$edge, exon_source = attr(exon, "source"),
+    primary_site = primary))
 }
 
 splice_junction_display <- function(model, max_junctions = 12L) {
@@ -217,7 +245,7 @@ plot_splice_junction_support <- function(model, max_junctions = 12L) {
   colors <- grDevices::colorRampPalette(c("#FFFFFF", "#D9E7F2", "#367CA9", "#123D62"))(100L)
   graphics::plot(NA, xlim = c(.5, nrow(g) + .5), ylim = c(.5, length(ids) + .5),
     xaxs = "i", yaxs = "i", axes = FALSE, xlab = "", ylab = "",
-    main = "Observed RNA junction support · one shared scale")
+    main = "Observed RNA junction reads per successful sample · one shared scale")
   graphics::axis(3, at = seq_len(nrow(g)), labels = g$dna_alleles, tick = FALSE, line = -.2, cex.axis = .9)
   for (i in seq_along(ids)) {
     rows <- j[j$junction_id == ids[[i]], , drop = FALSE]
@@ -234,13 +262,14 @@ plot_splice_junction_support <- function(model, max_junctions = 12L) {
       fill <- if (known) colors[[if (maximum > 0) max(1L, min(100L, 1L + round(99 * r$count_mean[[1L]] / maximum))) else 1L]] else "#ECECEC"
       graphics::rect(k - .47, y - .44, k + .47, y + .44, col = fill, border = "#B9C2CB")
       if (known) {
-        label <- paste0(format(round(r$count_mean[[1L]], 3), trim = TRUE), "\n", r$count_sum[[1L]], " / ", r$analyzed_n[[1L]])
+        label <- paste0(format(signif(r$count_mean[[1L]], 3), trim = TRUE), "\n", r$count_sum[[1L]], " / ", r$analyzed_n[[1L]])
         text_col <- if (maximum > 0 && r$count_mean[[1L]] / maximum > .62) "white" else "#233544"
       } else { label <- "NA\nunavailable"; text_col <- "#676767" }
       graphics::text(k, y, label, cex = .79, col = text_col)
     }
   }
-  graphics::mtext(paste0("Each cell: mean support, then total / successful N · shared color range 0-", format(round(maximum, 3), trim = TRUE)),
+  graphics::mtext(paste0("Each cell: mean reads per successful sample (raw, per strand; not a rate), then total reads / successful N · color range 0-",
+    format(signif(maximum, 3), trim = TRUE)),
     side = 1, line = 1.1, cex = .76)
   invisible(list(junction_ids = ids, max_mean = maximum, genotypes = g$genotype))
 }
@@ -369,7 +398,7 @@ splice_evidence_server <- function(id, result, reference, model_source,
           s$site_type[[1L]], " (", s$strand[[1L]], ") at ",
           s$start1[[1L]], "–", s$end1[[1L]], " · transcript-oriented motif ", s$ref_motif[[1L]], " → ", s$alt_motif[[1L]],
           " · ", splice_alt_label(m, s), " · ", s$change[[1L]], ". This is the indicated target-variant DNA substitution; all ALT rows remain in the table."),
-        shiny::p("Red dashed line: selected variant. Dotted RNA boundary markers: A = acceptor, D = donor, B = unresolved strand; offsets are relative to the variant. ",
+        shiny::p("Red dashed line: selected variant. Dotted RNA boundary markers sit on the exon-intron edge: A = acceptor, D = donor, B = unresolved strand; offsets give the boundary intronic base relative to the variant, with total supporting reads across genotypes. ",
           min(6L, nrow(b)), " of ", nrow(b), " supported nearby boundaries are marked; complete evidence remains in the table."))
     })
     output$junction_plot_ui <- shiny::renderUI({
@@ -380,7 +409,7 @@ splice_evidence_server <- function(id, result, reference, model_source,
     output$junction_note <- shiny::renderUI({
       j <- splice_near_junctions(model()); all_n <- length(unique(j$junction_id))
       shiny::p("Showing ", min(12L, all_n), " of ", all_n,
-        " junctions with an endpoint in the displayed window, nearest to the selected variant first. Each junction has the same row across genotypes. Measured zero is retained; NA is unavailable. The drawing cap does not filter this full table. These are saved RNA junction counts, independent of the DNA motif prediction.")
+        " junctions with an endpoint in the displayed window, nearest to the selected variant first. Only junctions with both boundaries inside the analysis interval were saved; a junction whose other end lies outside it is absent, not zero. Each junction has the same row across genotypes. Measured zero is retained; NA is unavailable. The drawing cap does not filter this full table. These are saved RNA junction counts, independent of the DNA motif prediction.")
     })
     output$junction_table <- DT::renderDT(splice_near_junctions(model()), rownames = FALSE,
       options = list(pageLength = 10, scrollX = TRUE), selection = "none")

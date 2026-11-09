@@ -79,16 +79,17 @@ annotation_plot_models <- function(annotation, window, selected = character(), m
         centers + direction * width / 2, row, length = .055, col = "#555555", angle = 25)
     }
     e <- exons[exons$transcript_id == tx$transcript_id[[i]] & exons$end1 >= window[[1L]] & exons$start1 <= window[[2L]], , drop = FALSE]
-    if (nrow(e)) graphics::rect(pmax(e$start1, window[[1L]]), row - .10,
-      pmin(e$end1, window[[2L]]), row + .10, col = "#ADB5BD", border = "#697079")
+    # Base-centred like the coverage tiles: an exon covers start1 - 0.5 to end1 + 0.5.
+    if (nrow(e)) graphics::rect(pmax(e$start1 - .5, window[[1L]]), row - .10,
+      pmin(e$end1 + .5, window[[2L]]), row + .10, col = "#ADB5BD", border = "#697079")
     if (!is.null(features) && nrow(features)) {
       f <- features[features$transcript_id == tx$transcript_id[[i]] & features$end1 >= window[[1L]] & features$start1 <= window[[2L]], , drop = FALSE]
       for (kind in c("UTR", "CDS")) {
         z <- f[f$feature == kind, , drop = FALSE]
         if (!nrow(z)) next
         halfheight <- if (kind == "CDS") .16 else .065
-        graphics::rect(pmax(z$start1, window[[1L]]), row - halfheight,
-          pmin(z$end1, window[[2L]]), row + halfheight,
+        graphics::rect(pmax(z$start1 - .5, window[[1L]]), row - halfheight,
+          pmin(z$end1 + .5, window[[2L]]), row + halfheight,
           col = if (kind == "CDS") "#245A91" else "#278C8C", border = NA)
       }
     }

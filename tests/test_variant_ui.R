@@ -433,7 +433,8 @@ writeLines(c(readLines(fixture_file),
   '  r <- base_analyze(resources, variant, cfg, max_per_group, sampling_mode)',
   '  sites <- data.frame(site_id = "donor:+:chr1:150", chrom = "chr1", splice_site_position = 150L, strand = "+",',
   '    splice_site_type = "donor", intron_start1 = 150L, intron_end1 = 174L, exon_start1 = 125L, exon_end1 = 149L,',
-  '    distance = 50L, transcripts = 1L, adjacent_exon_min_bp = 12L, intron_min_bp = 300L)',
+  '    distance = 50L, transcripts = 1L, adjacent_exon_min_bp = 12L, intron_min_bp = 300L,',
+  '    exon_bin_in_other_intron_tx = 0L, intron_bin_in_other_exon_tx = 0L)',
   '  r$bin_ratio <- list(intron_width = 25L, exon_width = 25L, min_exon_reads = 10L, sites = sites,',
   '    strand_rule = "all strands (XS mode)", note = "")',
   '  r$bin_ratio_counts <- data.frame(vcf_sample = "s1", genotype = "0/1", site_id = "donor:+:chr1:150", intron_count = 2L, exon_count = 20L)',
@@ -463,9 +464,21 @@ shiny::testServer(variant_server,
               !grepl("legacy|featureCounts", paste(status, legend), ignore.case = TRUE),
               grepl("GENCODE annotation is unavailable", html_text(output$bin_sites_ui), fixed = TRUE),
               grepl("XS mode: reads of all strands", html_text(output$bin_sites_ui), fixed = TRUE))
+    # The plots draw the association they sit next to, and the depth plot shades the bins.
+    stopifnot(nrow(isolate(bin_ratio_samples())) == 1L, nzchar(output$bin_ratio_plot$src),
+              nzchar(output$depth_plot$src),
+              grepl("Model 1 analyses", html_text(output$bin_ratio_plot_ui), fixed = TRUE))
     session$setInputs(bin_ratio = FALSE)
     stopifnot(grepl("Not computed", html_text(output$bin_sites_ui), fixed = TRUE))
   })
 unlink(ratio_fixture_file)
+# Junction-rate plot: diamonds are the table means, the line is the fitted slope;
+# only OK rows are drawn, smallest p first.
+rate_rows <- data.frame(intron_start1 = c(10L, 20L, 30L), intron_end1 = c(90L, 80L, 70L), strands = "+",
+  n = 30L, n_dosage0 = 10L, n_dosage1 = 10L, n_dosage2 = 10L, mean_rate_dosage0 = c(1, 5, 2),
+  mean_rate_dosage1 = c(2, 5, 2), mean_rate_dosage2 = c(3, 5, 2), beta = c(1, 0, NA), p_value = c(1e-3, .5, NA),
+  log10_p_value = c(-3, log10(.5), NA), status = c("OK", "OK", "LOW_SUPPORT"))
+grDevices::png(tempfile(fileext = ".png")); plot_junction_rate_by_dosage(rate_rows); grDevices::dev.off()
+grDevices::png(tempfile(fileext = ".png")); plot_junction_rate_by_dosage(rate_rows[3L, ]); grDevices::dev.off()
 unlink(c(fixture_file, job_fixture_file, batch_variant_file))
 cat("VARIANT_UI_STATE_TESTS_OK\n")
