@@ -200,6 +200,57 @@ run_normalized_depth_tests <- function() {
   zero <- preview; zero$samples$retained_reads[[2L]] <- 0
   zero$sample_results[[2L]] <- sd(c(0, 0, 0))
   stopifnot(isTRUE(all.equal(variant_normalized_depth(zero)$normalized_depth[1:3], c(2, 4, 0))))
+  # Full-cohort job: exact per-sample values from verified checkpoints.
+  job <- tempfile("regshiny-ckpt-"); dir.create(file.path(job, "checkpoints"), recursive = TRUE)
+  cs_result <- full
+  cs_result$samples$bam <- paste0("/bam/", cs_result$samples$vcf_sample, ".bam"); cs_result$samples$raw_gt <- cs_result$samples$genotype
+  cs_result$depth$mean_depth[1:6] <- c(4, 6.5, 1.5, 3, 0, 9)
+  binding <- list(schema = "synthetic"); run <- list(fingerprint = variant_hash_object(binding), binding = binding)
+  saveRDS(run, file.path(job, "checkpoints", "run.rds"))
+  depths <- list(c(2, 4, 0), c(6, 9, 3), c(1, 0, 4), c(5, 0, 14))
+  write_ckpt <- function(i, depth = depths[[i]], reads = cs_result$samples$retained_reads[[i]]) {
+    s <- cs_result$samples[i, ]
+    key <- variant_hash_object(list(sample = s$vcf_sample, bam = s$bam, genotype = s$genotype, raw_gt = s$raw_gt))
+    z <- list(status = "SUCCESS", error = NA_character_, audit = list(retained_reads = reads), depth = depth)
+    saveRDS(list(fingerprint = run$fingerprint, sample_key = key, checksum = variant_hash_object(z), contribution = z),
+            file.path(job, "checkpoints", paste0("sample_", key, ".rds")))
+  }
+  for (i in 1:4) write_ckpt(i)
+  sums <- variant_checkpoint_depth_sums(job, cs_result)
+  nc <- variant_normalized_depth(cs_result, checkpoint_sums = sums)
+  stopifnot(attr(nc, "method") == "checkpoint", grepl("verified checkpoints", attr(nc, "note"), fixed = TRUE),
+            isTRUE(all.equal(nc$normalized_depth[1:3], hand00)), isTRUE(all.equal(nc$normalized_depth[4:6], hand01)),
+            all(is.na(nc$normalized_depth[7:9])))
+  # Any mismatch stops (the app then falls back to the approximation and says why).
+  bad_mean <- cs_result; bad_mean$depth$mean_depth[[1L]] <- 99
+  expect_error(variant_checkpoint_depth_sums(job, bad_mean), "reproduce the saved group means")
+  write_ckpt(3, reads = 499)
+  expect_error(variant_checkpoint_depth_sums(job, cs_result), "does not match")
+  write_ckpt(3); key3 <- list.files(file.path(job, "checkpoints"), "^sample_")[[1L]]
+  tampered <- readRDS(file.path(job, "checkpoints", key3)); tampered$contribution$depth <- tampered$contribution$depth + 1
+  saveRDS(tampered, file.path(job, "checkpoints", key3))
+  expect_error(variant_checkpoint_depth_sums(job, cs_result), "does not match")
+  unlink(job, recursive = TRUE)
+  expect_error(variant_checkpoint_depth_sums(tempfile(), cs_result), "fingerprint")
+
+  # Relative to a reference region: group mean depth / the same group's mean there.
+  ann <- list(exons = data.frame(transcript_id = c("B", "B", "R", "B"), chrom = "c", start1 = c(100L, 300L, 180L, 900L),
+                                 end1 = c(150L, 340L, 260L, 990L)),
+              transcripts = data.frame(transcript_id = c("B", "R"), tags = c("basic", "")))
+  ref <- variant_reference_exon(ann, "c", 50L, 600L, 200L)
+  stopifnot(identical(c(ref$start1, ref$end1), c(100L, 150L)), grepl("GENCODE exon (B)", ref$source, fixed = TRUE),
+            is.null(variant_reference_exon(ann, "c", 120L, 280L, 200L)),
+            identical(variant_reference_exon(ann, "c", 50L, 600L, 330L)$start1, 100L))
+  user <- variant_parse_reference_region(" 11-12 ", 11L, 13L)
+  stopifnot(identical(c(user$start1, user$end1), c(11L, 12L)), user$source == "user-entered region")
+  expect_error(variant_parse_reference_region("12-11", 11L, 13L), "inside the analysis interval")
+  expect_error(variant_parse_reference_region("abc", 11L, 13L), "START-END")
+  rd <- variant_relative_depth(full, user)
+  stopifnot(isTRUE(all.equal(rd$normalized_depth[1:3], c(4, 6, NA) / 5)), isTRUE(all.equal(rd$normalized_depth[4:6], c(3, 0, 9) / 1.5)),
+            all(is.na(rd$normalized_depth[7:9])), grepl("user-entered region 11-12", attr(rd, "note"), fixed = TRUE),
+            identical(attr(rd, "reference"), user), identical(full$depth, before))
+  zero_ref <- variant_relative_depth(full, variant_parse_reference_region("12-12", 11L, 13L))
+  stopifnot(all(is.na(zero_ref$normalized_depth[4:6])), all(is.na(variant_relative_depth(full, NULL)$normalized_depth)))
   cat("Normalized depth display: PASS\n")
 }
 

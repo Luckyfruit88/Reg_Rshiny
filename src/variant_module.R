@@ -127,8 +127,14 @@ plot_variant_depth <- function(r, cfg, cols, normalized = NULL) {
   top <- if (any(finite)) max(d$mean_depth[finite]) else 1
   graphics::plot(NA, xlim = c(cfg$start1, cfg$end1), ylim = c(0, if (is.null(normalized)) max(1, top) else max(top, 1e-9)),
     xlab = paste0(r$variant$chrom[[1L]], " · 1-based position"),
-    ylab = if (is.null(normalized)) "Mean read depth / successful sample" else "Mean depth per 1,000 interval reads")
+    ylab = if (is.null(normalized)) "Mean read depth / successful sample" else
+      if (is.null(attr(normalized, "label"))) "Mean depth per 1,000 interval reads" else attr(normalized, "label"))
   if (!is.null(normalized)) graphics::mtext(attr(normalized, "note"), side = 3, line = .4, cex = .75)
+  ref <- attr(normalized, "reference")
+  if (!is.null(ref)) {
+    graphics::rect(ref$start1[[1L]] - .5, 0, ref$end1[[1L]] + .5, graphics::par("usr")[[4L]], col = grDevices::adjustcolor("gray50", .15), border = NA)
+    graphics::abline(h = 1, lty = 3, col = "gray50")
+  }
   if (!any(finite)) { graphics::text(mean(c(cfg$start1, cfg$end1)), .5, "No successfully analyzed RNA depth"); return(invisible(d)) }
   for (g in unique(d$genotype)) {
     x <- d[d$genotype == g, , drop = FALSE]; x <- x[order(x$pos1), , drop = FALSE]
@@ -252,7 +258,12 @@ variant_ui <- function(id) {
     uiOutput(ns("status"), role = "status", `aria-live` = "polite"),
     uiOutput(ns("selected_variant")),
     radioButtons(ns("depth_scale"), "RNA depth display (Genotype comparison and RNA allele evidence plots)",
-      c("Raw depth" = "raw", "Per 1,000 interval reads" = "normalized"), selected = "raw", inline = TRUE),
+      c("Raw depth" = "raw", "Per 1,000 interval reads" = "normalized", "Relative to a reference exon" = "relative"),
+      selected = "raw", inline = TRUE),
+    conditionalPanel(sprintf("input['%s'] === 'relative'", ns("depth_scale")),
+      textInput(ns("depth_reference"), "Reference region (1-based START-END inside the interval)",
+        placeholder = "Blank: nearest GENCODE basic exon at least 50 bp from the variant"),
+      helpText("Each genotype's depth is divided by its own mean depth over this region, so the region reads 1 for every genotype. Choose a region the variant should not affect.")),
     bslib::navset_card_tab(id = ns("result_tabs"),
       bslib::nav_panel("Genotype comparison",
         h5("Observed genotype groups and sample accounting"),
@@ -1250,13 +1261,43 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       stats::setNames(grDevices::hcl.colors(max(1L, length(groups)), palette = "Dark 3"), groups)
     })
     # Display-only depth scale shared by both depth plots; exports and models use raw depth.
-    depth_scale <- reactive(if (identical(input$depth_scale, "normalized")) "normalized" else "raw")
+    depth_scale <- reactive(if (isTRUE(input$depth_scale %in% c("normalized", "relative"))) input$depth_scale else "raw")
+    # Full-cohort jobs keep per-sample depth only in their checkpoints: read and
+    # verify them once per opened job; any failure falls back to the
+    # ratio-of-means approximation and says why.
+    checkpoint_sums <- reactive({
+      r <- result(); job <- loaded_job()
+      if (!identical(active_mode(), "all") || length(job) != 1L || !is.function(backend$variant_checkpoint_depth_sums)) return(NULL)
+      shiny::withProgress(message = "Reading per-sample depth from job checkpoints", value = .5,
+        tryCatch(backend$variant_checkpoint_depth_sums(job, r), error = function(e) e))
+    })
     normalized_depth <- reactive({
       req(is.function(backend$variant_normalized_depth))
-      backend$variant_normalized_depth(result())
+      cs <- checkpoint_sums()
+      nd <- backend$variant_normalized_depth(result(), checkpoint_sums = if (inherits(cs, "error")) NULL else cs)
+      if (inherits(cs, "error")) attr(nd, "note") <- paste0(attr(nd, "note"), " — checkpoints not used: ", conditionMessage(cs))
+      nd
     })
-    output$depth_plot <- renderPlot(plot_variant_depth(result(), launched_config(), group_colors(),
-      if (identical(depth_scale(), "normalized")) normalized_depth() else NULL))
+    depth_reference <- reactive({
+      r <- result(); cfg <- launched_config()
+      text <- trimws(if (is.null(input$depth_reference)) "" else input$depth_reference)
+      tryCatch({
+        if (nzchar(text)) return(backend$variant_parse_reference_region(text, cfg$start1, cfg$end1))
+        if (is.null(annotation_api) || is.null(annotation_resources) || inherits(annotation_resources, "error"))
+          stop("GENCODE is unavailable; enter a reference region.")
+        a <- annotation_api$query_annotation(annotation_resources, cfg$chrom, cfg$start1, cfg$end1, build = r$variant$build[[1L]])
+        backend$variant_reference_exon(a, cfg$chrom, cfg$start1, cfg$end1, r$variant$pos1[[1L]])
+      }, error = function(e) e)
+    })
+    relative_depth <- reactive({
+      req(is.function(backend$variant_relative_depth))
+      ref <- depth_reference()
+      out <- backend$variant_relative_depth(result(), if (inherits(ref, "error")) NULL else ref)
+      if (inherits(ref, "error")) attr(out, "note") <- conditionMessage(ref)
+      out
+    })
+    depth_display <- reactive(switch(depth_scale(), normalized = normalized_depth(), relative = relative_depth(), NULL))
+    output$depth_plot <- renderPlot(plot_variant_depth(result(), launched_config(), group_colors(), depth_display()))
     output$junction_chart <- renderUI({
       n <- max(1L, nrow(result()$group_summary))
       plotOutput(session$ns("junction_plot"), height = max(260, 170 * n))
@@ -1297,8 +1338,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
     })
     splice_evidence_server("splice", result = result, reference = splice_reference,
       model_source = splice_file, annotation_resources = annotation_resources,
-      annotation_source = annotation_file, depth_scale = depth_scale,
-      normalized_depth = reactive(if (identical(depth_scale(), "normalized")) normalized_depth() else NULL))
+      annotation_source = annotation_file, depth_scale = depth_scale, normalized_depth = depth_display)
     output$audit <- renderPrint({
       r <- result()
       cat(if (identical(result_mode(), "all")) "All matched BAMs with complete DNA calls\n" else "Exploratory deterministic sample subset\n")
