@@ -664,6 +664,60 @@ variant_bin_ratio_samples <- function(result) {
   out
 }
 
+# Display-only depth normalized by interval reads (the Model 1 denominator):
+# mean over a group's successful samples of depth / retained_reads x per.
+# per_sample: computed so when every successful sample of the group kept its
+# per-position depth (preview results). group_ratio: full-cohort results keep
+# only group means, so the group mean depth is divided by the group's mean
+# retained_reads (a ratio of means, not a mean of ratios). Groups without
+# successful samples stay NA; samples with no retained reads have no defined
+# value and are left out of the per-sample mean. result$depth is not changed.
+variant_normalized_depth <- function(result, per = 1000) {
+  d <- result$depth
+  out <- data.frame(genotype = d$genotype, pos1 = d$pos1, normalized_depth = NA_real_, stringsAsFactors = FALSE)
+  attr(out, "method") <- "none"; attr(out, "per") <- per
+  attr(out, "note") <- variant_normalized_depth_note("none", per)
+  s <- result$samples
+  if (!nrow(d) || !is.data.frame(s) || !"retained_reads" %in% names(s)) return(out)
+  ok <- s$status == "SUCCESS"
+  methods <- character()
+  for (g in unique(as.character(d$genotype))) {
+    rows <- which(d$genotype == g)
+    idx <- which(ok & s$genotype == g)
+    if (!length(idx)) next
+    reads <- as.numeric(s$retained_reads[idx])
+    per_sample <- lapply(result$sample_results[idx], function(z)
+      if (is.list(z) && is.data.frame(z$depth) && "depth" %in% names(z$depth)) z$depth else NULL)
+    exact <- length(per_sample) == length(idx) && all(vapply(per_sample, function(z)
+      !is.null(z) && identical(as.integer(z$pos1), as.integer(d$pos1[rows])), logical(1)))
+    if (exact) {
+      usable <- is.finite(reads) & reads > 0
+      if (any(usable)) out$normalized_depth[rows] <- Reduce(`+`, Map(function(z, n) z$depth * per / n,
+        per_sample[usable], reads[usable])) / sum(usable)
+      methods <- c(methods, "per_sample")
+    } else {
+      m <- mean(reads)
+      if (is.finite(m) && m > 0) out$normalized_depth[rows] <- d$mean_depth[rows] * per / m
+      methods <- c(methods, "group_ratio")
+    }
+  }
+  attr(out, "method") <- if (!length(methods)) "none" else if (all(methods == "per_sample")) "per_sample" else
+    if (all(methods == "group_ratio")) "group_ratio" else "mixed"
+  attr(out, "note") <- variant_normalized_depth_note(attr(out, "method"), per)
+  out
+}
+
+# Subtitle text for a normalized depth plot, stating which definition was used.
+variant_normalized_depth_note <- function(method, per = 1000) {
+  per <- format(per, big.mark = ",")
+  switch(method,
+    per_sample = paste0("Depth / sample's interval reads x ", per, ", averaged over successful samples"),
+    group_ratio = paste0("Approximation: group mean depth / group mean interval reads x ", per,
+                         " (ratio of means; per-sample depth was not saved)"),
+    mixed = paste0("Per-sample mean of depth / interval reads x ", per, " where per-sample depth was saved; otherwise ratio of group means"),
+    "No successful samples to normalize")
+}
+
 variant_bind_bin_counts <- function(parts) {
   if (length(parts)) return(do.call(rbind, parts))
   data.frame(vcf_sample = character(), genotype = character(), site_id = character(), intron_count = integer(),

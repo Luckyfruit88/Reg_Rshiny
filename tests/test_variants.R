@@ -169,6 +169,40 @@ run_bin_count_fixture <- function() {
   length(fx$cases)
 }
 
+# Display-only depth per 1,000 interval reads, checked against hand arithmetic.
+run_normalized_depth_tests <- function() {
+  depth <- data.frame(genotype = rep(c("0/0", "0/1", "1/1"), each = 3L), chrom = "c", pos1 = rep(11:13, 3L),
+                      mean_depth = c(4, 6, NA, 3, 0, 9, NA, NA, NA), analyzed_n = rep(c(2L, 2L, 0L), each = 3L))
+  samples <- data.frame(vcf_sample = c("a", "b", "c", "d", "e"), genotype = c("0/0", "0/0", "0/1", "0/1", "1/1"),
+                        status = c("SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "FAILED"),
+                        retained_reads = c(1000, 3000, 500, 1500, NA), stringsAsFactors = FALSE)
+  # Full-cohort results keep no per-sample depth: ratio of group means.
+  full <- list(depth = depth, samples = samples, sample_results = vector("list", 5L))
+  before <- full$depth
+  nd <- variant_normalized_depth(full)
+  stopifnot(attr(nd, "method") == "group_ratio", grepl("^Approximation: group mean depth / group mean interval reads", attr(nd, "note")),
+            isTRUE(all.equal(nd$normalized_depth[1:2], c(4, 6) * 1000 / 2000)),
+            isTRUE(all.equal(nd$normalized_depth[4:6], c(3, 0, 9) * 1000 / 1000)),
+            is.na(nd$normalized_depth[[3L]]), all(is.na(nd$normalized_depth[7:9])),
+            identical(full$depth, before), identical(nd$pos1, depth$pos1))
+  # Preview results keep per-sample depth: mean over samples of depth / reads x 1000.
+  sd <- function(v) list(depth = data.frame(chrom = "c", pos1 = 11:13, depth = v))
+  preview <- full
+  preview$sample_results <- list(sd(c(2, 4, 0)), sd(c(6, 9, 3)), sd(c(1, 0, 4)), sd(c(5, 0, 14)), NULL)
+  preview$depth$mean_depth[1:6] <- c(4, 6.5, 1.5, 3, 0, 9)
+  np <- variant_normalized_depth(preview)
+  hand00 <- (c(2, 4, 0) / 1000 + c(6, 9, 3) / 3000) / 2 * 1000
+  hand01 <- (c(1, 0, 4) / 500 + c(5, 0, 14) / 1500) / 2 * 1000
+  stopifnot(attr(np, "method") == "per_sample", isTRUE(all.equal(np$normalized_depth[1:3], hand00)),
+            isTRUE(all.equal(np$normalized_depth[4:6], hand01)), all(is.na(np$normalized_depth[7:9])),
+            grepl("averaged over successful samples", attr(np, "note"), fixed = TRUE))
+  # A successful sample with no retained reads has no defined value and is left out.
+  zero <- preview; zero$samples$retained_reads[[2L]] <- 0
+  zero$sample_results[[2L]] <- sd(c(0, 0, 0))
+  stopifnot(isTRUE(all.equal(variant_normalized_depth(zero)$normalized_depth[1:3], c(2, 4, 0))))
+  cat("Normalized depth display: PASS\n")
+}
+
 run_bin_ratio_tests <- function() {
   # Bin geometry for all four type/strand combinations, default and custom widths.
   s <- variant_bin_geometry(c("chr6", "c", "c", "c"), c(36436774, 171014496, 87461021, 15711275),
@@ -384,6 +418,7 @@ run_variant_tests <- function(native = TRUE) {
   run_model1_gate_tests()
   run_model1_calibration()
   run_bin_ratio_tests()
+  run_normalized_depth_tests()
   unsupported <- variant_aggregate(NULL, calls, selected, list(r1, r2, NULL, NULL), cfg, FALSE)
   stopifnot(all(is.na(unsupported$rna_bases$count)), all(unsupported$rna_bases$evidence_status == "UNSUPPORTED_NON_SNV"))
   missing_base <- r2
