@@ -131,7 +131,10 @@ splice_motif_label <- function(model, genotype) {
 }
 
 # Public plotting function reused by the UI, downloads and independent checks.
-plot_splice_coverage <- function(model, annotation = NULL) {
+# normalized: optional variant_normalized_depth() table (genotype, pos1,
+# normalized_depth, attr note); when given, tiles show depth per 1,000
+# interval reads instead of raw mean depth. Display only.
+plot_splice_coverage <- function(model, annotation = NULL, normalized = NULL) {
   w <- model$window; g <- splice_called_groups(model)
   labels <- vapply(seq_len(nrow(g)), function(i) {
     dna <- if (!is.na(g$dna_alleles[[i]]) && nzchar(g$dna_alleles[[i]])) g$dna_alleles[[i]] else "DNA alleles unavailable"
@@ -141,21 +144,28 @@ plot_splice_coverage <- function(model, annotation = NULL) {
   }, character(1))
   # Left margin wide enough for the longest genotype label, so it is never clipped.
   need <- if (length(labels)) max(graphics::strwidth(labels, units = "inches", cex = .76)) / graphics::par("csi") + 2 else 0
-  old <- graphics::par(mar = c(4.8, max(9.5, need), 4.2, 3.2))
+  # One extra top line holds the normalization definition under the title.
+  old <- graphics::par(mar = c(4.8, max(9.5, need), if (is.null(normalized)) 4.2 else 5.4, 3.2))
   on.exit(graphics::par(old))
   if (!nrow(g)) { graphics::plot.new(); graphics::text(.5, .5, "No called DNA genotype groups in this saved result"); return(invisible(NULL)) }
   positions <- seq.int(w$start1, w$end1)
   d <- model$coverage
+  if (!is.null(normalized)) {
+    # Unmatched positions stay NA (unavailable), never zero.
+    d$mean_depth <- normalized$normalized_depth[match(paste(d$genotype, d$pos1), paste(normalized$genotype, normalized$pos1))]
+  }
   observed <- d$mean_depth[is.finite(d$mean_depth) & d$genotype %in% g$genotype]
   ymax <- if (length(observed) && max(observed) > 0) max(observed) else 1
   n <- nrow(g); top <- 2.0 + (n - 1L) * 1.3 + 1.0
   graphics::plot(NA, xlim = c(w$start1 - .5, w$end1 + .5), ylim = c(0, top), xaxs = "i", yaxs = "i",
-    xlab = paste0(w$chrom, " · genomic position (1-based)"), ylab = "", yaxt = "n",
-    main = "RNA coverage at base resolution · saved genotype groups")
+    xlab = paste0(w$chrom, " · genomic position (1-based)"), ylab = "", yaxt = "n")
+  graphics::title(main = "RNA coverage at base resolution · saved genotype groups", line = if (is.null(normalized)) NA else 2.9)
   exon <- splice_exon_regions(annotation, w)
   graphics::mtext(paste0("One shared height scale: 0-", format(signif(ymax, 3), trim = TRUE),
-    " mean RNA depth · each tile is one genomic base",
+    if (is.null(normalized)) " mean RNA depth" else " mean depth per 1,000 interval reads",
+    " · each tile is one genomic base",
     if (nrow(exon)) paste0(" · gray: exon in ", attr(exon, "source")) else ""), side = 3, line = .5, cex = .8)
+  if (!is.null(normalized)) graphics::mtext(attr(normalized, "note"), side = 3, line = 1.4, cex = .72)
   colors <- grDevices::hcl.colors(max(3L, n), "Dark 3")[seq_len(n)]
   for (i in seq_len(n)) {
     baseline <- 2 + (n - i) * 1.3
@@ -296,8 +306,12 @@ splice_evidence_ui <- function(id) {
 }
 
 splice_evidence_server <- function(id, result, reference, model_source,
-                                   annotation_resources = NULL, annotation_source = NULL) {
+                                   annotation_resources = NULL, annotation_source = NULL,
+                                   depth_scale = NULL, normalized_depth = NULL) {
   shiny::moduleServer(id, function(input, output, session) {
+    # Display-only depth scale from the parent view; NULL keeps raw depth.
+    coverage_scale <- shiny::reactive(if (!is.null(depth_scale) && identical(depth_scale(), "normalized") &&
+                                          !is.null(normalized_depth)) normalized_depth() else NULL)
     compact_result <- shiny::reactive({
       r <- result()
       cfg <- r$provenance$config
@@ -389,7 +403,7 @@ splice_evidence_server <- function(id, result, reference, model_source,
     })
     output$coverage_plot_ui <- shiny::renderUI(shiny::plotOutput(session$ns("coverage_plot"),
       height = max(340L, 160L + 105L * nrow(splice_called_groups(model())))))
-    output$coverage_plot <- shiny::renderPlot(plot_splice_coverage(model(), answer()$annotation))
+    output$coverage_plot <- shiny::renderPlot(plot_splice_coverage(model(), answer()$annotation, coverage_scale()))
     output$motif_note <- shiny::renderUI({
       m <- model(); s <- splice_primary_site(m); b <- splice_rna_boundaries(m)
       shiny::tagList(
@@ -419,13 +433,13 @@ splice_evidence_server <- function(id, result, reference, model_source,
     output$coverage_png <- shiny::downloadHandler("splice_base_resolution.png", function(file) {
       grDevices::png(file, width = 1800, height = max(650, 280 + 180 * nrow(splice_called_groups(model()))), res = 160)
       on.exit(grDevices::dev.off())
-      plot_splice_coverage(model(), answer()$annotation)
+      plot_splice_coverage(model(), answer()$annotation, coverage_scale())
     })
     output$coverage_pdf <- shiny::downloadHandler("splice_base_resolution.pdf", function(file) {
       if (capabilities("cairo")) grDevices::cairo_pdf(file, width = 12, height = max(4.5, 2 + 1.2 * nrow(splice_called_groups(model())))) else
         grDevices::pdf(file, width = 12, height = max(4.5, 2 + 1.2 * nrow(splice_called_groups(model()))), useDingbats = FALSE)
       on.exit(grDevices::dev.off())
-      plot_splice_coverage(model(), answer()$annotation)
+      plot_splice_coverage(model(), answer()$annotation, coverage_scale())
     })
     output$junction_csv <- shiny::downloadHandler("nearby_rna_junction_evidence.csv", function(file)
       utils::write.csv(splice_near_junctions(model()), file, row.names = FALSE, na = "NA"))

@@ -81,6 +81,14 @@ grDevices::png(draw_png, width = 1800, height = 900, res = 160)
 layout <- plot_splice_coverage(m, annotation)
 grDevices::dev.off()
 stopifnot(layout$ymax == 15, 108L %in% layout$boundary_positions, file.info(draw_png)$size > 1000)
+# Normalized display: tiles use the normalized table on one shared scale, NA stays unavailable.
+norm <- data.frame(genotype = m$coverage$genotype, pos1 = m$coverage$pos1, normalized_depth = m$coverage$mean_depth / 2)
+norm$normalized_depth[norm$genotype == "1/1" & norm$pos1 == 110L] <- NA_real_
+attr(norm, "note") <- "synthetic normalization note"
+grDevices::png(file.path(scratch, "coverage_norm.png"), width = 1800, height = 900, res = 160)
+norm_layout <- plot_splice_coverage(m, annotation, norm)
+grDevices::dev.off()
+stopifnot(norm_layout$ymax == 7.5, layout$ymax == 15)
 # Boundary markers sit on the exon-intron edge and carry total reads across genotypes.
 b <- splice_rna_boundaries(m)
 stopifnot(identical(b$edge, c(100.5, 108.5)), identical(b$reads, c(32, 69)), identical(layout$boundary_edges, c(100.5, 108.5)))

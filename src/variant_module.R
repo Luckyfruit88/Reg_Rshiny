@@ -115,6 +115,32 @@ variant_draw_bin_sites <- function(sites, top) {
   invisible(TRUE)
 }
 
+# Genotype-group mean RNA depth. normalized: optional variant_normalized_depth()
+# table; when given, lines show depth per 1,000 interval reads (display only).
+# NA (failed / unavailable) breaks the line instead of being drawn as zero, and
+# all groups share one y axis. Returns the plotted values invisibly.
+plot_variant_depth <- function(r, cfg, cols, normalized = NULL) {
+  d <- r$depth
+  if (!is.null(normalized)) d$mean_depth <- normalized$normalized_depth[match(paste(d$genotype, d$pos1),
+                                                                            paste(normalized$genotype, normalized$pos1))]
+  finite <- if (nrow(d)) is.finite(d$mean_depth) else logical()
+  top <- if (any(finite)) max(d$mean_depth[finite]) else 1
+  graphics::plot(NA, xlim = c(cfg$start1, cfg$end1), ylim = c(0, if (is.null(normalized)) max(1, top) else max(top, 1e-9)),
+    xlab = paste0(r$variant$chrom[[1L]], " · 1-based position"),
+    ylab = if (is.null(normalized)) "Mean read depth / successful sample" else "Mean depth per 1,000 interval reads")
+  if (!is.null(normalized)) graphics::mtext(attr(normalized, "note"), side = 3, line = .4, cex = .75)
+  if (!any(finite)) { graphics::text(mean(c(cfg$start1, cfg$end1)), .5, "No successfully analyzed RNA depth"); return(invisible(d)) }
+  for (g in unique(d$genotype)) {
+    x <- d[d$genotype == g, , drop = FALSE]; x <- x[order(x$pos1), , drop = FALSE]
+    graphics::lines(x$pos1, x$mean_depth, col = cols[[g]], lwd = 1.8)
+  }
+  graphics::abline(v = r$variant$pos1[[1L]], lty = 2, col = "gray40")
+  variant_draw_bin_sites(if (is.list(r$bin_ratio) && !isTRUE(r$bin_ratio$disabled)) r$bin_ratio$sites else NULL, graphics::par("usr")[[4L]])
+  shown <- unique(as.character(d$genotype[finite]))
+  graphics::legend("topright", legend = shown, col = cols[shown], lty = 1, lwd = 2, bty = "n", cex = .85)
+  invisible(d)
+}
+
 # Model 1 bin ratio, drawn from the same samples and values the model fits:
 # per-sample ratio of the analysed samples by ALT dosage, their mean per dosage
 # (mean_ratio_dosage*) and the fitted OLS line (beta). Points beyond the 1st-99th
@@ -223,6 +249,8 @@ variant_ui <- function(id) {
     uiOutput(ns("job_progress")),
     uiOutput(ns("status"), role = "status", `aria-live` = "polite"),
     uiOutput(ns("selected_variant")),
+    radioButtons(ns("depth_scale"), "RNA depth display (Genotype comparison and RNA allele evidence plots)",
+      c("Raw depth" = "raw", "Per 1,000 interval reads" = "normalized"), selected = "raw", inline = TRUE),
     bslib::navset_card_tab(id = ns("result_tabs"),
       bslib::nav_panel("Genotype comparison",
         h5("Observed genotype groups and sample accounting"),
@@ -1206,21 +1234,14 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       groups <- as.character(result()$group_summary$genotype)
       stats::setNames(grDevices::hcl.colors(max(1L, length(groups)), palette = "Dark 3"), groups)
     })
-    output$depth_plot <- renderPlot({
-      r <- result(); d <- r$depth; cfg <- launched_config(); cols <- group_colors()
-      finite <- if (nrow(d)) is.finite(d$mean_depth) else logical()
-      plot(NA, xlim = c(cfg$start1, cfg$end1), ylim = c(0, if (any(finite)) max(1, d$mean_depth[finite]) else 1),
-        xlab = paste0(r$variant$chrom[[1L]], " · 1-based position"), ylab = "Mean read depth / successful sample")
-      if (!any(finite)) { text(mean(c(cfg$start1, cfg$end1)), .5, "No successfully analyzed RNA depth"); return(invisible(NULL)) }
-      for (g in unique(d$genotype)) {
-        x <- d[d$genotype == g, , drop = FALSE]; x <- x[order(x$pos1), , drop = FALSE]
-        lines(x$pos1, x$mean_depth, col = cols[[g]], lwd = 1.8)
-      }
-      abline(v = r$variant$pos1[[1L]], lty = 2, col = "gray40")
-      variant_draw_bin_sites(if (is.list(r$bin_ratio) && !isTRUE(r$bin_ratio$disabled)) r$bin_ratio$sites else NULL, par("usr")[[4L]])
-      shown <- unique(as.character(d$genotype[finite]))
-      legend("topright", legend = shown, col = cols[shown], lty = 1, lwd = 2, bty = "n", cex = .85)
+    # Display-only depth scale shared by both depth plots; exports and models use raw depth.
+    depth_scale <- reactive(if (identical(input$depth_scale, "normalized")) "normalized" else "raw")
+    normalized_depth <- reactive({
+      req(is.function(backend$variant_normalized_depth))
+      backend$variant_normalized_depth(result())
     })
+    output$depth_plot <- renderPlot(plot_variant_depth(result(), launched_config(), group_colors(),
+      if (identical(depth_scale(), "normalized")) normalized_depth() else NULL))
     output$junction_chart <- renderUI({
       n <- max(1L, nrow(result()$group_summary))
       plotOutput(session$ns("junction_plot"), height = max(260, 170 * n))
@@ -1261,7 +1282,8 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
     })
     splice_evidence_server("splice", result = result, reference = splice_reference,
       model_source = splice_file, annotation_resources = annotation_resources,
-      annotation_source = annotation_file)
+      annotation_source = annotation_file, depth_scale = depth_scale,
+      normalized_depth = reactive(if (identical(depth_scale(), "normalized")) normalized_depth() else NULL))
     output$audit <- renderPrint({
       r <- result()
       cat(if (identical(result_mode(), "all")) "All matched BAMs with complete DNA calls\n" else "Exploratory deterministic sample subset\n")

@@ -55,6 +55,20 @@ await_task <- function(task, session) {
   stop("Synthetic async UI test timed out")
 }
 stopifnot(inherits(variant_ui("test"), "shiny.tag"))
+# The depth display toggle defaults to raw depth.
+depth_toggle <- as.character(variant_ui("test"))
+stopifnot(grepl('id="test-depth_scale"', depth_toggle, fixed = TRUE),
+          grepl('value="raw" checked', depth_toggle, fixed = TRUE), !grepl('value="normalized" checked', depth_toggle, fixed = TRUE))
+# Normalized depth plot: values from the table, NA kept as NA, one shared axis.
+nd_fixture <- list(variant = data.frame(chrom = "c", pos1 = 12L), bin_ratio = list(disabled = TRUE),
+  depth = data.frame(genotype = rep(c("0/0", "0/1"), each = 3L), pos1 = rep(11:13, 2L), mean_depth = c(4, 6, NA, 3, 0, 9)))
+nd_table <- data.frame(genotype = rep(c("0/0", "0/1"), each = 3L), pos1 = rep(11:13, 2L), normalized_depth = c(2, 3, NA, 3, 0, 9))
+attr(nd_table, "note") <- "synthetic note"
+grDevices::png(tempfile(fileext = ".png"))
+drawn <- plot_variant_depth(nd_fixture, list(start1 = 11L, end1 = 13L), c("0/0" = "red", "0/1" = "blue"), nd_table)
+raw_drawn <- plot_variant_depth(nd_fixture, list(start1 = 11L, end1 = 13L), c("0/0" = "red", "0/1" = "blue"))
+grDevices::dev.off()
+stopifnot(identical(drawn$mean_depth, nd_table$normalized_depth), identical(raw_drawn$mean_depth, nd_fixture$depth$mean_depth))
 shiny::testServer(variant_server,
   args = list(backend = backend, resources = list(build = "SYNTHETIC", vcf_registry = data.frame(chrom = "chr1"), samples = data.frame(vcf_sample = "s1")),
     backend_file = backend_file, variant_file = fixture_file, splice_file = splice_file), {
@@ -453,6 +467,14 @@ shiny::testServer(variant_server,
     session$setInputs(record = "1", run = 1)
     await_task(analysis_task, session)
     stopifnot(isolate(analysis_task$status()) == "success")
+    # Depth scale: raw by default; normalized switches both plots without touching the result.
+    stopifnot(isolate(depth_scale()) == "raw")
+    raw_depth <- isolate(result()$depth)
+    session$setInputs(depth_scale = "normalized")
+    stopifnot(isolate(depth_scale()) == "normalized", nzchar(output$depth_plot$src),
+              identical(isolate(result()$depth), raw_depth),
+              attr(isolate(normalized_depth()), "method") %in% c("per_sample", "group_ratio"))
+    session$setInputs(depth_scale = "raw")
     a <- isolate(bin_ratio_association())
     stopifnot(nrow(a) == 1L, a$status == "TOO_FEW_SAMPLES", a$ratio_mean_all_dosage1 == 0.9,
               a$bin_check == "EXON_SHORTER_THAN_BIN")
