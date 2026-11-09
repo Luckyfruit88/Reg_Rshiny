@@ -489,7 +489,8 @@ shiny::testServer(variant_server,
     # The plots draw the association they sit next to, and the depth plot shades the bins.
     stopifnot(nrow(isolate(bin_ratio_samples())) == 1L, nzchar(output$bin_ratio_plot$src),
               nzchar(output$depth_plot$src),
-              grepl("Model 1 analyses", html_text(output$bin_ratio_plot_ui), fixed = TRUE))
+              grepl("Model 1 analyses", html_text(output$bin_ratio_plot_ui), fixed = TRUE),
+              grepl("max-width: 480px", as.character(output$bin_ratio_plot_ui$html), fixed = TRUE))
     session$setInputs(bin_ratio = FALSE)
     stopifnot(grepl("Not computed", html_text(output$bin_sites_ui), fixed = TRUE))
   })
