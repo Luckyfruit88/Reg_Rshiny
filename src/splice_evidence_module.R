@@ -86,12 +86,14 @@ splice_exon_regions <- function(annotation, window) {
   attr(empty, "source") <- "none"
   if (is.null(annotation) || inherits(annotation, "error") || is.null(annotation$exons) || !nrow(annotation$exons)) return(empty)
   e <- annotation$exons
-  source <- "all GENCODE transcripts"
+  release <- annotation$metadata$release
+  gencode <- if (length(release) == 1L && !is.na(release) && nzchar(release)) paste0("GENCODE v", release) else "GENCODE"
+  source <- paste("all", gencode, "transcripts")
   tx <- annotation$transcripts
   if (is.data.frame(tx) && nrow(tx) && "tags" %in% names(tx) && any(!is.na(tx$tags) & nzchar(tx$tags))) {
     basic <- tx$transcript_id[grepl("(^|;)basic(;|$)", ifelse(is.na(tx$tags), "", tx$tags))]
     e <- e[e$transcript_id %in% basic, , drop = FALSE]
-    source <- "GENCODE basic transcripts"
+    source <- paste(gencode, "basic transcripts")
   }
   e <- e[e$chrom == window$chrom & e$start1 <= window$end1 & e$end1 >= window$start1, , drop = FALSE]
   attr(empty, "source") <- source
@@ -310,6 +312,9 @@ splice_evidence_server <- function(id, result, reference, model_source,
                                    annotation_resources = NULL, annotation_source = NULL,
                                    depth_scale = NULL, normalized_depth = NULL) {
   shiny::moduleServer(id, function(input, output, session) {
+    # annotation_resources may be a function returning the selected release.
+    current_annotation <- if (is.function(annotation_resources)) annotation_resources else {
+      fixed <- annotation_resources; function() fixed }
     # Display-only depth scale from the parent view (per interval reads or
     # relative to a reference region); NULL keeps raw depth.
     coverage_scale <- shiny::reactive(if (!is.null(depth_scale) && !identical(depth_scale(), "raw") &&
@@ -326,8 +331,9 @@ splice_evidence_server <- function(id, result, reference, model_source,
       list(chrom = cfg$chrom, start1 = cfg$start1, end1 = cfg$end1, build = r$variant$build[[1L]])
     })
     context_key <- shiny::reactive({
-      x <- context()
-      paste(x$build, x$chrom, x$start1, x$end1, sep = ":")
+      x <- context(); a <- current_annotation()
+      release <- if (is.list(a) && !inherits(a, "error") && length(a$release) == 1L) a$release else "none"
+      paste(x$build, x$chrom, x$start1, x$end1, release, sep = ":")
     })
     annotation_cache <- shiny::reactiveVal(NULL)
     annotation_task <- shiny::ExtendedTask$new(function(resources, interval, source, key) {
@@ -343,9 +349,10 @@ splice_evidence_server <- function(id, result, reference, model_source,
       key <- context_key()
       old <- annotation_cache()
       if (!is.null(old) && identical(old$key, key)) return()
-      if (is.null(annotation_resources) || inherits(annotation_resources, "error") || is.null(annotation_source)) {
-        annotation_cache(list(key = key, value = if (inherits(annotation_resources, "error")) annotation_resources else NULL))
-      } else annotation_task$invoke(annotation_resources, context(), annotation_source, key)
+      res <- current_annotation()
+      if (is.null(res) || inherits(res, "error") || is.null(annotation_source)) {
+        annotation_cache(list(key = key, value = if (inherits(res, "error")) res else NULL))
+      } else annotation_task$invoke(res, context(), annotation_source, key)
     })
     shiny::observeEvent(annotation_task$status(), {
       if (annotation_task$status() == "success") annotation_cache(annotation_task$result())

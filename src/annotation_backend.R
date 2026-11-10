@@ -1,4 +1,4 @@
-# GENCODE v48 overlay for Reg_Shiny. This module does not rerun or alter RNA
+# GENCODE (v48 or v50) overlay for Reg_Shiny. This module does not rerun or alter RNA
 # counting, genotype grouping, persistent variant jobs or their fingerprints.
 .regshiny_annotation_source <- local({
   paths <- vapply(sys.frames(), function(frame) {
@@ -38,16 +38,28 @@ annotation_command <- function(args, script = file.path(dirname(dirname(.regshin
   jsonlite::fromJSON(output, simplifyVector = TRUE)
 }
 
-load_annotation_resources <- function(db = Sys.getenv("REGSHINY_ANNOTATION_DB")) {
+# Releases sharing one index contract; an index records its own release.
+annotation_supported_releases <- function() c("48", "50")
+
+annotation_release_label <- function(x) {
+  release <- if (is.list(x)) x$release else x
+  if (length(release) == 1L && !is.na(release) && nzchar(release)) paste0("GENCODE v", release) else "GENCODE"
+}
+
+# release: the release this index must hold (NULL accepts any supported one).
+load_annotation_resources <- function(db = Sys.getenv("REGSHINY_ANNOTATION_DB"), release = NULL) {
+  wanted <- if (is.null(release)) "" else paste0(" v", release)
   if (length(db) != 1L || is.na(db) || !nzchar(db) || !file.exists(db) || file.access(db, 4) != 0L)
-    stop("GENCODE v48 is not configured or its annotation index is not readable.")
+    stop("GENCODE", wanted, " is not configured or its annotation index is not readable.")
   db <- normalizePath(db, mustWork = TRUE)
   state <- annotation_file_state(db)
   metadata <- annotation_command(c("metadata", "--db", db))
   if (!identical(state, annotation_file_state(db))) stop("The annotation index changed during initialization.")
-  if (!identical(metadata$release, "48") || !identical(metadata$build, "GRCh38") ||
+  if (!isTRUE(metadata$release %in% annotation_supported_releases()) || !identical(metadata$build, "GRCh38") ||
       !identical(metadata$schema_version, "regshiny_gencode_v1"))
-    stop("The annotation resource must be GENCODE v48 on GRCh38.")
+    stop("The annotation resource must be GENCODE v48 or v50 on GRCh38.")
+  if (!is.null(release) && !identical(metadata$release, as.character(release)))
+    stop("This index holds GENCODE v", metadata$release, ", not v", release, ".")
   structure(list(db = db, build = metadata$build, release = metadata$release,
     metadata = metadata, source_state = state,
     query_script = file.path(dirname(dirname(.regshiny_annotation_source)), "scripts", "build_annotation.py")),
@@ -102,6 +114,7 @@ query_annotation <- function(resources, chrom, start1, end1, build = "GRCh38",
   answer$introns <- annotation_table(answer$introns, c(transcript_id = "character", gene_id = "character", chrom = "character",
     start1 = "integer", end1 = "integer", strand = "character", intron_number = "integer",
     intron_start1 = "integer", intron_end1 = "integer", donor1 = "integer", acceptor1 = "integer"))
+  answer$metadata$release <- resources$release
   answer$metadata$index_path <- resources$db
   answer$metadata$index_state <- resources$source_state
   answer$metadata$queried_at <- format(Sys.time(), tz = "UTC", usetz = TRUE)
@@ -119,7 +132,8 @@ annotate_junctions <- function(junctions, annotation) {
   for (name in c("annotation_status", "annotation_label", "matching_transcripts", "matching_genes", "matching_gene_names"))
     out[[name]] <- rep("", nrow(out))
   out$annotation_match_n <- integer(nrow(out))
-  out$annotation_release <- rep("GENCODE v48", nrow(out))
+  label <- annotation_release_label(annotation$metadata$release)
+  out$annotation_release <- rep(label, nrow(out))
   details <- list()
   introns <- annotation$introns
   key <- function(chrom, start, end) paste(chrom, start, end, sep = "|")
@@ -142,10 +156,10 @@ annotate_junctions <- function(junctions, annotation) {
         "No exact coordinate match in this annotation; RNA strand unresolved"
     } else if (length(exact)) {
       out$annotation_status[[i]] <- "ANNOTATED"
-      out$annotation_label[[i]] <- "Exact GENCODE v48 junction boundaries and strand"
+      out$annotation_label[[i]] <- paste("Exact", label, "junction boundaries and strand")
     } else {
       out$annotation_status[[i]] <- "NOT_IN_ANNOTATION"
-      out$annotation_label[[i]] <- "Not in GENCODE v48 at these exact boundaries and strand"
+      out$annotation_label[[i]] <- paste("Not in", label, "at these exact boundaries and strand")
     }
     if (length(exact)) {
       matches <- introns[exact, , drop = FALSE]

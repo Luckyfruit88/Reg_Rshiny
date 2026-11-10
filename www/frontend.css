@@ -78,3 +78,10 @@
 .datatables[id$="-genotypes"] table.dataTable {
   white-space: nowrap;
 }
+
+/* GENCODE release selector in the navbar's free space. */
+.regshiny-release { display: flex; align-items: center; padding: 0 .5rem; }
+.regshiny-release .form-group { margin-bottom: 0; display: flex; align-items: center; gap: .5rem; }
+.regshiny-release .control-label { margin-bottom: 0; font-weight: 600; font-size: .9rem; }
+.regshiny-release .shiny-options-group { display: flex; gap: .25rem; }
+.regshiny-release .radio-inline { margin: 0 0 0 .5rem; font-size: .9rem; }

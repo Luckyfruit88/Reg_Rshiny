@@ -28,7 +28,7 @@ writeLines(c(
   '  introns <- data.frame(transcript_id = ids, chrom = chrom, strand = tx$strand, start1 = 151L, end1 = 249L)',
   '  if (chrom == "chr2") {genes <- genes[FALSE, ]; tx <- tx[FALSE, ]; exons <- exons[FALSE, ]; features <- features[FALSE, ]; introns <- introns[FALSE, ]}',
   '  list(genes = genes, transcripts = tx, exons = exons, features = features, introns = introns,',
-  '    metadata = list(source = "SYNTHETIC_GENCODE_TEST_ONLY", release = "48", build = build, roi = list(chrom = chrom, start1 = start1, end1 = end1)))',
+  '    metadata = list(source = "SYNTHETIC_GENCODE_TEST_ONLY", release = resources$release, build = build, roi = list(chrom = chrom, start1 = start1, end1 = end1)))',
   '}',
   'annotate_junctions <- function(junctions, annotation) {',
   '  out <- junctions; out$annotation_status <- if (nrow(annotation$transcripts)) "EXACT_MATCH" else "NOT_IN_ANNOTATION"',
@@ -140,5 +140,31 @@ shiny::testServer(annotation_server, args = list(resources = resources, annotati
   stopifnot(grepl("length mismatch", html_text(output$status), fixed = TRUE))
   stopifnot(length(readLines(query_log)) == before + 1L)
 })
+# The page-level release selector passes a function: switching release re-queries
+# the same interval and relabels the card, status, track and downloads.
+release_value <- reactiveVal("48")
+releases <- list("48" = resources, "50" = modifyList(resources, list(release = "50")),
+  "99" = simpleError("Synthetic v99 index not built"))
+shiny::testServer(annotation_server, args = list(resources = reactive(releases[[release_value()]]),
+  annotation_file = fixture_file, region = reactive(base_region), display_range = reactive(c(100L, 400L)),
+  junctions = reactive(native), marker = reactive(125L)), {
+  session$flushReact(); await_task(annotation_task, session)
+  stopifnot(isolate(annotation())$metadata$release == "48", output$card_title == "GENCODE v48 · reference transcript models",
+    grepl("GENCODE v48 · GRCh38", html_text(output$status), fixed = TRUE))
+  n <- length(readLines(query_log))
+  release_value("50"); session$flushReact(); await_task(annotation_task, session)
+  stopifnot(length(readLines(query_log)) == n + 1L, isolate(annotation())$metadata$release == "50",
+    output$card_title == "GENCODE v50 · reference transcript models",
+    grepl("GENCODE v50 · GRCh38", html_text(output$status), fixed = TRUE),
+    identical(isolate(answer())$junctions$score, native$score))
+  release_value("99"); session$flushReact()
+  stopifnot(grepl("GENCODE unavailable: Synthetic v99 index not built", html_text(output$status), fixed = TRUE),
+    length(readLines(query_log)) == n + 1L)
+})
+stopifnot(annotation_resource_label(list(release = "50")) == "GENCODE v50",
+  annotation_resource_label(simpleError("x")) == "GENCODE", annotation_resource_label(NULL) == "GENCODE")
+grDevices::png(png_file, width = 900, height = 700)
+annotation_plot_models(modifyList(model, list(metadata = list(release = "50"))), c(100L, 400L))
+grDevices::dev.off()
 unlink(fixture_dir, recursive = TRUE)
 cat("ANNOTATION_UI_TESTS_OK\n")

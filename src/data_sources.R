@@ -228,6 +228,53 @@ data_source_run <- function(script, args, log_path, timeout = 3600) {
   invisible(output)
 }
 
+# GENCODE releases. The profile's own annotation_gtf is release 48 and is part
+# of the profile identity. Further releases are indexed per account beside it
+# and never enter the spec, so profile ids and saved jobs do not change.
+data_source_gencode_url <- function(release) sprintf(
+  "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_%s/gencode.v%s.chr_patch_hapl_scaff.annotation.gtf.gz", release, release)
+
+data_source_extra_annotation_gtfs <- function() {
+  v50 <- Sys.getenv("REGSHINY_GENCODE_V50_GTF",
+    "/restricted/projectnb/mtdna-alcohol/Jinjie_Jay/Reg_Shiny_output/resources/gencode_v50/gencode.v50.chr_patch_hapl_scaff.annotation.gtf.gz")
+  if (nzchar(v50)) c("50" = v50) else character()
+}
+
+# Private index location for one GTF + release. The key binds the GTF content,
+# the reference FAI and the builder, so a changed input gets a fresh index.
+data_source_annotation_db_path <- function(root, app_dir, gtf, release, reference_fasta) {
+  if (!file.exists(gtf) || file.access(gtf, 4) != 0L)
+    stop("GENCODE v", release, " source GTF is unavailable. RNA data remain usable.")
+  fai <- paste0(reference_fasta, ".fai")
+  key <- data_source_hash(list(gtf = gtf, gtf_md5 = unname(tools::md5sum(gtf)),
+    fai = if (nzchar(reference_fasta) && file.exists(fai)) unname(tools::md5sum(fai)) else NULL,
+    builder = unname(tools::md5sum(file.path(app_dir, "scripts", "build_annotation.py")))))
+  file.path(root, "resources", paste0("gencode", release, "-", key), "annotation.sqlite")
+}
+
+data_source_build_annotation <- function(root, app_dir, gtf, release, reference_fasta, publish = function(message) NULL) {
+  db <- data_source_annotation_db_path(root, app_dir, gtf, release, reference_fasta)
+  if (file.exists(db)) return(db)
+  resource_dir <- data_source_private_dir(dirname(db), create = TRUE)
+  publish(paste0("Building this account's private GENCODE v", release, " index; original GTF and RNA data are read-only."))
+  lock <- data_source_lock(file.path(resource_dir, ".build.lock"), app_dir)
+  on.exit(try(lock$kill(), silent = TRUE), add = TRUE)
+  if (!file.exists(db)) {
+    args <- c("build", "--gtf", gtf, "--output", db, "--release", release, "--build", "GRCh38",
+      "--source-url", data_source_gencode_url(release))
+    fai <- paste0(reference_fasta, ".fai")
+    if (nzchar(reference_fasta) && file.exists(fai)) args <- c(args, "--fai", fai)
+    data_source_run(file.path(app_dir, "scripts", "build_annotation.py"), args, file.path(resource_dir, "build.stderr"))
+    Sys.chmod(db, "0600")
+  }
+  db
+}
+
+# Extra releases are offered only where the profile itself has a GRCh38
+# GENCODE annotation; a profile without one gets none.
+data_source_has_annotation <- function(spec) identical(spec$build, "GRCh38") &&
+  (nzchar(spec$annotation_db) || nzchar(spec$annotation_gtf))
+
 data_source_api <- function(app_dir) {
   e <- new.env(parent = globalenv())
   for (name in c("backend.R", "variant_backend.R", "annotation_backend.R", "splice_evidence_backend.R"))
@@ -280,7 +327,16 @@ load_data_profile <- function(profile_dir, app_dir = getwd(), state_root = NULL)
   if (!all(indexed)) stop("A selected BAM index is no longer available.")
   issues <- config$issues
   annotation_resources <- if (config$spec$build != "GRCh38") simpleError("GENCODE v48 requires GRCh38.") else
-    tryCatch(e$load_annotation_resources(config$annotation_db), error = function(error) error)
+    tryCatch(e$load_annotation_resources(config$annotation_db, release = "48"), error = function(error) error)
+  annotation_releases <- list("48" = annotation_resources)
+  if (data_source_has_annotation(config$spec)) {
+    root <- dirname(dirname(profile_dir))
+    for (release in names(data_source_extra_annotation_gtfs())) annotation_releases[[release]] <- tryCatch({
+      db <- data_source_annotation_db_path(root, app_dir, data_source_extra_annotation_gtfs()[[release]], release, config$spec$reference_fasta)
+      if (!file.exists(db)) stop("The GENCODE v", release, " index has not been built for this account yet. Prepare and connect the dataset in Data sources to build it.")
+      e$load_annotation_resources(db, release = release)
+    }, error = function(error) error)
+  }
   splice_reference <- if (config$spec$build != "GRCh38") simpleError("The configured splice reference overlay requires GRCh38.") else
     tryCatch(e$load_splice_reference(config$spec$reference_fasta, receipt = config$spec$reference_receipt), error = function(error) error)
   if (!inherits(splice_reference, "error") && !inherits(variant_resources, "error")) {
@@ -306,8 +362,8 @@ load_data_profile <- function(profile_dir, app_dir = getwd(), state_root = NULL)
   list(id = config$id, label = config$spec$label, variant_resources = variant_resources,
     bam_root = if (length(bam_roots) == 1L) bam_roots[[1L]] else NULL,
     bam_choices = stats::setNames(bams, labels),
-    annotation_resources = annotation_resources, splice_reference = splice_reference,
-    job_root = data_source_private_dir(file.path(profile_dir, "jobs")), profile_dir = profile_dir,
+    annotation_resources = annotation_resources, annotation_releases = annotation_releases,
+    splice_reference = splice_reference, job_root = data_source_private_dir(file.path(profile_dir, "jobs")), profile_dir = profile_dir,
     config = config, issues = unique(issues))
 }
 
@@ -326,6 +382,22 @@ list_data_profiles <- function(app_dir = getwd(), state_root = NULL) {
   answer <- Filter(Negate(is.null), answer)
   if (length(answer)) do.call(rbind, answer) else data.frame(profile_dir = character(), id = character(),
     label = character(), kind = character(), created_at = character(), stringsAsFactors = FALSE)
+}
+
+# Builds any missing extra-release index. A failure is not fatal: that release
+# is then reported as unavailable. Returns TRUE when an index was built.
+data_source_prepare_extra_annotation <- function(root, app_dir, spec, publish) {
+  if (!data_source_has_annotation(spec)) return(FALSE)
+  built <- FALSE
+  for (release in names(data_source_extra_annotation_gtfs())) {
+    gtf <- data_source_extra_annotation_gtfs()[[release]]
+    db <- tryCatch(data_source_annotation_db_path(root, app_dir, gtf, release, spec$reference_fasta), error = function(e) NULL)
+    if (is.null(db) || file.exists(db)) next
+    ok <- tryCatch({ data_source_build_annotation(root, app_dir, gtf, release, spec$reference_fasta, publish); TRUE },
+      error = function(e) FALSE)
+    built <- built || ok
+  }
+  built
 }
 
 prepare_data_profile <- function(spec, app_dir = getwd(), state_root = NULL, progress_file = NULL,
@@ -351,6 +423,9 @@ prepare_data_profile <- function(spec, app_dir = getwd(), state_root = NULL, pro
       spec$build == "GRCh38" && !nzchar(spec$annotation_db) &&
       nzchar(spec$annotation_gtf) && file.exists(spec$annotation_gtf)
     if (!repair_annotation) {
+      if (isTRUE(build_annotation) && data_source_prepare_extra_annotation(root, app_dir, spec, function(message) {
+          stage <<- "PREPARING_ANNOTATION"; publish(message) }))
+        bundle <- load_data_profile(profile_dir, app_dir, state_root)
       data_source_progress(progress_file, "READY", "READY", "Validated cached private data profile.", id)
       done <- TRUE
       return(bundle)
@@ -399,33 +474,17 @@ prepare_data_profile <- function(spec, app_dir = getwd(), state_root = NULL, pro
   annotation_db <- spec$annotation_db; issues <- character()
   if (!nzchar(annotation_db) && spec$build == "GRCh38" && nzchar(spec$annotation_gtf)) {
     annotation_db <- tryCatch({
-      if (!file.exists(spec$annotation_gtf) || file.access(spec$annotation_gtf, 4) != 0L)
-        stop("GENCODE source GTF is unavailable. RNA data remain usable.")
-      key <- data_source_hash(list(gtf = spec$annotation_gtf, gtf_md5 = unname(tools::md5sum(spec$annotation_gtf)),
-        fai = if (nzchar(spec$reference_fasta) && file.exists(paste0(spec$reference_fasta, ".fai")))
-          unname(tools::md5sum(paste0(spec$reference_fasta, ".fai"))) else NULL,
-        builder = unname(tools::md5sum(file.path(app_dir, "scripts", "build_annotation.py")))))
-      resource_dir <- data_source_private_dir(file.path(root, "resources", paste0("gencode48-", key)), create = TRUE)
-      db <- file.path(resource_dir, "annotation.sqlite")
+      db <- data_source_annotation_db_path(root, app_dir, spec$annotation_gtf, "48", spec$reference_fasta)
       if (!file.exists(db)) {
         if (!isTRUE(build_annotation)) stop("GENCODE index has not been prepared for this clone.")
-        stage <- "PREPARING_ANNOTATION"; publish("Building this account's private GENCODE v48 index; original GTF and RNA data are read-only.")
-        annotation_lock <- data_source_lock(file.path(resource_dir, ".build.lock"), app_dir)
-        on.exit(try(annotation_lock$kill(), silent = TRUE), add = TRUE)
-        if (!file.exists(db)) {
-          args <- c("build", "--gtf", spec$annotation_gtf, "--output", db, "--release", "48", "--build", "GRCh38",
-            "--source-url", "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_48/gencode.v48.chr_patch_hapl_scaff.annotation.gtf.gz")
-          fai <- paste0(spec$reference_fasta, ".fai")
-          if (nzchar(spec$reference_fasta) && file.exists(fai)) args <- c(args, "--fai", fai)
-          data_source_run(file.path(app_dir, "scripts", "build_annotation.py"), args,
-            file.path(resource_dir, "build.stderr"))
-          Sys.chmod(db, "0600")
-        }
-        annotation_lock$kill()
+        stage <- "PREPARING_ANNOTATION"
+        db <- data_source_build_annotation(root, app_dir, spec$annotation_gtf, "48", spec$reference_fasta, publish)
       }
       db
     }, error = function(e) { issues <<- c(issues, conditionMessage(e)); "" })
   }
+  if (isTRUE(build_annotation)) data_source_prepare_extra_annotation(root, app_dir, spec, function(message) {
+    stage <<- "PREPARING_ANNOTATION"; publish(message) })
   data_source_private_dir(file.path(profile_dir, "jobs"), create = TRUE)
   files <- list.files(manifest_dir, pattern = "\\.(tsv|json|rds)$", full.names = TRUE)
   if (!length(files)) stop("Prepared manifests are missing.")

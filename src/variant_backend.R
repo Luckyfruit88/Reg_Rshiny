@@ -516,7 +516,7 @@ variant_bin_ratio_config <- function(sites, cfg, pos1,
                                      intron_width = variant_bin_ratio_defaults()$intron_width,
                                      exon_width = variant_bin_ratio_defaults()$exon_width,
                                      min_exon_reads = variant_bin_ratio_defaults()$min_exon_reads,
-                                     note = "") {
+                                     note = "", annotation_release = NULL) {
   if (is.null(sites)) sites <- variant_empty_bin_sites()
   x <- list(intron_width = int_scalar(intron_width, "Intron bin width", 1, 1000),
             exon_width = int_scalar(exon_width, "Exon bin width", 1, 1000),
@@ -525,6 +525,9 @@ variant_bin_ratio_config <- function(sites, cfg, pos1,
             strand_rule = if (identical(cfg$strand_mode, "XS")) "all strands (XS mode)" else
               paste0("reads on the site strand (", cfg$strand_mode, "); unknown strand excluded"),
             sites = sites, note = as.character(note))
+  # GENCODE release that listed the sites (provenance only; results saved
+  # before the release option have none and were listed from v48).
+  if (!is.null(annotation_release)) x$annotation_release <- as.character(annotation_release)
   if (nrow(sites)) {
     # Bins always follow the frozen widths, whatever widths listed the candidates.
     geometry <- variant_bin_geometry(sites$chrom, sites$splice_site_position, sites$strand, sites$splice_site_type,
@@ -786,7 +789,8 @@ variant_reference_exon <- function(annotation, chrom, start1, end1, pos1, exclud
   best <- order(distance, -(e$end1 - e$start1), e$start1)[[1L]]
   hits <- e[e$start1 == e$start1[[best]] & e$end1 == e$end1[[best]], , drop = FALSE]
   data.frame(start1 = as.integer(e$start1[[best]]), end1 = as.integer(e$end1[[best]]),
-             source = paste0("GENCODE exon (", paste(utils::head(sort(unique(hits$transcript_id)), 3L), collapse = ", "), ")"),
+             source = paste0(if (length(annotation$metadata$release) == 1L) paste0("GENCODE v", annotation$metadata$release) else "GENCODE",
+               " exon (", paste(utils::head(sort(unique(hits$transcript_id)), 3L), collapse = ", "), ")"),
              stringsAsFactors = FALSE)
 }
 

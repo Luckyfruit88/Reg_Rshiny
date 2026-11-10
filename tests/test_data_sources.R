@@ -9,6 +9,46 @@ source_expect_error <- function(expr, text = NULL) {
   if (!is.null(text)) stopifnot(grepl(text, conditionMessage(error), fixed = TRUE))
 }
 
+# Extra GENCODE releases (v50) sit beside the profile's own v48 annotation:
+# never part of the spec, offered only where the profile has an annotation,
+# indexed per account under a content-bound key with the right release.
+run_extra_release_tests <- function(app, state, work, spec, bundle) {
+  old <- Sys.getenv("REGSHINY_GENCODE_V50_GTF", unset = NA_character_)
+  on.exit(if (is.na(old)) Sys.unsetenv("REGSHINY_GENCODE_V50_GTF") else Sys.setenv(REGSHINY_GENCODE_V50_GTF = old), add = TRUE)
+  stopifnot(identical(names(bundle$annotation_releases), "48"), !data_source_has_annotation(spec),
+    is.null(bundle$config$spec$annotation_gtf_v50))
+  fake <- file.path(work, "gencode.v50.synthetic.gtf.gz"); writeLines("##description: synthetic", fake)
+  Sys.setenv(REGSHINY_GENCODE_V50_GTF = fake)
+  stopifnot(identical(data_source_extra_annotation_gtfs(), c("50" = fake)))
+  root <- data_source_state_root(app, state)
+  path <- data_source_annotation_db_path(root, app, fake, "50", "")
+  stopifnot(grepl("/resources/gencode50-[0-9a-f]+/annotation.sqlite$", path),
+    identical(path, data_source_annotation_db_path(root, app, fake, "50", "")),
+    grepl("/resources/gencode48-", data_source_annotation_db_path(root, app, fake, "48", ""), fixed = TRUE))
+  writeLines("##description: synthetic, changed", fake)
+  stopifnot(!identical(path, data_source_annotation_db_path(root, app, fake, "50", "")))
+  source_expect_error(data_source_annotation_db_path(root, app, file.path(work, "missing.gtf.gz"), "50", ""),
+    "GENCODE v50 source GTF is unavailable")
+  annotated <- spec; annotated$annotation_gtf <- fake
+  stopifnot(data_source_has_annotation(annotated), !data_source_prepare_extra_annotation(root, app, spec, function(m) NULL))
+  calls <- list(); original <- get("data_source_run", envir = globalenv())
+  assign("data_source_run", function(script, args, log_path, timeout = 3600) {
+    calls[[length(calls) + 1L]] <<- args
+    writeLines("synthetic index", args[[which(args == "--output") + 1L]])
+  }, envir = globalenv())
+  on.exit(assign("data_source_run", original, envir = globalenv()), add = TRUE, after = FALSE)
+  messages <- character()
+  stopifnot(data_source_prepare_extra_annotation(root, app, annotated, function(m) messages <<- c(messages, m)),
+    length(calls) == 1L, calls[[1]][[which(calls[[1]] == "--release") + 1L]] == "50",
+    grepl("release_50/gencode.v50", calls[[1]][[which(calls[[1]] == "--source-url") + 1L]], fixed = TRUE),
+    any(grepl("GENCODE v50 index", messages, fixed = TRUE)),
+    # Built once: a second preparation finds the index and does nothing.
+    !data_source_prepare_extra_annotation(root, app, annotated, function(m) NULL), length(calls) == 1L)
+  # An empty setting offers no extra release.
+  Sys.setenv(REGSHINY_GENCODE_V50_GTF = "")
+  stopifnot(!length(data_source_extra_annotation_gtfs()))
+}
+
 run_data_source_tests <- function(native = FALSE) {
   app <- normalizePath(getwd())
   work <- tempfile("regshiny-source-test-"); dir.create(work, mode = "0700")
@@ -110,6 +150,7 @@ run_data_source_tests <- function(native = FALSE) {
   before <- unname(tools::md5sum(bundle$config$sample_manifest))
   again <- prepare_data_profile(spec, app, state)
   stopifnot(identical(bundle$id, again$id), identical(before, unname(tools::md5sum(bundle$config$sample_manifest))))
+  run_extra_release_tests(app, state, work, spec, bundle)
   # Per-chromosome VCFs can retain a whole-genome header including unused HLA
   # names. Auto selection follows index records; explicit selection validates
   # only the exact requested supported chromosome.

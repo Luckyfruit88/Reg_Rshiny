@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build/query a GENCODE v48 index. Python >=3.6; standard library only.
+"""Build/query a GENCODE v48 or v50 index. Python >=3.6; standard library only.
 
 GTF coordinates remain 1-based inclusive. Queries return full exon models for
 every overlapping transcript. They never derive introns from clipped exons.
@@ -17,6 +17,8 @@ import tempfile
 from pathlib import Path
 
 SCHEMA_VERSION = "regshiny_gencode_v1"
+# Releases with the same GTF layout and index contract; each index records its own.
+SUPPORTED_RELEASES = ("48", "50")
 FEATURES = {"CDS", "UTR", "start_codon", "stop_codon", "Selenocysteine"}
 
 
@@ -91,8 +93,8 @@ def create_schema(con):
 
 
 def build(args):
-    if args.release != "48" or args.build != "GRCh38":
-        raise ValueError("This index contract requires GENCODE release 48 and GRCh38.")
+    if args.release not in SUPPORTED_RELEASES or args.build != "GRCh38":
+        raise ValueError("This index contract requires GENCODE release 48 or 50 and GRCh38.")
     source = Path(args.gtf).resolve()
     output = Path(args.output).resolve()
     if output.exists() and not args.replace:
@@ -172,8 +174,8 @@ def build(args):
                 if number % 100000 == 0:
                     con.commit()
         description = " ".join(headers)
-        if not re.search(r"\bGRCh38\b", description) or not re.search(r"\bversion\s+48\b", description, re.I):
-            raise ValueError("GTF header must explicitly identify GRCh38 and version 48.")
+        if not re.search(r"\bGRCh38\b", description) or not re.search(r"\bversion\s+%s\b" % re.escape(args.release), description, re.I):
+            raise ValueError("GTF header must explicitly identify GRCh38 and version %s." % args.release)
         if not counts["genes"] or not counts["transcripts"] or not counts["exons"]:
             raise ValueError("The complete GENCODE gene/transcript/exon model is required.")
         con.executescript("""
@@ -245,7 +247,7 @@ def build(args):
         if args.fai and source_state(fai) != fai_before:
             raise ValueError("Reference FAI changed while the index was being built.")
         metadata = {
-            "schema_version": SCHEMA_VERSION, "release": "48", "build": "GRCh38", "assembly": "GRCh38.p14",
+            "schema_version": SCHEMA_VERSION, "release": args.release, "build": "GRCh38", "assembly": "GRCh38.p14",
             "coordinate_system": "1-based inclusive; source GTF boundaries unchanged",
             "source_path": str(source), "source_filename": source.name,
             "source_url": args.source_url, "source_sha256": source_hash,
@@ -280,9 +282,9 @@ def open_readonly(path):
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA query_only=ON")
     metadata = {row["key"]: json.loads(row["value"]) for row in con.execute("SELECT key,value FROM metadata")}
-    if metadata.get("schema_version") != SCHEMA_VERSION or metadata.get("release") != "48" or metadata.get("build") != "GRCh38":
+    if metadata.get("schema_version") != SCHEMA_VERSION or metadata.get("release") not in SUPPORTED_RELEASES or metadata.get("build") != "GRCh38":
         con.close()
-        raise ValueError("Annotation index schema/release/build does not match GENCODE 48 / GRCh38.")
+        raise ValueError("Annotation index schema/release/build does not match GENCODE 48 or 50 / GRCh38.")
     return con, metadata
 
 
