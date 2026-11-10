@@ -1,8 +1,14 @@
 # GENCODE reference models are an independent, read-only display layer.
+# resources may be a value or a function returning the selected release.
+annotation_resource_label <- function(resources) {
+  release <- if (is.list(resources) && !inherits(resources, "error")) resources$release else NULL
+  if (length(release) == 1L && !is.na(release) && nzchar(release)) paste0("GENCODE v", release) else "GENCODE"
+}
+
 # Annotation queries reuse the app's future pool; read/junction metrics are untouched.
 annotation_track_ui <- function(id) {
   ns <- shiny::NS(id)
-  bslib::card(bslib::card_header("GENCODE v48 · reference transcript models"),
+  bslib::card(bslib::card_header(shiny::textOutput(ns("card_title"), inline = TRUE)),
     shiny::uiOutput(ns("status")), shiny::uiOutput(ns("track_ui")),
     shiny::uiOutput(ns("display_note")),
     shiny::p("Exons are gray; annotated CDS is thick blue; annotated UTR is thin teal. Arrows show transcript strand. Models are reference annotations, not measured isoform expression or PSI."))
@@ -12,7 +18,7 @@ annotation_detail_ui <- function(id, allow_confirmation = FALSE) {
   ns <- shiny::NS(id)
   shiny::tagList(
     if (allow_confirmation) shiny::tagList(
-      shiny::checkboxInput(ns("confirm_grch38"), "Confirm this BAM uses GRCh38 for GENCODE v48", FALSE),
+      shiny::checkboxInput(ns("confirm_grch38"), "Confirm this BAM uses GRCh38 for GENCODE annotation", FALSE),
       shiny::helpText("Only needed for a BAM outside the verified RNA manifest. The selected chromosome's header length must also match GRCh38. This controls annotation only; no liftOver or read reanalysis is performed.")),
     shiny::uiOutput(ns("reference_status")),
     shiny::selectizeInput(ns("priority"), "Transcripts to draw first (optional)", choices = character(), multiple = TRUE),
@@ -48,12 +54,13 @@ annotation_pick_transcripts <- function(transcripts, selected = character(), cap
   transcripts[head(ordered, cap), , drop = FALSE]
 }
 
-annotation_plot_models <- function(annotation, window, selected = character(), marker = NULL, cap = 20L) {
+annotation_plot_models <- function(annotation, window, selected = character(), marker = NULL, cap = 20L,
+                                   label = annotation_resource_label(list(release = annotation$metadata$release))) {
   tx <- annotation_pick_transcripts(annotation$transcripts, selected, cap, window)
   old <- graphics::par(mar = c(4.6, 4.1, 2.2, 2.1))
   on.exit(graphics::par(old))
   graphics::plot(NA, xlim = window, ylim = c(.35, max(1L, nrow(tx)) + .85),
-    xlab = "Genomic position (1-based)", ylab = "", yaxt = "n", main = "GENCODE v48 · transcript structure")
+    xlab = "Genomic position (1-based)", ylab = "", yaxt = "n", main = paste(label, "· transcript structure"))
   if (!nrow(tx)) {
     graphics::text(mean(window), 1, "No annotated transcript spans overlap this display window")
     return(invisible(tx))
@@ -101,9 +108,12 @@ annotation_server <- function(id, resources, annotation_file, region, display_ra
                               junctions, marker = shiny::reactive(NULL),
                               allow_confirmation = FALSE) {
   shiny::moduleServer(id, function(input, output, session) {
-    resource_ok <- !is.null(resources) && !inherits(resources, "error")
-    resource_message <- if (inherits(resources, "error")) conditionMessage(resources) else
-      if (is.null(resources)) "GENCODE annotation is not configured." else NULL
+    current_resources <- if (is.function(resources)) resources else { fixed <- resources; function() fixed }
+    resource_ok <- shiny::reactive({ r <- current_resources(); !is.null(r) && !inherits(r, "error") })
+    resource_message <- shiny::reactive({ r <- current_resources()
+      if (inherits(r, "error")) conditionMessage(r) else if (is.null(r)) "GENCODE annotation is not configured." else NULL })
+    release_label <- shiny::reactive(annotation_resource_label(current_resources()))
+    output$card_title <- shiny::renderText(paste(release_label(), "· reference transcript models"))
     unavailable <- shiny::reactiveVal(NULL)
     submitted <- shiny::reactiveVal(NULL)
     request_serial <- shiny::reactiveVal(0L)
@@ -135,7 +145,7 @@ annotation_server <- function(id, resources, annotation_file, region, display_ra
       }
       unknown_build <- is.null(x$build) || length(x$build) != 1L || is.na(x$build) || x$build %in% c("unknown", "UNKNOWN", "")
       if (!unknown_build && !identical(x$build, "GRCh38")) {
-        x$unavailable <- paste("The configured result assembly", x$build, "differs from GENCODE v48 GRCh38; no coordinate conversion is performed.")
+        x$unavailable <- paste("The configured result assembly", x$build, "differs from", release_label(), "GRCh38; no coordinate conversion is performed.")
         return(x)
       }
       if (!identical(x$build, "GRCh38") && allow_confirmation && isTRUE(input$confirm_grch38) &&
@@ -149,21 +159,21 @@ annotation_server <- function(id, resources, annotation_file, region, display_ra
         x$build_basis <- "User-confirmed GRCh38; selected chromosome header length matches the reference."
       }
       if (!identical(x$build, "GRCh38"))
-        x$unavailable <- if (allow_confirmation) paste("This BAM is outside the verified GRCh38 manifest. Confirm its reference in the GENCODE v48 tab.", x$reference_note) else
-          "GENCODE v48 requires a GRCh38 result; no coordinate conversion is performed."
+        x$unavailable <- if (allow_confirmation) paste("This BAM is outside the verified GRCh38 manifest. Confirm its reference in the GENCODE tab.", x$reference_note) else
+          paste(release_label(), "requires a GRCh38 result; no coordinate conversion is performed.")
       x
     })
-    shiny::observeEvent(list(effective_region(), junctions()), {
-      if (!resource_ok) return()
+    shiny::observeEvent(list(effective_region(), junctions(), current_resources()), {
+      if (!resource_ok()) return()
       x <- effective_region()
       unavailable(x$unavailable)
       if (!is.null(x$unavailable)) return()
       submitted(x)
       request_serial(request_serial() + 1L)
-      annotation_task$invoke(resources, x, junctions(), annotation_file, request_serial())
+      annotation_task$invoke(current_resources(), x, junctions(), annotation_file, request_serial())
     }, ignoreNULL = FALSE)
     answer <- shiny::reactive({
-      shiny::req(resource_ok, is.null(effective_region()$unavailable))
+      shiny::req(resource_ok(), is.null(effective_region()$unavailable))
       value <- annotation_task$result()
       shiny::req(identical(value$request_serial, request_serial()))
       value
@@ -179,7 +189,7 @@ annotation_server <- function(id, resources, annotation_file, region, display_ra
       shiny::updateSelectizeInput(session, "priority", choices = stats::setNames(t$transcript_id, labels), selected = keep, server = TRUE)
     }, ignoreInit = TRUE)
     status_content <- shiny::reactive({
-      if (!resource_ok) return(shiny::div(class = "alert alert-secondary", "GENCODE unavailable: ", resource_message, " RNA metrics remain available."))
+      if (!resource_ok()) return(shiny::div(class = "alert alert-secondary", release_label(), " unavailable: ", resource_message(), " RNA metrics remain available."))
       x <- tryCatch(effective_region(), error = function(e) NULL)
       if (is.null(x)) return(shiny::p("Load an RNA result to view its GENCODE annotation."))
       if (!is.null(x$unavailable)) return(shiny::div(class = "alert alert-secondary", x$unavailable, " RNA metrics are unchanged."))
@@ -191,7 +201,7 @@ annotation_server <- function(id, resources, annotation_file, region, display_ra
         return(shiny::div(class = "alert alert-warning", "GENCODE query unavailable: ", as.character(message), ". RNA metrics are unchanged."))
       }
       a <- annotation()
-      shiny::p("GENCODE v48 · GRCh38 · ", x$chrom, ":", x$start1, "–", x$end1,
+      shiny::p(release_label(), " · GRCh38 · ", x$chrom, ":", x$start1, "–", x$end1,
         " · ", nrow(a$genes), " genes · ", nrow(a$transcripts), " transcript models. ",
         if (!is.null(x$build_basis)) x$build_basis)
     })
@@ -228,13 +238,13 @@ annotation_server <- function(id, resources, annotation_file, region, display_ra
       print(annotation()$metadata)
       cat("\nCoordinates: 1-based inclusive. Transcript models are not expression measurements.\n")
     })
-    output$download_transcripts <- shiny::downloadHandler("gencode_v48_transcripts.csv", function(file)
+    output$download_transcripts <- shiny::downloadHandler(function() paste0(gsub("[^0-9a-z]+", "_", tolower(release_label())), "_transcripts.csv"), function(file)
       utils::write.csv(annotation()$transcripts, file, row.names = FALSE, na = "NA"))
-    output$download_exons <- shiny::downloadHandler("gencode_v48_exons.csv", function(file)
+    output$download_exons <- shiny::downloadHandler(function() paste0(gsub("[^0-9a-z]+", "_", tolower(release_label())), "_exons.csv"), function(file)
       utils::write.csv(annotation()$exons, file, row.names = FALSE, na = "NA"))
-    output$download_matches <- shiny::downloadHandler("gencode_v48_junction_matches.csv", function(file)
+    output$download_matches <- shiny::downloadHandler(function() paste0(gsub("[^0-9a-z]+", "_", tolower(release_label())), "_junction_matches.csv"), function(file)
       utils::write.csv(answer()$matches, file, row.names = FALSE, na = "NA"))
-    output$download_annotation <- shiny::downloadHandler("gencode_v48_interval_annotation.json", function(file) {
+    output$download_annotation <- shiny::downloadHandler(function() paste0(gsub("[^0-9a-z]+", "_", tolower(release_label())), "_interval_annotation.json"), function(file) {
       a <- answer()
       a$display <- list(window = display_range(), marker = marker(), cap = 20L,
         priority = input$priority, plotted_transcript_ids = selected_transcripts()$transcript_id,

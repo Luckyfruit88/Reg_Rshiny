@@ -51,4 +51,23 @@ stopifnot(grepl('<div class="regshiny-actions">\\s*<a id="layout-download_bin_ra
 css <- paste(readLines("www/frontend.css"), collapse = "\n")
 stopifnot(grepl(".html-fill-container > .datatables.html-fill-item,", css, fixed = TRUE),
           grepl("flex: 0 0 auto !important;", css, fixed = TRUE))
+# GENCODE release selector: in the navbar's free space, v48 by default, v50 offered.
+app_exprs <- parse("app.R")
+app_env <- new.env()
+for (e in app_exprs) if (is.call(e) && identical(e[[1L]], as.name("<-")) &&
+    as.character(e[[2L]]) %in% c("regshiny_gencode_releases", "bundle_annotation")) eval(e, app_env)
+stopifnot(identical(app_env$regshiny_gencode_releases(), c("v48" = "48", "v50" = "50")))
+app_text <- paste(readLines("app.R"), collapse = "\n")
+stopifnot(grepl('nav_spacer(),', app_text, fixed = TRUE),
+  grepl('radioButtons("gencode_release", "GENCODE", choices = regshiny_gencode_releases(), selected = "48", inline = TRUE)', app_text, fixed = TRUE),
+  grepl('annotation_resources = reactive(bundle_annotation(frozen_bundle, release()))', app_text, fixed = TRUE),
+  grepl('annotation = reactive(bundle_annotation(frozen_bundle, release()))', app_text, fixed = TRUE),
+  grepl(".regshiny-release", css, fixed = TRUE))
+v48 <- list(release = "48"); v50 <- list(release = "50")
+stopifnot(identical(app_env$bundle_annotation(list(annotation_resources = v48, annotation_releases = list("48" = v48, "50" = v50)), "50"), v50),
+  identical(app_env$bundle_annotation(list(annotation_resources = v48), "48"), v48),
+  grepl("not available for this dataset", conditionMessage(app_env$bundle_annotation(list(annotation_resources = v48), "50")), fixed = TRUE))
+nav <- as.character(page_navbar(title = "t", nav_panel("A", "a"), nav_spacer(),
+  nav_item(div(class = "regshiny-release", radioButtons("gencode_release", "GENCODE", choices = app_env$regshiny_gencode_releases(), selected = "48", inline = TRUE)))))
+stopifnot(grepl('value="48" checked="checked"', nav, fixed = TRUE), grepl('value="50"', nav, fixed = TRUE))
 cat("FRONTEND_CONTRACT_TESTS_OK\n")

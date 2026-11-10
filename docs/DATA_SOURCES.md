@@ -8,7 +8,7 @@ The FHS preset uses the original RNA-ID / BAM-location CSVs under the project's 
 
 The preset includes chr1–22 and chrX and all unique DNA/RNA matches with a readable BAM and existing index. It does not use the old 8,973-pair candidate list or filter to a covariate-selected research cohort. Preparation records exclusions and actual counts privately. Every member still requires the source owners' existing SCC data permissions.
 
-GENCODE v48 is indexed once in this account's private resources and reused across compatible profiles. No index or sample manifest in another user's Reg_Shiny deployment is required. Reference/annotation availability is reported independently of RNA-count availability.
+GENCODE v48 is indexed once in this account's private resources and reused across compatible profiles. GENCODE v50 is indexed beside it the first time a profile with a GENCODE annotation is prepared (about 5 minutes, once per account); its GTF defaults to `Reg_Shiny_output/resources/gencode_v50/gencode.v50.chr_patch_hapl_scaff.annotation.gtf.gz` (downloaded from the GENCODE release 50 FTP and checked against its MD5SUMS) and can be changed with `REGSHINY_GENCODE_V50_GTF` (empty disables v50). v50 is not part of the profile spec, so profile ids and saved jobs are unchanged. Connecting a saved profile without preparing it reports v50 as unavailable until it is built. No index or sample manifest in another user's Reg_Shiny deployment is required. Reference/annotation availability is reported independently of RNA-count availability.
 
 ## Custom WGS + RNA inputs
 

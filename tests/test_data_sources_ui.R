@@ -109,13 +109,14 @@ future::plan(future::sequential)
 # Exercise the actual app controller with lightweight viewer stubs. Every
 # successful switch must instantiate new namespaces and deactivate old ones.
 registered <- new.env(parent = emptyenv())
-variant_server <- function(id, backend, resources, backend_file, variant_file, ..., source_identity = NULL, is_active = reactive(TRUE)) {
+variant_server <- function(id, backend, resources, backend_file, variant_file, ..., annotation_resources = NULL,
+                           source_identity = NULL, is_active = reactive(TRUE)) {
   force(resources); force(source_identity)
-  registered[[id]] <- list(identity = source_identity, resources = resources, active = is_active)
+  registered[[id]] <- list(identity = source_identity, resources = resources, active = is_active, annotation = annotation_resources)
 }
-single_bam_server <- function(id, bundle, is_active = reactive(TRUE)) {
+single_bam_server <- function(id, bundle, is_active = reactive(TRUE), annotation = NULL) {
   force(bundle)
-  registered[[id]] <- list(identity = list(id = bundle$id), resources = bundle, active = is_active)
+  registered[[id]] <- list(identity = list(id = bundle$id), resources = bundle, active = is_active, annotation = annotation)
 }
 variant_ui <- function(id) shiny::div(id = id, "Synthetic WGS viewer")
 single_bam_ui <- function(id, bam_choices) shiny::div(id = id, "Synthetic Single BAM viewer")
@@ -124,7 +125,7 @@ backend <- new.env(); job_api <- new.env()
 backend_file <- variant_file <- job_source <- annotation_file <- splice_file <- "/synthetic/source.R"
 for (expression in parse("app.R")) {
   if (is.call(expression) && identical(expression[[1L]], as.name("<-")) &&
-      is.symbol(expression[[2L]]) && identical(as.character(expression[[2L]]), "server")) eval(expression)
+      is.symbol(expression[[2L]]) && as.character(expression[[2L]]) %in% c("server", "bundle_annotation")) eval(expression)
 }
 shiny::testServer(server, {
   session$flushReact(); await_source(sources$task, session)
@@ -142,6 +143,16 @@ shiny::testServer(server, {
   stopifnot(isolate(registered[[second$variant_id]]$active()), registered[[first$variant_id]]$identity$id == first_identity)
   stopifnot(registered[[second$variant_id]]$identity$id != first_identity,
     unname(registered[[second$single_id]]$resources$bam_choices) == "/synthetic/controller-B.bam")
+  # The top-bar GENCODE release reaches both viewers as a function; v48 is the
+  # default and a release missing from the bundle is reported, not substituted.
+  for (id in c(second$variant_id, second$single_id)) stopifnot(is.function(registered[[id]]$annotation))
+  v48 <- isolate(registered[[second$variant_id]]$annotation())
+  stopifnot(identical(v48, isolate(registered[[second$single_id]]$annotation())))
+  session$setInputs(gencode_release = "50")
+  v50 <- isolate(registered[[second$variant_id]]$annotation())
+  stopifnot(inherits(v50, "error"), grepl("GENCODE v50 is not available", conditionMessage(v50), fixed = TRUE))
+  session$setInputs(gencode_release = "48")
+  stopifnot(identical(isolate(registered[[second$variant_id]]$annotation()), v48))
 })
 if (is.na(original_environment)) Sys.unsetenv("REGSHINY_VCF_MANIFEST") else Sys.setenv(REGSHINY_VCF_MANIFEST = original_environment)
 unlink(scratch, recursive = TRUE)

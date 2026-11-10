@@ -141,6 +141,28 @@ run_annotation_tests <- function() {
   stopifnot(p$status != 0L, grepl("FAI contig length", p$stderr), !file.exists(bad_db))
   p <- build(gtf, db, should_fail = TRUE)
   stopifnot(p$status != 0L, grepl("already exists", p$stderr))
+  # Release 50 shares the index contract; each index records and enforces its own release.
+  stopifnot(matches$junctions$annotation_release[[1]] == "GENCODE v48",
+    grepl("GENCODE v48", matches$junctions$annotation_label[[1]]), annotation$metadata$release == "48")
+  writeLines(c("chr1\t1000\t0\t50\t51", "chrY\t1000\t0\t50\t51"), fai)
+  gtf50 <- file.path(work, "gencode.v50.synthetic.gtf.gz"); db50 <- file.path(work, "annotation50.sqlite")
+  write_gtf(sub("version 48 (Ensembl 114)", "version 50 (Ensembl 116)", rows, fixed = TRUE), gtf50)
+  receipt50 <- jsonlite::fromJSON(build(gtf50, db50, c("--release", "50", "--fai", fai))$stdout)
+  stopifnot(receipt50$metadata$release == "50")
+  v50 <- load_annotation_resources(db50, release = "50")
+  stopifnot(v50$release == "50", load_annotation_resources(db50)$release == "50")
+  annotation_expect_error(load_annotation_resources(db50, release = "48"), "holds GENCODE v50, not v48")
+  a50 <- query_annotation(v50, "chr1", 100L, 900L)
+  m50 <- annotate_junctions(j, a50)$junctions
+  stopifnot(a50$metadata$release == "50", all(m50$annotation_release == "GENCODE v50"),
+    m50$annotation_label[[1]] == "Exact GENCODE v50 junction boundaries and strand",
+    m50$annotation_label[[3]] == "Not in GENCODE v50 at these exact boundaries and strand",
+    identical(m50$annotation_status, matches$junctions$annotation_status))
+  # A v48 GTF cannot be indexed as v50, and unsupported releases are refused.
+  p <- build(gtf, file.path(work, "wrong50.sqlite"), c("--release", "50"), should_fail = TRUE)
+  stopifnot(p$status != 0L, grepl("version 50", p$stderr), !file.exists(file.path(work, "wrong50.sqlite")))
+  p <- build(gtf, file.path(work, "wrong47.sqlite"), c("--release", "47"), should_fail = TRUE)
+  stopifnot(p$status != 0L, grepl("release 48 or 50", p$stderr))
   cat("GENCODE index/query/strand/exon-completeness/one-to-many/read-only/provenance tests: PASS\n")
   invisible(TRUE)
 }

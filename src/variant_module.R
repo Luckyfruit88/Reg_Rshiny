@@ -1,6 +1,13 @@
 # Variant-centered interface inside Reg_Shiny. Preview workers share the app's
 # future pool. Full comparisons use persistent SCC jobs and survive disconnects.
 
+# GENCODE release that listed a result's bin-ratio sites. Results saved before
+# the release option carry none; only v48 existed then.
+variant_sites_release <- function(settings) {
+  r <- settings$annotation_release
+  paste0("GENCODE v", if (length(r) == 1L && !is.na(r) && nzchar(r)) r else "48")
+}
+
 # Splice-site bin ratio for one batch line: every GENCODE site within the search
 # distance, unless the line ends with site=none. Bins outside the frozen
 # interval stop this line before submission.
@@ -16,7 +23,8 @@ variant_batch_bin_ratio <- function(api, variant, spec, resolver, cfg, widths) {
   if (is.null(resolver)) return(list(bin_ratio = NULL, label = "not computed (GENCODE unavailable)"))
   sites <- resolver(variant, widths)
   x <- tryCatch(api$variant_bin_ratio_config(sites, cfg, variant$pos1[[1L]], widths$intron_width, widths$exon_width,
-    widths$min_exon_reads, note = if (nrow(sites)) "" else "No GENCODE splice site within the search distance."),
+    widths$min_exon_reads, note = if (nrow(sites)) "" else "No GENCODE splice site within the search distance.",
+    annotation_release = attr(resolver, "release")),
     error = function(e) reject(conditionMessage(e)))
   list(bin_ratio = x, label = if (nrow(sites)) paste(nrow(sites), "GENCODE site(s):", paste(sites$site_id, collapse = "; ")) else
     "no GENCODE splice site within 50 bp")
@@ -317,7 +325,7 @@ variant_ui <- function(id) {
         p("Unadjusted model: no age, sex, batch, genetic PCs or relatedness. FHS participants are related, so p-values are nominal and may be anti-conservative. q_value_bh is Benjamini–Hochberg over the OK rows of this result only, not across batch variants. OK means the pair passed every gate and was fitted; it does not mean significant, and no significance cutoff is applied. This is not formal PSI or causal inference.")),
       bslib::nav_panel("Junctions", DT::DTOutput(ns("junctions")),
         p("Intron boundaries are 1-based and inclusive. count_sum is total retained alignment support; count_mean is support per successful RNA sample under the submitted sample scope.")),
-      bslib::nav_panel("GENCODE v48", annotation_detail_ui(ns("annotation"))),
+      bslib::nav_panel("GENCODE", annotation_detail_ui(ns("annotation"))),
       bslib::nav_panel("RNA allele evidence",
         uiOutput(ns("rna_status")),
         splice_evidence_ui(ns("splice")),
@@ -357,6 +365,12 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
   force(resources); force(source_identity)
   shiny::moduleServer(id, function(input, output, session) {
     resource_ok <- !inherits(resources, "error")
+    # The selected GENCODE release (value or function). It drives annotation
+    # views and the sites listed for new comparisons; saved jobs keep theirs.
+    annotation_now <- if (is.function(annotation_resources)) annotation_resources else {
+      fixed <- annotation_resources; function() fixed }
+    gencode_label <- reactive({ a <- annotation_now()
+      if (is.list(a) && !inherits(a, "error") && length(a$release) == 1L) paste0("GENCODE v", a$release) else "GENCODE" })
     output$resource_status <- renderUI({
       if (!resource_ok) return(div(class = "alert alert-warning",
         "WGS resources are unavailable: ", conditionMessage(resources),
@@ -445,11 +459,13 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       w <- tryCatch(bin_widths(), error = function(e) e)
       tryCatch({
         if (inherits(w, "error")) stop(conditionMessage(w))
-        if (is.null(annotation_api) || is.null(annotation_resources) || inherits(annotation_resources, "error"))
-          stop("GENCODE annotation is unavailable, so no splice sites can be listed and the bin ratio is not computed.")
+        res <- annotation_now()
+        if (is.null(annotation_api) || is.null(res) || inherits(res, "error"))
+          stop(gencode_label(), " annotation is unavailable, so no splice sites can be listed and the bin ratio is not computed.",
+               if (inherits(res, "error")) paste0(" ", conditionMessage(res)) else "")
         d <- backend$variant_bin_ratio_defaults()$max_site_distance
         reach <- d + max(if (is.null(w)) 25L else c(w$intron_width, w$exon_width))
-        q <- annotation_api$query_annotation(annotation_resources, v$chrom[[1L]], max(1, v$pos1[[1L]] - reach),
+        q <- annotation_api$query_annotation(res, v$chrom[[1L]], max(1, v$pos1[[1L]] - reach),
                                              v$pos1[[1L]] + reach, build = v$build[[1L]])
         if (is.null(w)) w <- backend$variant_bin_ratio_defaults()
         backend$variant_bin_ratio_candidates(q, v$chrom[[1L]], v$pos1[[1L]], w$intron_width, w$exon_width)
@@ -463,16 +479,16 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       strand_note <- if (identical(input$strand_mode, "XS"))
         "XS mode: reads of all strands are counted, because XS tags exist only on spliced reads." else
         paste0(input$strand_mode, " mode: only reads inferred on the site's strand are counted; unknown strand (?) is excluded.")
-      body <- if (is.null(cand)) "Find and select a variant to list its GENCODE v48 splice sites." else
+      body <- if (is.null(cand)) paste0("Find and select a variant to list its ", gencode_label(), " splice sites.") else
         if (inherits(cand, "error")) conditionMessage(cand) else if (!nrow(cand))
-          paste0("No GENCODE v48 splice site within ", d, " bp; the ratio will not be computed.") else {
+          paste0("No ", gencode_label(), " splice site within ", d, " bp; the ratio will not be computed.") else {
           w <- tryCatch(bin_widths(), error = function(e) NULL)
           check <- if (is.null(w)) rep("", nrow(cand)) else backend$variant_bin_check(cand, w$intron_width, w$exon_width)
           tags$ul(lapply(seq_len(nrow(cand)), function(i) tags$li(sprintf("%s %s %d · %d bp away%s",
             cand$splice_site_type[[i]], cand$strand[[i]], cand$splice_site_position[[i]], cand$distance[[i]],
             if (nzchar(check[[i]]) && check[[i]] != "OK") paste0(" · ", check[[i]]) else ""))))
         }
-      tagList(helpText(paste0("Every GENCODE v48 donor/acceptor within ", d,
+      tagList(helpText(paste0("Every ", gencode_label(), " donor/acceptor within ", d,
         " bp is computed, one row per site. Reads are the retained reads used for depth, junctions and the denominator.")),
         body, helpText(strand_note))
     })
@@ -483,7 +499,8 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       cand <- bin_candidates()
       if (inherits(cand, "error")) return(NULL)
       backend$variant_bin_ratio_config(cand, cfg, variant$pos1[[1L]], w$intron_width, w$exon_width, w$min_exon_reads,
-        note = if (nrow(cand)) "" else "No GENCODE splice site within the search distance.")
+        note = if (nrow(cand)) "" else "No GENCODE splice site within the search distance.",
+        annotation_release = annotation_now()$release)
     }
     controls <- reactive(list(query = trimws(input$query), record_id = input$record, lookup_revision = lookup_revision(),
       data_source_id = if (!is.null(source_identity)) source_identity$id else NULL,
@@ -638,11 +655,11 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         resolver <- if (length(annotation_source) == 1L && file.exists(annotation_source) &&
                         !is.null(annotation_res) && !inherits(annotation_res, "error")) {
           a <- new.env(parent = globalenv()); sys.source(annotation_source, envir = a)
-          function(v, widths) {
+          structure(function(v, widths) {
             reach <- e$variant_bin_ratio_defaults()$max_site_distance + max(widths$intron_width, widths$exon_width)
             q <- a$query_annotation(annotation_res, v$chrom[[1L]], max(1, v$pos1[[1L]] - reach), v$pos1[[1L]] + reach, build = v$build[[1L]])
             e$variant_bin_ratio_candidates(q, v$chrom[[1L]], v$pos1[[1L]], widths$intron_width, widths$exon_width)
-          }
+          }, release = annotation_res$release)
         } else NULL
         variant_batch_submit(e, res, lines, settings, identity, source_file, variant_source, jobs_source, root, frozen_controls,
                              site_resolver = resolver)
@@ -730,7 +747,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         batch_snapshot(snapshot)
         bslib::update_task_button("batch_submit", state = "busy", session = session)
         batch_task$invoke(resources, snapshot$lines, snapshot$settings, source_identity, snapshot$controls,
-          backend_file, variant_file, job_source, job_root, annotation_resources, annotation_file)
+          backend_file, variant_file, job_source, job_root, annotation_now(), annotation_file)
         NULL
       }, error = function(e) conditionMessage(e))
       if (!is.null(problem)) {
@@ -1018,7 +1035,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       mode <- result()$provenance$selection$mode
       if (is.null(mode)) active_mode() else mode
     })
-    annotation_server("annotation", resources = annotation_resources, annotation_file = annotation_file,
+    annotation_server("annotation", resources = annotation_now, annotation_file = annotation_file,
       region = reactive({
         r <- result(); cfg <- launched_config()
         list(chrom = cfg$chrom, start1 = cfg$start1, end1 = cfg$end1,
@@ -1120,7 +1137,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         "No GENCODE splice site lay within the search distance, so no bin ratio was computed."))
       g <- attr(a, "gates")
       div(class = "alert alert-info",
-        p(nrow(a), " GENCODE site(s); ", sum(a$status == "OK"), " tested (status OK). Bins: intron ", x$intron_width,
+        p(nrow(a), " ", variant_sites_release(x), " site(s); ", sum(a$status == "OK"), " tested (status OK). Bins: intron ", x$intron_width,
           " bp, exon ", x$exon_width, " bp; counted reads: ", x$strand_rule, "."),
         lapply(seq_len(nrow(a)), function(i) div(
           tags$code(a$site_id[[i]]), ": ", tags$strong(a$status[[i]]), "; ", a$n[[i]], " of ", a$n_successful[[i]],
@@ -1141,7 +1158,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           " bp of exon. Strands: ", x$strand_rule, ". ratio = 1 − intron reads / exon reads; negative values are kept."),
         p("ratio_mean_all_dosage0/1/2 average every successful sample with a usable dosage; samples with no reads in either bin are coded 0 and samples with intron reads only are NA. They include samples below the exon-read threshold, whose per-sample ratios are unstable (for example 1 − 12/1 = −11), so they can differ from mean_ratio_dosage0/1/2. They are descriptive only and are not plotted. ",
           "The model uses samples with at least ", g$min_exon_reads, " exon-bin reads; mean_ratio_dosage0/1/2 and mean_exon_count_dosage0/1/2 describe those samples."),
-        p("bin_check compares the bins with GENCODE v48 and lists every flag that applies (separated by ;). EXON_SHORTER_THAN_BIN or INTRON_SHORTER_THAN_BIN: the shortest bordering exon or intron in any transcript is shorter than the bin, so the bin reaches past it. EXON_NOT_ANNOTATED: no bordering exon was found. EXON_BIN_IN_OTHER_TRANSCRIPT_INTRON or INTRON_BIN_IN_OTHER_TRANSCRIPT_EXON: the exon bin overlaps an intron, or the intron bin an exon, of another same-strand transcript, so the ratio mixes isoforms. OTHER_TRANSCRIPTS_NOT_CHECKED: that overlap is unknown (result saved before the check; rerun to check)."),
+        p("bin_check compares the bins with the release that listed the sites (", variant_sites_release(x), ") and lists every flag that applies (separated by ;). EXON_SHORTER_THAN_BIN or INTRON_SHORTER_THAN_BIN: the shortest bordering exon or intron in any transcript is shorter than the bin, so the bin reaches past it. EXON_NOT_ANNOTATED: no bordering exon was found. EXON_BIN_IN_OTHER_TRANSCRIPT_INTRON or INTRON_BIN_IN_OTHER_TRANSCRIPT_EXON: the exon bin overlaps an intron, or the intron bin an exon, of another same-strand transcript, so the ratio mixes isoforms. OTHER_TRANSCRIPTS_NOT_CHECKED: that overlap is unknown (result saved before the check; rerun to check)."),
         p(tags$strong("Status rules, in order (no p-value unless OK):")),
         tags$ul(
           item("TOO_FEW_SAMPLES", paste0("fewer than ", g$min_samples, " analysed samples.")),
@@ -1283,9 +1300,10 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       text <- trimws(if (is.null(input$depth_reference)) "" else input$depth_reference)
       tryCatch({
         if (nzchar(text)) return(backend$variant_parse_reference_region(text, cfg$start1, cfg$end1))
-        if (is.null(annotation_api) || is.null(annotation_resources) || inherits(annotation_resources, "error"))
-          stop("GENCODE is unavailable; enter a reference region.")
-        a <- annotation_api$query_annotation(annotation_resources, cfg$chrom, cfg$start1, cfg$end1, build = r$variant$build[[1L]])
+        res <- annotation_now()
+        if (is.null(annotation_api) || is.null(res) || inherits(res, "error"))
+          stop(gencode_label(), " is unavailable; enter a reference region.")
+        a <- annotation_api$query_annotation(res, cfg$chrom, cfg$start1, cfg$end1, build = r$variant$build[[1L]])
         backend$variant_reference_exon(a, cfg$chrom, cfg$start1, cfg$end1, r$variant$pos1[[1L]])
       }, error = function(e) e)
     })
@@ -1337,7 +1355,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           "RNA base comparison is unavailable for this non-SNV record. DNA calls, junctions and read depth remain available.")
     })
     splice_evidence_server("splice", result = result, reference = splice_reference,
-      model_source = splice_file, annotation_resources = annotation_resources,
+      model_source = splice_file, annotation_resources = annotation_now,
       annotation_source = annotation_file, depth_scale = depth_scale, normalized_depth = depth_display)
     output$audit <- renderPrint({
       r <- result()

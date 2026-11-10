@@ -437,6 +437,14 @@ stopifnot(identical(x$bin_ratio$sites$site_id, c("donor:+:chr1:1000", "acceptor:
   is.null(variant_batch_bin_ratio(ratio_api, v, NA_character_, both, bcfg, NULL)$bin_ratio),
   grepl("GENCODE unavailable", variant_batch_bin_ratio(ratio_api, v, NA_character_, NULL, bcfg, widths)$label, fixed = TRUE),
   nrow(variant_batch_bin_ratio(ratio_api, v, NA_character_, none, bcfg, widths)$bin_ratio$sites) == 0L)
+# The resolver's GENCODE release is saved with the bin-ratio settings; results
+# saved before the release option carry none and were listed from v48.
+x50 <- variant_batch_bin_ratio(ratio_api, v, NA_character_, structure(both, release = "50"), bcfg, widths)
+stopifnot(identical(x50$bin_ratio$annotation_release, "50"), is.null(x$bin_ratio$annotation_release),
+  identical(x50$bin_ratio$sites, x$bin_ratio$sites),
+  variant_sites_release(x50$bin_ratio) == "GENCODE v50", variant_sites_release(x$bin_ratio) == "GENCODE v48",
+  variant_sites_release(list()) == "GENCODE v48",
+  identical(ratio_api$variant_bin_ratio_config(both(v, widths), bcfg, v$pos1, annotation_release = "48")$annotation_release, "48"))
 e <- rejected(variant_batch_bin_ratio(ratio_api, v, "donor:+:150", both, bcfg, widths))
 stopifnot(identical(e$status, "BIN_RATIO_REJECTED"), grepl("Only site=none", conditionMessage(e), fixed = TRUE))
 e <- rejected(variant_batch_bin_ratio(ratio_api, v, NA_character_, both, bcfg, list(intron_width = 25L, exon_width = 200L, min_exon_reads = 10L)))

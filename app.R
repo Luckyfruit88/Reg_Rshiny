@@ -58,17 +58,32 @@ ui_workers <- regshiny_ui_worker_count()
 future::plan(future::multisession, workers = I(ui_workers))
 onStop(function() future::plan(future::sequential))
 
+regshiny_gencode_releases <- function() c("v48" = "48", "v50" = "50")
+
+# One release from a dataset bundle; older bundles only carry v48.
+bundle_annotation <- function(bundle, release) {
+  x <- bundle$annotation_releases[[release]]
+  if (!is.null(x)) return(x)
+  if (identical(release, "48")) return(bundle$annotation_resources)
+  simpleError(paste0("GENCODE v", release, " is not available for this dataset."))
+}
+
 ui <- page_navbar(
   title = "Reg_Shiny", id = "workspace", selected = "Data sources", fillable = FALSE,
   header = tagList(tags$head(tags$link(rel = "stylesheet", href = "frontend.css")),
     uiOutput("active_data_banner", role = "status", `aria-live` = "polite")),
   nav_panel("Data sources", data_sources_ui("sources")),
   nav_panel("WGS genotype comparison", uiOutput("variant_workspace")),
-  nav_panel("Single BAM / demo", uiOutput("single_workspace"))
+  nav_panel("Single BAM / demo", uiOutput("single_workspace")),
+  nav_spacer(),
+  # Annotation release for every GENCODE view; RNA counts do not depend on it.
+  nav_item(div(class = "regshiny-release", title = "Applies to GENCODE tracks, junction labels, exon shading, reference exons and the sites listed for new comparisons. Saved jobs keep the sites they were run with.",
+    radioButtons("gencode_release", "GENCODE", choices = regshiny_gencode_releases(), selected = "48", inline = TRUE)))
 )
 
 server <- function(input, output, session) {
   unavailable <- simpleError("Connect a dataset in the Data sources tab.")
+  release <- reactive(if (is.null(input$gencode_release)) "48" else input$gencode_release)
   demo_bundle <- list(id = "unconfigured", label = "Unconfigured / synthetic demo", bam_choices = character(),
     variant_resources = unavailable, annotation_resources = unavailable, splice_reference = unavailable, job_root = NULL)
   current_view <- reactiveVal(list(generation = 0L, variant_id = NULL, single_id = "single_0", bundle = demo_bundle))
@@ -87,10 +102,11 @@ server <- function(input, output, session) {
       enabled <- reactive(identical(current_view()$generation, this_generation))
       variant_server(variant_id, backend, frozen_bundle$variant_resources, backend_file, variant_file,
         job_api = job_api, job_source = job_source, job_root = frozen_bundle$job_root,
-        annotation_resources = frozen_bundle$annotation_resources, annotation_file = annotation_file,
+        annotation_resources = reactive(bundle_annotation(frozen_bundle, release())), annotation_file = annotation_file,
         splice_reference = frozen_bundle$splice_reference, splice_file = splice_file,
         source_identity = list(id = frozen_bundle$id, label = frozen_bundle$label), is_active = enabled)
-      single_bam_server(single_id, frozen_bundle, is_active = enabled)
+      single_bam_server(single_id, frozen_bundle, is_active = enabled,
+        annotation = reactive(bundle_annotation(frozen_bundle, release())))
     })
     bslib::nav_select("workspace", if (inherits(b$variant_resources, "error")) "Single BAM / demo" else "WGS genotype comparison", session = session)
   }, ignoreNULL = TRUE)

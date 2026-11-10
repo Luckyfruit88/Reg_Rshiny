@@ -45,7 +45,7 @@ single_bam_ui <- function(id, bam_choices = character()) {
       annotation_track_ui(ns("single_annotation")),
       p("Zoom changes the display only. The analysis interval and denominator stay fixed. Arcs are not transcript annotations.")),
     nav_panel("Junctions", DT::DTOutput(ns("junction_table"))),
-    nav_panel("GENCODE v48", annotation_detail_ui(ns("single_annotation"), allow_confirmation = TRUE)),
+    nav_panel("GENCODE", annotation_detail_ui(ns("single_annotation"), allow_confirmation = TRUE)),
     nav_panel("Read evidence",
       checkboxInput(ns("evidence_all"), "Show all accepted junction evidence (otherwise show exact / near matches)", FALSE),
       DT::DTOutput(ns("evidence_table")),
@@ -67,17 +67,19 @@ single_bam_ui <- function(id, bam_choices = character()) {
       p("This local-analysis prototype is for research and is not clinically validated. BAM files are read on the server and are not modified."),
       p("Use only on a trusted server or behind an authenticated gateway. The app does not implement authentication, cross-user permissions, cancellation or a shared job queue. Do not expose it directly to the public internet."),
       p("Limits: 250 kb and 100,000 candidate alignments per analysis. Exceeding a limit produces an error, not subsampling. Target and tolerance changes reuse loaded results; filter changes require a new analysis."),
-      p("This tab analyzes one BAM. Use WGS genotype comparison for matched multi-sample exploration. CRAM, fragment/UMI counts, strand-specific denominators and formal PSI are not supported. GENCODE v48 reference models are available for compatible GRCh38 inputs."))
+      p("This tab analyzes one BAM. Use WGS genotype comparison for matched multi-sample exploration. CRAM, fragment/UMI counts, strand-specific denominators and formal PSI are not supported. GENCODE reference models (the release chosen at the top of the page) are available for compatible GRCh38 inputs."))
   )
 )
 }
 
-single_bam_server <- function(id, bundle, is_active = reactive(TRUE)) {
+# annotation: optional function returning the selected GENCODE release.
+single_bam_server <- function(id, bundle, is_active = reactive(TRUE), annotation = NULL) {
   force(bundle)
   moduleServer(id, function(input, output, session) {
   bams <- unname(bundle$bam_choices)
   variant_resources <- bundle$variant_resources
-  annotation_resources <- bundle$annotation_resources
+  annotation_now <- if (is.function(annotation)) annotation else {
+    fixed <- bundle$annotation_resources; function() fixed }
   contigs <- reactiveVal(NULL)
   contig_error <- reactiveVal(NULL)
   previous_source <- reactiveVal(NULL)
@@ -211,7 +213,7 @@ single_bam_server <- function(id, bundle, is_active = reactive(TRUE)) {
       ". The per-100 metric uses the exact count, not the near count or mean depth.")
   })
   view_range <- single_bam_display_server(input, output, session, result)
-  annotation_server("single_annotation", resources = annotation_resources, annotation_file = annotation_file,
+  annotation_server("single_annotation", resources = annotation_now, annotation_file = annotation_file,
     region = reactive({
       r <- result(); cfg <- r$config
       x <- list(chrom = cfg$chrom, start1 = cfg$start1, end1 = cfg$end1,
@@ -223,6 +225,7 @@ single_bam_server <- function(id, bundle, is_active = reactive(TRUE)) {
         x$build <- variant_resources$build
         x$build_basis <- "BAM is linked in the configured DNA/RNA reference manifest."
       }
+      annotation_resources <- annotation_now()
       expected_length <- if (!inherits(annotation_resources, "error"))
         tryCatch(annotation_backend$annotation_reference_length(annotation_resources, cfg$chrom), error = function(e) NA_real_) else NA_real_
       if ((!length(expected_length) || !is.finite(expected_length)) && !inherits(variant_resources, "error") &&

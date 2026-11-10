@@ -22,7 +22,7 @@ Reg_Shiny 用 DNA VCF 的 genotype 分组，对照匹配 RNA-seq BAM 的 depth�
 
    也可以打开 `app.R` 后点击 **Run App**。启动器会把缺失的 SCC 原生工具路径载入当前 R 会话，使用 `samtools/1.23 regtools/1.0.0 bcftools/1.23`。R 4.5.2 的共享库已提供所需 R 包；其他环境缺包时可执行 `source("scripts/install_dependencies.R")`，仅安装到个人 R library。
 
-首次启动会在 **Data sources** 自动准备 FHS：从原始对应表建立本用户的 VCF/BAM 清单，并建立 GENCODE v48 区域索引；界面显示当前阶段。准备完成后进入 WGS 页面，后续复用经过身份校验的本地缓存。无需复制 Jinjie 的配置、索引、作业目录或会话链接，也无需额外设置 `R_ENVIRON_USER`。
+首次启动会在 **Data sources** 自动准备 FHS：从原始对应表建立本用户的 VCF/BAM 清单，并建立 GENCODE v48 与 v50 区域索引（v50 每个账户首次约需 5 分钟）；界面显示当前阶段。准备完成后进入 WGS 页面，后续复用经过身份校验的本地缓存。无需复制 Jinjie 的配置、索引、作业目录或会话链接，也无需额外设置 `R_ENVIRON_USER`。
 
 ## 选择自己的 BAM / VCF
 
@@ -47,7 +47,7 @@ Reg_Shiny 用 DNA VCF 的 genotype 分组，对照匹配 RNA-seq BAM 的 depth�
 
 同一标签页还对 **splice-site bin ratio** 运行 Model 1：`1 − intron reads / exon reads`，即剪接位点处内含子 bin 与相邻外显子 bin 的 reads 之比。
 
-- 变异 50 bp 以内的每个 GENCODE v48 donor/acceptor 位点都会计算，每个位点一行。BH 在这些位点之间校正，与 junction 表分开。
+- 变异 50 bp 以内的每个 GENCODE donor/acceptor 位点都会计算（使用页面顶栏选择的版本，默认 v48，可选 v50；版本随作业保存，已保存作业不受切换影响），每个位点一行。BH 在这些位点之间校正，与 junction 表分开。
 - bin 的 reads 与深度、junction、分母使用同一批保留 reads。RF/FR 模式只计与位点同链的 reads；XS 模式不分链。
 - 内含子/外显子 bin 宽度（默认 25 bp）和每个样本的最少外显子 bin reads（默认 10）在第 2 步设置，并随作业冻结。bin 必须落在分析区间内。
 - 批量输入可在行尾加 `site=none`，跳过该行的 ratio。
