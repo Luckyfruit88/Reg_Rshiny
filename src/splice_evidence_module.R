@@ -432,7 +432,7 @@ splice_evidence_server <- function(id, result, reference, model_source,
     output$junction_note <- shiny::renderUI({
       j <- splice_near_junctions(model()); all_n <- length(unique(j$junction_id))
       shiny::p("Showing ", min(12L, all_n), " of ", all_n,
-        " junctions with an endpoint in the displayed window, nearest to the selected variant first. Only junctions with both boundaries inside the analysis interval were saved; a junction whose other end lies outside it is absent, not zero. Each junction has the same row across genotypes. Measured zero is retained; NA is unavailable. The drawing cap does not filter this full table. These are saved RNA junction counts, independent of the DNA motif prediction.")
+        " junctions with an endpoint in the displayed window, nearest to the selected variant first. A junction is saved when the exonic base next to at least one boundary lies inside the analysis interval (results saved before this rule kept only junctions with both boundaries inside); one that was not saved is absent, not zero. Each junction has the same row across genotypes. Measured zero is retained; NA is unavailable. The drawing cap does not filter this full table. These are saved RNA junction counts, independent of the DNA motif prediction.")
     })
     output$junction_table <- DT::renderDT(splice_near_junctions(model()), rownames = FALSE,
       options = list(pageLength = 10, scrollX = TRUE), selection = "none")

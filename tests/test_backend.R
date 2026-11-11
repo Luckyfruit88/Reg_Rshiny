@@ -27,6 +27,13 @@ keep <- vapply(fields, function(x) as.integer(x[[5]]) >= 20L &&
 p <- parse_sam_records(records[keep], cfg)
 stopifnot(nrow(p$reads) == 4L, p$span_only_excluded == 1L, nrow(p$events) == 3L)
 unlink(s)
+# Junction scope: the exonic base next to either boundary inside the interval.
+# Interval 201-450; boundaries are 0-based intron start (= last exonic base,
+# 1-based) and 0-based exclusive end (flanking exonic base = end + 1).
+stopifnot(identical(junction_in_scope(c(270L, 430L, 120L, 20L, 180L, 200L, 450L, 451L, 100L),
+                                      c(370L, 730L, 220L, 100L, 480L, 449L, 900L, 900L, 199L), 201L, 450L),
+                    c(TRUE, TRUE, TRUE, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE)),
+          is.character(junction_scope_rule()), nzchar(junction_scope_rule()))
 cat("Core tests: PASS\n")
 
 
@@ -88,5 +95,28 @@ if (unit_only) {
   z <- analyze_bam(cfg); mz <- summarize_target(z, 201L, 300L, 5L)
   stopifnot(mz$denominator_reads == 0L, mz$junction_exact_count == 0L,
             is.na(mz$junction_per_100_reads), sum(z$depth$depth) == 0L)
+  # A junction that leaves the interval is reported in full when the exonic
+  # base next to one boundary is inside; one with both flanks outside is not,
+  # even when its read is retained for another block.
+  scope_dir <- tempfile("scope_"); dir.create(scope_dir)
+  rec <- function(name, pos, cigar, len) paste(c(name, 0, "chrDemo", pos, 60, cigar, "*", 0, 0,
+    paste(rep("A", len), collapse = ""), paste(rep("I", len), collapse = ""), "NH:i:1", "XS:A:+"), collapse = "\t")
+  writeLines(c("@HD\tVN:1.6\tSO:unsorted", "@SQ\tSN:chrDemo\tLN:1000",
+    rec("out_then_in", 1, "20M80N20M100N30M", 70L),   # introns 21-100 (out of scope), 121-220 (right flank inside)
+    rec("leaves", 401, "30M300N20M", 50L),            # intron 431-730, left flank inside
+    rec("leaves2", 411, "20M300N20M", 40L),           # same junction, second read
+    rec("span_only", 151, "30M300N30M", 60L),         # intron 181-480, no block inside
+    rec("inside", 251, "20M100N30M", 50L)),           # intron 271-370
+    file.path(scope_dir, "scope.sam"))
+  scope_bam <- file.path(scope_dir, "scope.bam")
+  for (args in list(c("sort", "-o", scope_bam, file.path(scope_dir, "scope.sam")), c("index", scope_bam)))
+    processx::run("samtools", args)
+  scope_cfg <- default_demo_config(); scope_cfg$demo <- FALSE; scope_cfg$bam <- scope_bam
+  scope_cfg$start1 <- 201L; scope_cfg$end1 <- 450L
+  sr <- analyze_bam(scope_cfg); sj <- sr$junctions[order(sr$junctions$intron_start1), ]
+  stopifnot(sr$native_audit_passed, nrow(sr$reads) == 4L, sr$span_only_excluded == 1L,
+            identical(sj$intron_start1, c(121L, 271L, 431L)), identical(sj$intron_end1, c(220L, 370L, 730L)),
+            identical(sj$score, c(1L, 1L, 2L)), nrow(sr$events) == 4L)
+  unlink(scope_dir, recursive = TRUE)
   cat("Native integration tests: PASS\n")
 }

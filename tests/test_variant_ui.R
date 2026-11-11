@@ -510,6 +510,13 @@ shiny::testServer(variant_server,
               nzchar(output$depth_plot$src),
               grepl("Model 1 analyses", html_text(output$bin_ratio_plot_ui), fixed = TRUE),
               grepl("max-width: 480px", as.character(output$bin_ratio_plot_ui$html), fixed = TRUE))
+    # Per-sample export, the permutation legend, and the note for a result saved
+    # before junction_scope existed. This fixture has no per-sample junction scores.
+    bins <- utils::read.csv(output$download_sample_bins)
+    stopifnot(nrow(bins) == 1L, bins$exon_count == 20L, bins$intron_count == 2L, isTRUE(all.equal(bins$ratio, 0.9)),
+              grepl("p_permutation shuffles dosage", legend, fixed = TRUE),
+              grepl("earlier rule", html_text(output$junction_scope_note), fixed = TRUE),
+              inherits(tryCatch(output$download_sample_junctions, error = function(e) e), "error"))
     session$setInputs(bin_ratio = FALSE)
     stopifnot(grepl("Not computed", html_text(output$bin_sites_ui), fixed = TRUE))
   })
