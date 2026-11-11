@@ -248,9 +248,12 @@ variant_empty_association <- function() data.frame(chrom = character(), intron_s
   total_exact_reads = numeric(), mean_denominator_dosage0 = numeric(),
   mean_denominator_dosage1 = numeric(), mean_denominator_dosage2 = numeric(),
   mean_rate_dosage0 = numeric(), mean_rate_dosage1 = numeric(), mean_rate_dosage2 = numeric(),
-  beta = numeric(), se = numeric(), t_value = numeric(), p_value = numeric(),
-  log10_p_value = numeric(), q_value_bh = numeric(), status = character(),
-  stringsAsFactors = FALSE)
+  shared_start_pairs = integer(), usage_start_dosage0 = numeric(), usage_start_dosage1 = numeric(),
+  usage_start_dosage2 = numeric(), shared_end_pairs = integer(), usage_end_dosage0 = numeric(),
+  usage_end_dosage1 = numeric(), usage_end_dosage2 = numeric(),
+  beta = numeric(), se = numeric(), ci_low = numeric(), ci_high = numeric(), t_value = numeric(),
+  p_value = numeric(), log10_p_value = numeric(), q_value_bh = numeric(), p_permutation = numeric(),
+  caution = character(), status = character(), stringsAsFactors = FALSE)
 
 # Model 1 pre-test gates. They use only genotype counts and junction support,
 # never the fitted association, so applying them does not select on the result.
@@ -259,12 +262,21 @@ variant_empty_association <- function() data.frame(chrom = character(), intron_s
 variant_association_gates <- function(min_samples = 3L, min_denominator_reads = 20,
                                       min_nonzero_samples = 10L, min_total_exact_reads = 20,
                                       min_mac = 5L, min_group_samples = 5L, min_groups = 2L,
-                                      perfect_fit_rel_tol = 1e-10, p_display_floor = 1e-300)
+                                      perfect_fit_rel_tol = 1e-10, p_display_floor = 1e-300,
+                                      conf_level = 0.95, n_permutations = 10000L,
+                                      permutation_seed = 20261111L, caution_group_samples = 20L,
+                                      caution_nonzero_fraction = 0.05)
   list(min_samples = as.integer(min_samples), min_denominator_reads = min_denominator_reads,
        min_nonzero_samples = as.integer(min_nonzero_samples),
        min_total_exact_reads = min_total_exact_reads, min_mac = as.integer(min_mac),
        min_group_samples = as.integer(min_group_samples), min_groups = as.integer(min_groups),
-       perfect_fit_rel_tol = perfect_fit_rel_tol, p_display_floor = p_display_floor)
+       perfect_fit_rel_tol = perfect_fit_rel_tol, p_display_floor = p_display_floor,
+       # Not gates: the confidence level, the permutation test and the caution
+       # flags describe fitted rows and never decide whether a row is fitted.
+       conf_level = conf_level, n_permutations = as.integer(n_permutations),
+       permutation_seed = as.integer(permutation_seed),
+       caution_group_samples = as.integer(caution_group_samples),
+       caution_nonzero_fraction = caution_nonzero_fraction)
 
 # Display form of p- and q-values: values below the floor (including values
 # that underflow to 0) are shown as "< 1e-300", never as 0.
@@ -279,8 +291,8 @@ variant_format_p <- function(p, floor = variant_association_gates()$p_display_fl
 # their gates first; this returns OK with beta/se/t/p, or PERFECT_FIT (beta kept).
 variant_fit_dosage <- function(x, y, gates) {
   n <- length(x)
-  out <- list(status = "OK", beta = NA_real_, se = NA_real_, t_value = NA_real_,
-              p_value = NA_real_, log10_p_value = NA_real_)
+  out <- list(status = "OK", beta = NA_real_, se = NA_real_, ci_low = NA_real_, ci_high = NA_real_,
+              t_value = NA_real_, p_value = NA_real_, log10_p_value = NA_real_)
   sxx <- sum((x - mean(x))^2)
   tss <- sum((y - mean(y))^2)
   out$beta <- sum((x - mean(x)) * (y - mean(y))) / sxx
@@ -290,10 +302,142 @@ variant_fit_dosage <- function(x, y, gates) {
     out$status <- "PERFECT_FIT"
   } else {
     out$se <- sqrt(rss / (n - 2L) / sxx); out$t_value <- out$beta / out$se
+    # Same OLS assumptions as the t test: equal variance across dosage groups.
+    half <- stats::qt(1 - (1 - gates$conf_level) / 2, df = n - 2L) * out$se
+    out$ci_low <- out$beta - half; out$ci_high <- out$beta + half
     # Log scale keeps the magnitude when the p-value underflows double precision.
     log_p <- min(0, log(2) + stats::pt(-abs(out$t_value), df = n - 2L, log.p = TRUE))
     out$p_value <- exp(log_p); out$log10_p_value <- log_p / log(10)
   }
+  out
+}
+
+# Permutation p-value of the dosage slope: dosage labels are shuffled across the
+# analysed samples and p = (1 + permutations with |slope| at least the observed
+# one) / (permutations + 1), two-sided. It needs no normal or equal-variance
+# assumption, so it stays valid when a few carriers or a mostly-zero outcome
+# make the t test anti-conservative; it still treats samples as exchangeable
+# (no relatedness or covariates) and cannot go below 1 / (permutations + 1).
+# Y is one outcome per column over the same samples as x; every column sees the
+# same shuffles. The seed is fixed, so a result always gives the same values,
+# and the session's random-number state is left as it was. max_work bounds
+# gathered values (samples outside the largest dosage group x permutations x
+# outcomes) by lowering the number of permutations, never below min_permutations.
+variant_permutation_p <- function(x, Y, n_permutations = 10000L, seed = 20261111L,
+                                  max_work = 1.5e8, min_permutations = 1000L) {
+  Y <- as.matrix(Y); n <- length(x)
+  if (nrow(Y) != n) stop("Permutation outcomes must have one row per sample.")
+  if (!ncol(Y) || n < 2L || length(unique(x)) < 2L)
+    return(list(p = rep(NA_real_, ncol(Y)), n_permutations = 0L))
+  # sum(yc) is 0, so the largest dosage group can be left out of the slope
+  # numerator: S = sum over the other samples of (dosage - largest) * yc.
+  sizes <- table(x); base <- as.numeric(names(sizes)[[which.max(sizes)]])
+  other <- sort(x[x != base]); w <- other - base; m <- length(w)
+  Yc <- sweep(Y, 2L, colMeans(Y))
+  observed <- abs(as.numeric(crossprod(x - mean(x), Yc)))
+  n_perm <- as.integer(max(min(n_permutations, min_permutations),
+                           min(n_permutations, floor(max_work / (m * ncol(Y))))))
+  global <- globalenv()
+  old_seed <- if (exists(".Random.seed", envir = global, inherits = FALSE)) get(".Random.seed", envir = global) else NULL
+  on.exit(if (is.null(old_seed)) suppressWarnings(rm(".Random.seed", envir = global)) else
+    assign(".Random.seed", old_seed, envir = global), add = TRUE)
+  set.seed(seed, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
+  hits <- numeric(ncol(Y)); done <- 0L
+  chunk <- max(1L, min(n_perm, as.integer(floor(5e6 / m))))
+  # Float residue must not turn an exact tie into a miss.
+  bound <- observed * (1 - 1e-12)
+  while (done < n_perm) {
+    b <- min(chunk, n_perm - done)
+    idx <- vapply(seq_len(b), function(i) sample.int(n, m), integer(m))
+    for (k in seq_len(ncol(Y))) {
+      s <- colSums(matrix(Yc[idx, k] * w, nrow = m))
+      hits[[k]] <- hits[[k]] + sum(abs(s) >= bound[[k]])
+    }
+    done <- done + b
+  }
+  list(p = (1 + hits) / (n_perm + 1), n_permutations = n_perm)
+}
+
+# Display form of a permutation p-value: at the resolution limit it is shown as
+# "<= 1/(permutations + 1)", because no shuffle was as extreme as the data.
+variant_format_perm_p <- function(p, n_permutations) {
+  out <- rep(NA_character_, length(p))
+  ok <- is.finite(p)
+  if (!any(ok) || !isTRUE(n_permutations > 0)) return(out)
+  floor <- 1 / (n_permutations + 1)
+  out[ok] <- ifelse(p[ok] <= floor * (1 + 1e-9), paste("<=", format(signif(floor, 2))), as.character(signif(p[ok], 3)))
+  out
+}
+
+# Caution flags of a fitted row (never a gate). SMALL_GROUP: the smallest
+# non-empty dosage group has fewer than caution_group_samples samples, where the
+# t-test p-value and interval are unreliable. SPARSE_OUTCOME (junction rows):
+# fewer than caution_nonzero_fraction of the analysed samples have the junction.
+variant_association_caution <- function(group_n, gates, n_nonzero = NULL) {
+  flags <- character()
+  present <- group_n[group_n > 0L]
+  if (length(present) && min(present) < gates$caution_group_samples) flags <- c(flags, "SMALL_GROUP")
+  if (!is.null(n_nonzero) && n_nonzero < gates$caution_nonzero_fraction * sum(group_n)) flags <- c(flags, "SPARSE_OUTCOME")
+  paste(flags, collapse = ";")
+}
+
+# Observed intron boundary pairs (strands combined, as Model 1 tests them) and
+# each listed sample's exact reads per pair: samples x pairs, zero where a
+# sample has no row. Pairs are sorted by position.
+variant_pair_counts <- function(result, vcf_samples) {
+  sj <- result$sample_junctions; j <- result$junctions
+  keys <- unique(j[, c("key", "chrom", "intron_start1", "intron_end1", "strand"), drop = FALSE])
+  pairs <- unique(keys[, c("chrom", "intron_start1", "intron_end1"), drop = FALSE])
+  pairs <- pairs[order(pairs$chrom, pairs$intron_start1, pairs$intron_end1), , drop = FALSE]
+  rownames(pairs) <- NULL
+  pair_id <- function(x) paste(x$chrom, x$intron_start1, x$intron_end1, sep = "\r")
+  keys$pair <- pair_id(keys)
+  sj$pair <- keys$pair[match(sj$key, keys$key)]
+  if (anyNA(sj$pair)) stop("Per-sample junction rows reference an unpublished junction.")
+  ids <- pair_id(pairs)
+  pairs$strands <- vapply(ids, function(id)
+    paste(sort(unique(keys$strand[keys$pair == id]), method = "radix"), collapse = ","), character(1), USE.NAMES = FALSE)
+  by_pair <- split(sj, sj$pair)
+  counts <- matrix(0, nrow = length(vcf_samples), ncol = nrow(pairs))
+  for (i in seq_len(nrow(pairs))) {
+    hits <- by_pair[[ids[[i]]]]
+    if (is.null(hits)) next
+    v <- as.numeric(tapply(hits$score, hits$vcf_sample, sum)[vcf_samples]); v[is.na(v)] <- 0
+    counts[, i] <- v
+  }
+  list(pairs = pairs, counts = counts)
+}
+
+# Per-sample junction counts behind Model 1, for models fitted outside the app
+# (covariates, kinship): one row per successful sample and observed boundary
+# pair, strands combined, zeros included. in_model marks the samples Model 1
+# analyses (usable biallelic diploid dosage and enough denominator reads).
+variant_sample_junction_table <- function(result, gates = variant_association_gates()) {
+  if (is.null(result$sample_junctions))
+    stop("This saved result predates per-sample junction scores; rerun the variant to export them.")
+  s <- result$samples
+  if (!is.data.frame(s) || !all(c("vcf_sample", "genotype", "status", "retained_reads") %in% names(s)))
+    stop("Per-sample accounting is missing from this result.")
+  empty <- data.frame(vcf_sample = character(), genotype = character(), dosage = numeric(),
+    retained_reads = numeric(), in_model = logical(), chrom = character(), intron_start1 = integer(),
+    intron_end1 = integer(), strands = character(), exact_reads = numeric(), rate_per_100 = numeric(),
+    stringsAsFactors = FALSE)
+  s <- s[s$status == "SUCCESS", c("vcf_sample", "genotype", "retained_reads"), drop = FALSE]
+  if (!nrow(s) || !nrow(result$junctions)) return(empty)
+  n_alt <- length(strsplit(as.character(result$variant$alt[[1L]]), ",", fixed = TRUE)[[1L]])
+  s$dosage <- variant_genotype_dosage(s$genotype, n_alt)
+  s$in_model <- is.finite(s$dosage) & is.finite(s$retained_reads) & s$retained_reads >= gates$min_denominator_reads
+  pc <- variant_pair_counts(result, s$vcf_sample)
+  n <- nrow(s); k <- nrow(pc$pairs)
+  row <- rep(seq_len(n), times = k); col <- rep(seq_len(k), each = n)
+  reads <- as.numeric(pc$counts)
+  out <- data.frame(vcf_sample = s$vcf_sample[row], genotype = s$genotype[row], dosage = s$dosage[row],
+    retained_reads = s$retained_reads[row], in_model = s$in_model[row], chrom = pc$pairs$chrom[col],
+    intron_start1 = pc$pairs$intron_start1[col], intron_end1 = pc$pairs$intron_end1[col],
+    strands = pc$pairs$strands[col], exact_reads = reads,
+    rate_per_100 = ifelse(s$retained_reads[row] > 0, 100 * reads / s$retained_reads[row], NA_real_),
+    stringsAsFactors = FALSE)
+  rownames(out) <- NULL
   out
 }
 
@@ -325,29 +469,34 @@ variant_genotype_association <- function(result, min_samples = 3L,
     attr(out, "sample_accounting") <- accounting
     out
   }
-  j <- result$junctions
-  if (!nrow(j)) return(finish(variant_empty_association()))
-  keys <- unique(j[, c("key", "chrom", "intron_start1", "intron_end1", "strand"), drop = FALSE])
-  pairs <- unique(keys[, c("chrom", "intron_start1", "intron_end1"), drop = FALSE])
-  pairs <- pairs[order(pairs$chrom, pairs$intron_start1, pairs$intron_end1), , drop = FALSE]
-  pair_id <- function(x) paste(x$chrom, x$intron_start1, x$intron_end1, sep = "\r")
-  keys$pair <- pair_id(keys)
-  sj$pair <- keys$pair[match(sj$key, keys$key)]
-  if (anyNA(sj$pair)) stop("Per-sample junction rows reference an unpublished junction.")
+  if (!nrow(result$junctions)) return(finish(variant_empty_association()))
+  pc <- variant_pair_counts(result, s$vcf_sample)
+  pairs <- pc$pairs; counts <- pc$counts
   x <- s$dosage; n <- length(x)
   # Genotype-level gates are identical for every pair of this result.
   mac <- as.integer(min(sum(x), 2 * n - sum(x)))
   large_groups <- sum(vapply(c(0, 1, 2), function(d) sum(x == d) >= gates$min_group_samples, logical(1)))
-  by_pair <- split(sj, sj$pair)
   group_mean <- function(v, d) if (any(x == d)) mean(v[x == d]) else NA_real_
+  # Usage among observed pairs that share one boundary: the pair's reads over
+  # the reads of every pair with the same intron start (or end), pooled over the
+  # analysed samples of a dosage group. NA without a competing pair or reads.
+  dosage_sums <- vapply(c(0, 1, 2), function(d) colSums(counts[x == d, , drop = FALSE]), numeric(nrow(pairs)))
+  dosage_sums <- matrix(dosage_sums, nrow = nrow(pairs))
+  usage <- function(boundary) {
+    group <- paste(pairs$chrom, boundary, sep = "\r")
+    totals <- rowsum(dosage_sums, group, reorder = FALSE)[match(group, unique(group)), , drop = FALSE]
+    shared <- as.integer(table(group)[group])
+    value <- dosage_sums / totals
+    value[shared < 2L | !is.finite(value)] <- NA_real_
+    list(shared = shared, value = value)
+  }
+  usage_start <- usage(pairs$intron_start1); usage_end <- usage(pairs$intron_end1)
+  group_n <- c(sum(x == 0), sum(x == 1), sum(x == 2))
   rows <- lapply(seq_len(nrow(pairs)), function(i) {
-    id <- pair_id(pairs[i, , drop = FALSE])
-    hits <- by_pair[[id]]
-    count <- if (is.null(hits)) rep(NA_real_, n) else tapply(hits$score, hits$vcf_sample, sum)[s$vcf_sample]
-    count <- as.numeric(count); count[is.na(count)] <- 0
+    count <- counts[, i]
     y <- 100 * count / s$retained_reads
     n_nonzero <- sum(count > 0); total_exact <- sum(count)
-    beta <- se <- t_value <- p_value <- log10_p <- NA_real_
+    beta <- se <- ci_low <- ci_high <- t_value <- p_value <- log10_p <- NA_real_
     status <- if (n < gates$min_samples) "TOO_FEW_SAMPLES" else
       if (length(unique(x)) < 2L) "SINGLE_DOSAGE" else
       if (mac < gates$min_mac || large_groups < gates$min_groups) "LOW_MAC" else
@@ -356,25 +505,39 @@ variant_genotype_association <- function(result, min_samples = 3L,
     if (status == "OK") {
       fit <- variant_fit_dosage(x, y, gates)
       status <- fit$status; beta <- fit$beta; se <- fit$se; t_value <- fit$t_value
+      ci_low <- fit$ci_low; ci_high <- fit$ci_high
       p_value <- fit$p_value; log10_p <- fit$log10_p_value
     }
     data.frame(chrom = pairs$chrom[[i]], intron_start1 = pairs$intron_start1[[i]],
       intron_end1 = pairs$intron_end1[[i]],
-      strands = paste(sort(unique(keys$strand[keys$pair == id]), method = "radix"), collapse = ","), n = n,
+      strands = pairs$strands[[i]], n = n,
       n_dosage0 = sum(x == 0), n_dosage1 = sum(x == 1), n_dosage2 = sum(x == 2),
       mac = mac, n_nonzero = n_nonzero, total_exact_reads = total_exact,
       mean_denominator_dosage0 = group_mean(s$retained_reads, 0),
       mean_denominator_dosage1 = group_mean(s$retained_reads, 1),
       mean_denominator_dosage2 = group_mean(s$retained_reads, 2),
       mean_rate_dosage0 = group_mean(y, 0), mean_rate_dosage1 = group_mean(y, 1), mean_rate_dosage2 = group_mean(y, 2),
-      beta = beta, se = se, t_value = t_value, p_value = p_value, log10_p_value = log10_p, q_value_bh = NA_real_,
+      shared_start_pairs = usage_start$shared[[i]], usage_start_dosage0 = usage_start$value[i, 1L],
+      usage_start_dosage1 = usage_start$value[i, 2L], usage_start_dosage2 = usage_start$value[i, 3L],
+      shared_end_pairs = usage_end$shared[[i]], usage_end_dosage0 = usage_end$value[i, 1L],
+      usage_end_dosage1 = usage_end$value[i, 2L], usage_end_dosage2 = usage_end$value[i, 3L],
+      beta = beta, se = se, ci_low = ci_low, ci_high = ci_high, t_value = t_value, p_value = p_value,
+      log10_p_value = log10_p, q_value_bh = NA_real_, p_permutation = NA_real_,
+      caution = if (status == "OK") variant_association_caution(group_n, gates, n_nonzero) else "",
       status = status, stringsAsFactors = FALSE)
   })
   out <- do.call(rbind, rows)
   tested <- out$status == "OK"
   out$q_value_bh[tested] <- stats::p.adjust(out$p_value[tested], method = "BH")
+  permutation <- list(n_permutations = 0L, seed = gates$permutation_seed)
+  if (any(tested)) {
+    perm <- variant_permutation_p(x, 100 * counts[, tested, drop = FALSE] / s$retained_reads,
+                                  gates$n_permutations, gates$permutation_seed)
+    out$p_permutation[tested] <- perm$p; permutation$n_permutations <- perm$n_permutations
+  }
   out <- out[order(!tested, out$log10_p_value, out$intron_start1, out$intron_end1), , drop = FALSE]
   rownames(out) <- NULL
+  attr(out, "permutation") <- permutation
   finish(out)
 }
 
@@ -392,7 +555,8 @@ variant_bin_ratio_gates <- function(min_exon_reads = variant_bin_ratio_defaults(
   g <- variant_association_gates(...)
   g$min_exon_reads <- as.integer(min_exon_reads)
   g[c("min_samples", "min_exon_reads", "min_mac", "min_group_samples", "min_groups",
-      "perfect_fit_rel_tol", "p_display_floor")]
+      "perfect_fit_rel_tol", "p_display_floor", "conf_level", "n_permutations",
+      "permutation_seed", "caution_group_samples")]
 }
 
 variant_empty_bin_sites <- function() data.frame(site_id = character(), chrom = character(),
@@ -565,8 +729,9 @@ variant_empty_bin_ratio_association <- function() data.frame(site_id = character
   n_dosage2 = integer(), mac = integer(), mean_exon_count_dosage0 = numeric(),
   mean_exon_count_dosage1 = numeric(), mean_exon_count_dosage2 = numeric(), mean_ratio_dosage0 = numeric(),
   mean_ratio_dosage1 = numeric(), mean_ratio_dosage2 = numeric(), beta = numeric(), se = numeric(),
-  t_value = numeric(), p_value = numeric(), log10_p_value = numeric(), q_value_bh = numeric(),
-  p_genotype_3level = numeric(), status = character(), stringsAsFactors = FALSE)
+  ci_low = numeric(), ci_high = numeric(), t_value = numeric(), p_value = numeric(),
+  log10_p_value = numeric(), q_value_bh = numeric(), p_permutation = numeric(),
+  p_genotype_3level = numeric(), caution = character(), status = character(), stringsAsFactors = FALSE)
 
 # Model 1 for the bin ratio, one row per site: OLS of ratio ~ additive ALT
 # dosage over successful samples with a biallelic diploid dosage and at least
@@ -590,6 +755,7 @@ variant_bin_ratio_association <- function(result, gates = NULL) {
   s <- s[is.finite(s$dosage), , drop = FALSE]
   check <- variant_bin_check(sites, settings$intron_width, settings$exon_width)
   group_mean <- function(v, x, d) if (any(x == d)) mean(v[x == d]) else NA_real_
+  n_perm <- 0L
   rows <- lapply(seq_len(nrow(sites)), function(i) {
     site <- sites[i, , drop = FALSE]
     r <- rc[rc$site_id == site$site_id, , drop = FALSE]
@@ -606,12 +772,22 @@ variant_bin_ratio_association <- function(result, gates = NULL) {
       if (length(unique(x)) < 2L) "SINGLE_DOSAGE" else
       if (mac < gates$min_mac || large_groups < gates$min_groups) "LOW_MAC" else
       if (length(unique(y)) < 2L) "CONSTANT_OUTCOME" else "OK"
-    fit <- list(beta = NA_real_, se = NA_real_, t_value = NA_real_, p_value = NA_real_, log10_p_value = NA_real_)
-    p3 <- NA_real_
+    fit <- list(beta = NA_real_, se = NA_real_, ci_low = NA_real_, ci_high = NA_real_, t_value = NA_real_,
+                p_value = NA_real_, log10_p_value = NA_real_)
+    p3 <- p_perm <- NA_real_; caution <- ""
+    group_n <- c(sum(x == 0), sum(x == 1), sum(x == 2))
     if (status == "OK") {
       fit <- variant_fit_dosage(x, y, gates); status <- fit$status
-      # Sensitivity: genotype as a factor (F test, levels - 1 df), not in the BH family.
-      if (status == "OK") p3 <- stats::anova(stats::lm(y ~ factor(x)))[["Pr(>F)"]][[1L]]
+      if (status == "OK") {
+        # Sensitivity: genotype as a factor (F test, levels - 1 df), not in the BH
+        # family. One or two samples in a level decide that test on their own, so
+        # it is reported only when every observed level has min_group_samples.
+        if (all(group_n[group_n > 0L] >= gates$min_group_samples))
+          p3 <- stats::anova(stats::lm(y ~ factor(x)))[["Pr(>F)"]][[1L]]
+        perm <- variant_permutation_p(x, y, gates$n_permutations, gates$permutation_seed)
+        p_perm <- perm$p[[1L]]; n_perm <<- max(n_perm, perm$n_permutations)
+        caution <- variant_association_caution(group_n, gates)
+      }
     }
     for (k in c("exon_bin_in_other_intron_tx", "intron_bin_in_other_exon_tx"))
       if (!k %in% names(site)) site[[k]] <- NA_integer_
@@ -628,14 +804,16 @@ variant_bin_ratio_association <- function(result, gates = NULL) {
       mean_exon_count_dosage2 = group_mean(exon[keep], x, 2),
       mean_ratio_dosage0 = group_mean(y, x, 0), mean_ratio_dosage1 = group_mean(y, x, 1),
       mean_ratio_dosage2 = group_mean(y, x, 2),
-      beta = fit$beta, se = fit$se, t_value = fit$t_value, p_value = fit$p_value,
-      log10_p_value = fit$log10_p_value, q_value_bh = NA_real_, p_genotype_3level = p3,
+      beta = fit$beta, se = fit$se, ci_low = fit$ci_low, ci_high = fit$ci_high, t_value = fit$t_value,
+      p_value = fit$p_value, log10_p_value = fit$log10_p_value, q_value_bh = NA_real_,
+      p_permutation = p_perm, p_genotype_3level = p3, caution = caution,
       status = status, stringsAsFactors = FALSE)
   })
   out <- do.call(rbind, rows)
   tested <- out$status == "OK"
   out$q_value_bh[tested] <- stats::p.adjust(out$p_value[tested], method = "BH")
   rownames(out) <- NULL
+  attr(out, "permutation") <- list(n_permutations = n_perm, seed = gates$permutation_seed)
   finish(out)
 }
 
@@ -661,6 +839,35 @@ variant_bin_ratio_samples <- function(result) {
     intron <- r$intron_count[m]; exon <- r$exon_count[m]
     data.frame(site_id = rep(id, nrow(s)), dosage = s$dosage, intron_count = intron, exon_count = exon,
                ratio = variant_bin_ratio_value(intron, exon), in_model = exon >= min_exon, stringsAsFactors = FALSE)
+  })
+  out <- do.call(rbind, c(list(empty), out))
+  rownames(out) <- NULL
+  out
+}
+
+# Per-sample bin counts behind the bin-ratio model, for models fitted outside
+# the app: one row per successful sample and frozen site. ratio and in_model
+# follow variant_bin_ratio_samples(); samples without a usable dosage are kept
+# with dosage NA and in_model FALSE.
+variant_sample_bin_table <- function(result) {
+  settings <- result$bin_ratio
+  empty <- data.frame(vcf_sample = character(), genotype = character(), dosage = numeric(),
+    site_id = character(), intron_count = numeric(), exon_count = numeric(), ratio = numeric(),
+    in_model = logical(), stringsAsFactors = FALSE)
+  if (is.null(settings) || isTRUE(settings$disabled) || is.null(settings$sites) || !nrow(settings$sites)) return(empty)
+  min_exon <- if (is.null(settings$min_exon_reads)) variant_bin_ratio_defaults()$min_exon_reads else settings$min_exon_reads
+  n_alt <- length(strsplit(as.character(result$variant$alt[[1L]]), ",", fixed = TRUE)[[1L]])
+  s <- result$samples[result$samples$status == "SUCCESS", c("vcf_sample", "genotype"), drop = FALSE]
+  s$dosage <- variant_genotype_dosage(s$genotype, n_alt)
+  rc <- result$bin_ratio_counts
+  out <- lapply(settings$sites$site_id, function(id) {
+    r <- rc[rc$site_id == id, , drop = FALSE]
+    m <- match(s$vcf_sample, r$vcf_sample)
+    if (anyNA(m)) stop("Splice-site bin counts are missing for a successful sample.")
+    intron <- r$intron_count[m]; exon <- r$exon_count[m]
+    data.frame(vcf_sample = s$vcf_sample, genotype = s$genotype, dosage = s$dosage, site_id = rep(id, nrow(s)),
+               intron_count = intron, exon_count = exon, ratio = variant_bin_ratio_value(intron, exon),
+               in_model = is.finite(s$dosage) & exon >= min_exon, stringsAsFactors = FALSE)
   })
   out <- do.call(rbind, c(list(empty), out))
   rownames(out) <- NULL
@@ -995,6 +1202,7 @@ analyze_variant_preview <- function(resources, variant, cfg, max_per_group = 3L)
                      max_total = 30L, replacement_on_failure = FALSE),
     rna_evidence_status = if (rna_supported) "SNV_BASE_COUNTS" else "UNSUPPORTED_NON_SNV",
     count_unit = "retained primary alignment record; paired ends separate",
+    junction_scope = junction_scope_rule(),
     aggregate_definition = "Unweighted mean across successful selected BAMs, including observed zeros; failed samples excluded and counted.",
     bin_ratio = variant_bin_ratio_result_settings(cfg),
     bcftools_version = version$text, config = cfg,
@@ -1349,6 +1557,7 @@ analyze_variant_all <- function(resources, variant, cfg, progress_file = NULL,
     sample_result_format = "Compact per-sample audit plus sparse per-sample junction scores (sample_junctions); detailed reads/events and depth are not retained in the final result.",
     rna_evidence_status = if (rna_supported) "SNV_BASE_COUNTS" else "UNSUPPORTED_NON_SNV",
     count_unit = "retained primary alignment record; paired ends separate",
+    junction_scope = junction_scope_rule(),
     aggregate_definition = "Unweighted mean across all successfully analyzed linked called-genotype BAMs, including observed zeros; failures excluded and counted.",
     bin_ratio = variant_bin_ratio_result_settings(cfg),
     bcftools_version = version$text, config = cfg,

@@ -135,6 +135,120 @@ run_model1_calibration <- function() {
   cat("Model 1 null calibration: PASS\n")
 }
 
+# Exact two-sided permutation p-value of the dosage slope by enumerating every
+# distinct assignment of the dosage labels (small fixtures only).
+exact_permutation_p <- function(x, y) {
+  n <- length(x); yc <- y - mean(y)
+  stat <- function(labels) abs(sum((labels - mean(x)) * yc))
+  values <- sort(unique(x)); sizes <- as.integer(table(x)[as.character(values)])
+  assign_rest <- function(labels, free, level) {
+    if (level == length(values)) { labels[free] <- values[[level]]; return(stat(labels)) }
+    picks <- utils::combn(length(free), sizes[[level]])
+    unlist(lapply(seq_len(ncol(picks)), function(k) {
+      l <- labels; l[free[picks[, k]]] <- values[[level]]
+      assign_rest(l, free[-picks[, k]], level + 1L)
+    }))
+  }
+  all_stats <- assign_rest(rep(NA_real_, n), seq_len(n), 1L)
+  mean(all_stats >= stat(x) * (1 - 1e-12))
+}
+
+# Permutation p-values, confidence intervals, caution flags, shared-boundary
+# usage and the per-sample export tables.
+run_model1_robust_tests <- function() {
+  # Permutation p against full enumeration: carriers only, a 1/1 sample, and
+  # carriers as the largest group (the group left out of the numerator).
+  cases <- list(list(x = c(1, 1, 1, rep(0, 7)), y = c(9, 7, 8, 1, 2, 3, 4, 5, 6, 2.5)),
+                list(x = c(2, 1, 1, rep(0, 5)), y = c(9, 4, 6, 1, 2, 3, 5, 2.5)),
+                list(x = c(0, 0, rep(1, 6), 2), y = c(1, 2, 5, 4, 6, 5.5, 4.5, 6.5, 9)))
+  for (case in cases) {
+    set.seed(99); invisible(stats::runif(3)); before <- .Random.seed
+    pp <- variant_permutation_p(case$x, case$y)
+    stopifnot(identical(.Random.seed, before), pp$n_permutations == 10000L,
+              abs(pp$p - exact_permutation_p(case$x, case$y)) < 0.012,
+              identical(pp, variant_permutation_p(case$x, case$y)))
+  }
+  # Several outcomes share the shuffles; a column equals its single-outcome value.
+  y2 <- cbind(cases[[1L]]$y, rev(cases[[1L]]$y))
+  both <- variant_permutation_p(cases[[1L]]$x, y2)
+  stopifnot(length(both$p) == 2L, both$p[[1L]] == variant_permutation_p(cases[[1L]]$x, cases[[1L]]$y)$p)
+  # The work bound lowers the number of shuffles, never below the minimum.
+  stopifnot(variant_permutation_p(cases[[1L]]$x, y2, max_work = 3 * 2 * 2000)$n_permutations == 2000L,
+            variant_permutation_p(cases[[1L]]$x, y2, max_work = 1)$n_permutations == 1000L,
+            all(is.na(variant_permutation_p(rep(1, 5), 1:5)$p)))
+  stopifnot(identical(variant_format_perm_p(c(1 / 10001, 0.5, NA, 0.01234), 10000L), c("<= 1e-04", "0.5", NA, "0.0123")),
+            all(is.na(variant_format_perm_p(c(0.5, NA), 0L))))
+
+  # Confidence interval, caution flags and permutation p on fitted rows.
+  set.seed(31)
+  n <- 3000L; geno <- c(rep("0/1", 6L), rep("0/0", n - 6L)); den <- rep(1000, n)
+  sparse <- function() { v <- numeric(n); hit <- sample(n, 30L); v[hit] <- stats::rpois(30L, 30) + 1; v }
+  nulls <- stats::setNames(lapply(seq_len(300L), function(i) sparse()),
+                           sprintf("c|%d|%d|+", seq_len(300L), seq_len(300L) + 1L))
+  a <- variant_genotype_association(model1_fixture(geno, den, nulls))
+  half <- stats::qt(0.975, a$n - 2L) * a$se
+  stopifnot(all(a$status == "OK"), all(a$caution == "SMALL_GROUP;SPARSE_OUTCOME"),
+            isTRUE(all.equal(a$ci_low, a$beta - half)), isTRUE(all.equal(a$ci_high, a$beta + half)),
+            all(a$p_permutation > 0 & a$p_permutation <= 1), attr(a, "permutation")$n_permutations == 10000L)
+  # Rare carriers and a mostly-zero outcome under the null: the t test calls far
+  # too many rows, the permutation test does not.
+  t_rate <- mean(a$p_value < 1e-3); perm_rate <- mean(a$p_permutation < 1e-2)
+  cat(sprintf("Rare-carrier sparse null: t-test p < 1e-3 in %.1f%% of rows; permutation p < 1e-2 in %.1f%%\n",
+              100 * t_rate, 100 * perm_rate))
+  stopifnot(t_rate > 0.02, perm_rate <= 0.03)
+  # Balanced groups and a dense outcome carry no flag; gated rows have neither.
+  set.seed(32)
+  g3 <- rep(c("0/0", "0/1", "1/1"), c(60L, 30L, 30L))
+  dense <- variant_genotype_association(model1_fixture(g3, rep(100, 120L),
+    list("c|0|1|+" = stats::rpois(120L, 5), "c|1|2|+" = c(rep(2, 5), numeric(115L)))))
+  ok <- dense$status == "OK"
+  stopifnot(sum(ok) == 1L, dense$caution[ok] == "", is.finite(dense$p_permutation[ok]),
+            dense$caution[!ok] == "", is.na(dense$p_permutation[!ok]), is.na(dense$ci_low[!ok]))
+
+  # Shared-boundary usage: A and B share the intron start, B and C the end.
+  r <- model1_fixture(g3, rep(100, 120L), list(A = rep(c(6, 2, 0), c(60L, 30L, 30L)),
+    B = rep(c(2, 2, 4), c(60L, 30L, 30L)), C = rep(c(1, 3, 0), c(60L, 30L, 30L))))
+  r$junctions$intron_start1 <- c(101L, 101L, 151L); r$junctions$intron_end1 <- c(200L, 300L, 300L)
+  u <- variant_genotype_association(r)
+  u <- u[order(u$intron_start1, u$intron_end1), ]
+  stopifnot(identical(u$shared_start_pairs, c(2L, 2L, 1L)), identical(u$shared_end_pairs, c(1L, 2L, 2L)),
+            isTRUE(all.equal(c(u$usage_start_dosage0[[1L]], u$usage_start_dosage1[[1L]], u$usage_start_dosage2[[1L]]), c(0.75, 0.5, 0))),
+            isTRUE(all.equal(u$usage_start_dosage0[[2L]], 0.25)), all(is.na(u[3L, c("usage_start_dosage0", "usage_start_dosage1", "usage_start_dosage2")])),
+            all(is.na(u[1L, c("usage_end_dosage0", "usage_end_dosage1", "usage_end_dosage2")])),
+            isTRUE(all.equal(c(u$usage_end_dosage0[[3L]], u$usage_end_dosage1[[3L]], u$usage_end_dosage2[[3L]]), c(1 / 3, 0.6, 0))))
+
+  # Per-sample junction table: every successful sample x pair, zeros included.
+  r$samples$retained_reads[[1L]] <- 10; r$samples$genotype[[120L]] <- "1"
+  r$samples$status[[2L]] <- "FAILED"; r$sample_junctions <- r$sample_junctions[r$sample_junctions$vcf_sample != "s00002", ]
+  t1 <- variant_sample_junction_table(r)
+  stopifnot(nrow(t1) == 119L * 3L, !"s00002" %in% t1$vcf_sample,
+            !any(t1$in_model[t1$vcf_sample == "s00001"]), all(is.na(t1$dosage[t1$vcf_sample == "s00120"])),
+            !any(t1$in_model[t1$vcf_sample == "s00120"]), sum(t1$in_model) == 117L * 3L,
+            sum(t1$exact_reads[t1$intron_start1 == 101L & t1$intron_end1 == 200L]) == sum(r$sample_junctions$score[r$sample_junctions$key == "A"]),
+            isTRUE(all.equal(t1$rate_per_100, 100 * t1$exact_reads / t1$retained_reads)),
+            identical(unique(t1$strands), "+"))
+  old <- r; old$sample_junctions <- NULL
+  expect_error(variant_sample_junction_table(old), "predates per-sample junction scores")
+
+  # Bin-ratio model: interval, permutation p, and the 3-level test is withheld
+  # when a dosage group is too small to carry it.
+  set.seed(33)
+  small <- rep(c("0/0", "0/1", "1/1"), c(70L, 28L, 2L)); dose <- rep(c(0, 1, 2), c(70L, 28L, 2L))
+  exon <- stats::rpois(100L, 40) + 10; intron <- stats::rbinom(100L, exon, 0.2 + 0.05 * dose)
+  b <- variant_bin_ratio_association(bin_ratio_fixture(small, intron, exon))
+  stopifnot(b$status == "OK", is.na(b$p_genotype_3level), b$caution == "SMALL_GROUP",
+            b$p_permutation > 0, b$p_permutation <= 1, b$ci_low < b$beta, b$beta < b$ci_high,
+            attr(b, "permutation")$n_permutations == 10000L)
+  fixture <- bin_ratio_fixture(small, intron, exon)
+  fixture$samples$genotype[[1L]] <- "1"
+  t2 <- variant_sample_bin_table(fixture)
+  stopifnot(nrow(t2) == 100L, is.na(t2$dosage[[1L]]), !t2$in_model[[1L]], all(t2$in_model[-1L] == (exon[-1L] >= 10)),
+            identical(t2$ratio, variant_bin_ratio_value(intron, exon)), identical(t2$intron_count, as.numeric(intron)) || identical(t2$intron_count, intron))
+  off <- fixture; off$bin_ratio <- list(disabled = TRUE, sites = variant_empty_bin_sites())
+  stopifnot(nrow(variant_sample_bin_table(off)) == 0L)
+  cat("Permutation p-values, intervals, caution flags, usage and per-sample tables: PASS\n")
+}
+
 # Splice-site bin ratio: a result carrying frozen settings and per-sample bin counts.
 bin_ratio_fixture <- function(genotype, intron, exon, sites = variant_bin_geometry("c", 1000, "+", "donor")) {
   ids <- sprintf("s%05d", seq_along(genotype))
@@ -468,6 +582,7 @@ run_variant_tests <- function(native = TRUE) {
   expect_error(variant_genotype_association(legacy), "rerun")
   run_model1_gate_tests()
   run_model1_calibration()
+  run_model1_robust_tests()
   run_bin_ratio_tests()
   run_normalized_depth_tests()
   unsupported <- variant_aggregate(NULL, calls, selected, list(r1, r2, NULL, NULL), cfg, FALSE)

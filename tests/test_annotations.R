@@ -87,13 +87,16 @@ run_annotation_tests <- function() {
   negative <- annotation$introns[annotation$introns$transcript_id == "T4.5", ]
   stopifnot(identical(as.integer(negative$intron_number), c(2L, 1L)),
             all(negative$donor1 == negative$end1), all(negative$acceptor1 == negative$start1))
-  j <- data.frame(chrom = "chr1", intron_start1 = c(150L, 650L, 150L, 650L, 150L, 550L, 999L),
-    intron_end1 = c(199L, 699L, 198L, 699L, 199L, 560L, 1001L), strand = c("+", "-", "+", "+", "?", "?", "+"),
-    count_sum = c(1, 2, 3, 4, 5, 6, 7))
+  # The last two leave the 100-900 query: one keeps a flanking exonic base
+  # inside it (decidable), the other has both flanking bases outside.
+  j <- data.frame(chrom = "chr1", intron_start1 = c(150L, 650L, 150L, 650L, 150L, 550L, 999L, 850L, 901L),
+    intron_end1 = c(199L, 699L, 198L, 699L, 199L, 560L, 1001L, 1200L, 1200L), strand = c("+", "-", "+", "+", "?", "?", "+", "+", "+"),
+    count_sum = c(1, 2, 3, 4, 5, 6, 7, 8, 9))
   matches <- annotate_junctions(j, annotation)
   stopifnot(identical(matches$junctions$count_sum, j$count_sum),
     identical(matches$junctions$annotation_status,
-      c("ANNOTATED", "ANNOTATED", "NOT_IN_ANNOTATION", "NOT_IN_ANNOTATION", "UNKNOWN_STRAND", "UNKNOWN_STRAND", "OUTSIDE_QUERY")),
+      c("ANNOTATED", "ANNOTATED", "NOT_IN_ANNOTATION", "NOT_IN_ANNOTATION", "UNKNOWN_STRAND", "UNKNOWN_STRAND", "OUTSIDE_QUERY",
+        "NOT_IN_ANNOTATION", "NOT_IN_ANNOTATION")),
     matches$junctions$annotation_match_n[[1]] == 2L,
     matches$junctions$matching_transcripts[[1]] == "T1.2;T3.1",
     sum(matches$matches$observed_row == 1L) == 2L,

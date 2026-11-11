@@ -199,6 +199,23 @@ parse_sam_records <- function(lines, cfg) {
        missing_nh = sum(is.na(reads$nh)))
 }
 
+# Which junctions of the retained reads are reported. A junction is in scope
+# when the exonic base next to either boundary lies inside the analysis
+# interval: every read supporting it then has an aligned block on that base, so
+# it overlaps the interval, was fetched and is retained, and the count is
+# complete even if the other boundary lies outside. A junction with both
+# flanking bases outside is supported only by reads the interval may not have
+# fetched, so it is dropped. intron_start0 is the 0-based intron start, which is
+# also the 1-based position of the last exonic base before the intron.
+junction_in_scope <- function(intron_start0, intron_end0, start1, end1) {
+  inside <- function(pos1) pos1 >= start1 & pos1 <= end1
+  inside(intron_start0) | inside(intron_end0 + 1L)
+}
+
+# Recorded in result provenance; results without it kept only junctions with
+# both boundaries inside the interval.
+junction_scope_rule <- function() "exonic base next to at least one intron boundary inside the analysis interval"
+
 read_regtools_bed <- function(path) {
   empty <- data.frame(chrom = character(), chromStart = integer(), chromEnd = integer(),
     name = character(), score = integer(), strand = character(), thickStart = integer(),
@@ -373,8 +390,7 @@ analyze_bam <- function(cfg) {
                      "-r", region, "-o", bed_path, local_bam))
   j <- read_regtools_bed(bed_path)
   # Full alignment records can have junctions outside the requested ROI.
-  j <- j[j$chrom == cfg$chrom & j$intron_start0 >= cfg$start1 - 1L &
-           j$intron_end0 <= cfg$end1, , drop = FALSE]
+  j <- j[j$chrom == cfg$chrom & junction_in_scope(j$intron_start0, j$intron_end0, cfg$start1, cfg$end1), , drop = FALSE]
   e <- parsed$events
   e$key <- junction_key(e$chrom, e$intron_start0, e$intron_end0, e$strand)
   e <- e[e$key %in% j$key, , drop = FALSE]

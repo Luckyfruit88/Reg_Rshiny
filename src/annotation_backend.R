@@ -142,7 +142,12 @@ annotate_junctions <- function(junctions, annotation) {
     start <- out$intron_start1[[i]]; end <- out$intron_end1[[i]]; strand <- as.character(out$strand[[i]])
     if (!is.finite(start) || !is.finite(end) || start != floor(start) || end != floor(end) || start < 1 || end < start)
       stop("Invalid 1-based inclusive junction boundaries.")
-    if (out$chrom[[i]] != q$chrom || start < q$start1 || end > q$end1) {
+    # The query returns complete models of every transcript overlapping its
+    # interval. An annotated intron with these boundaries belongs to a transcript
+    # that contains both flanking exonic bases, so the match is decidable when
+    # either flanking base lies inside the query interval.
+    flank_inside <- function(pos1) pos1 >= q$start1 && pos1 <= q$end1
+    if (out$chrom[[i]] != q$chrom || !(flank_inside(start - 1) || flank_inside(end + 1))) {
       out$annotation_status[[i]] <- "OUTSIDE_QUERY"
       out$annotation_label[[i]] <- "Outside the complete annotation query interval"
       next

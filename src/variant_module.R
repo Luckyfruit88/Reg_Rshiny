@@ -161,6 +161,7 @@ plot_variant_depth <- function(r, cfg, cols, normalized = NULL) {
 # percentile range are drawn at the axis edge and counted in the subtitle.
 plot_bin_ratio_by_dosage <- function(samples, association) {
   sites <- association$site_id
+  n_perm <- attr(association, "permutation")$n_permutations
   if (!length(sites)) { graphics::plot.new(); graphics::text(.5, .5, "No splice-site bin ratio for this result"); return(invisible(NULL)) }
   old <- graphics::par(mfrow = c(1L, length(sites)), mar = c(4.1, 4.1, 3.6, 1.1)); on.exit(graphics::par(old))
   for (i in seq_along(sites)) {
@@ -186,6 +187,7 @@ plot_bin_ratio_by_dosage <- function(samples, association) {
     }
     graphics::mtext(paste0(a$status, if (is.finite(a$beta)) paste0(" · beta ", signif(a$beta, 3)) else "",
       if (is.finite(a$p_value)) paste0(" · p ", variant_format_p_label(a$p_value)) else "",
+      variant_perm_label(a, n_perm),
       if (clipped) paste0(" · ", clipped, " beyond axis") else ""), side = 3, line = .3, cex = .85)
   }
 }
@@ -193,6 +195,7 @@ plot_bin_ratio_by_dosage <- function(samples, association) {
 # Model 1 junction rate: mean rate per dosage (mean_rate_dosage*, reads per 100
 # denominator reads) and the fitted OLS line for the OK pairs with the smallest p.
 plot_junction_rate_by_dosage <- function(association, top = 6L) {
+  n_perm <- attr(association, "permutation")$n_permutations
   a <- association[association$status == "OK", , drop = FALSE]
   a <- utils::head(a[order(a$log10_p_value), , drop = FALSE], top)
   if (!nrow(a)) { graphics::plot.new(); graphics::text(.5, .5, "No junction boundary pair was fitted (status OK)"); return(invisible(NULL)) }
@@ -209,11 +212,22 @@ plot_junction_rate_by_dosage <- function(association, top = 6L) {
     graphics::title(main = paste0(r$intron_start1, "-", r$intron_end1, " (", r$strands, ")"), line = 1.9, cex.main = 1.2)
     graphics::axis(1, at = 0:2, labels = paste0(0:2, "\nn=", n), padj = .5)
     graphics::abline(a = ybar - r$beta * xbar, b = r$beta, col = "#7570b3", lwd = 2)
-    graphics::mtext(paste0("beta ", signif(r$beta, 3), " · p ", variant_format_p_label(r$p_value)), side = 3, line = .3, cex = .85)
+    graphics::mtext(paste0("beta ", signif(r$beta, 3), " · p ", variant_format_p_label(r$p_value), variant_perm_label(r, n_perm)),
+      side = 3, line = .3, cex = .85)
   }
 }
 
 variant_format_p_label <- function(p) if (!is.finite(p)) "NA" else if (p < 1e-300) "< 1e-300" else format(signif(p, 3))
+
+# Panel subtitle part for one association row: its permutation p-value and
+# caution flags, when the row has them (older backends have neither column).
+variant_perm_label <- function(row, n_permutations = NULL) {
+  p <- row$p_permutation; flags <- row$caution
+  # At the resolution limit no shuffle was as extreme as the data.
+  at_limit <- isTRUE(n_permutations > 0) && length(p) == 1L && is.finite(p) && p <= (1 + 1e-9) / (n_permutations + 1)
+  paste0(if (length(p) == 1L && is.finite(p)) paste0(" · perm p ", if (at_limit) "<= " else "", format(signif(p, 2))) else "",
+         if (length(flags) == 1L && !is.na(flags) && nzchar(flags)) paste0(" · ", flags) else "")
+}
 
 variant_ui <- function(id) {
   ns <- shiny::NS(id)
@@ -268,6 +282,8 @@ variant_ui <- function(id) {
     radioButtons(ns("depth_scale"), "RNA depth display (Genotype comparison and RNA allele evidence plots)",
       c("Raw depth" = "raw", "Per 1,000 interval reads" = "normalized", "Relative to a reference exon" = "relative"),
       selected = "raw", inline = TRUE),
+    conditionalPanel(sprintf("input['%s'] === 'normalized'", ns("depth_scale")),
+      helpText("Interval reads are the sample's reads in this analysis interval, not its library size. The view shows the shape of coverage within the interval: a genotype difference in the overall expression of the region is divided out, and a loss at one exon appears as a gain elsewhere.")),
     conditionalPanel(sprintf("input['%s'] === 'relative'", ns("depth_scale")),
       textInput(ns("depth_reference"), "Reference region (1-based START-END inside the interval)",
         placeholder = "Blank: nearest GENCODE basic exon at least 50 bp from the variant"),
@@ -322,9 +338,11 @@ variant_ui <- function(id) {
         p("Each observed intron boundary pair (strands combined) is tested separately by ordinary least squares across successful samples: rate = 100 × exact junction reads / denominator reads, where denominator reads are the sample's retained alignments overlapping the analysis interval. Dosage counts ALT alleles in a biallelic diploid DNA genotype; samples without a usable dosage or below the minimum denominator are excluded from every pair."),
         tags$details(class = "regshiny-definitions", tags$summary("Junction model status rules and column definitions"),
           uiOutput(ns("association_legend"))),
-        p("Unadjusted model: no age, sex, batch, genetic PCs or relatedness. FHS participants are related, so p-values are nominal and may be anti-conservative. q_value_bh is Benjamini–Hochberg over the OK rows of this result only, not across batch variants. OK means the pair passed every gate and was fitted; it does not mean significant, and no significance cutoff is applied. This is not formal PSI or causal inference.")),
+        p("Unadjusted model: no age, sex, batch, genetic PCs or relatedness. FHS participants are related, so p-values are nominal and may be anti-conservative. q_value_bh is Benjamini–Hochberg over the OK rows of this result only, not across batch variants. OK means the pair passed every gate and was fitted; it does not mean significant, and no significance cutoff is applied. This is not formal PSI or causal inference."),
+        p("With few carriers or a junction seen in few samples, the t-test p-value can be far too small. p_permutation shuffles dosage across the analysed samples and does not rely on normality or equal variance; read it next to p_value, and treat rows with a caution flag by p_permutation. For a model with covariates or kinship, export the per-sample tables from Export and provenance.")),
       bslib::nav_panel("Junctions", DT::DTOutput(ns("junctions")),
-        p("Intron boundaries are 1-based and inclusive. count_sum is total retained alignment support; count_mean is support per successful RNA sample under the submitted sample scope.")),
+        p("Intron boundaries are 1-based and inclusive. count_sum is total retained alignment support; count_mean is support per successful RNA sample under the submitted sample scope."),
+        uiOutput(ns("junction_scope_note"))),
       bslib::nav_panel("GENCODE", annotation_detail_ui(ns("annotation"))),
       bslib::nav_panel("RNA allele evidence",
         uiOutput(ns("rna_status")),
@@ -344,7 +362,10 @@ variant_ui <- function(id) {
         downloadButton(ns("download_rna"), "RNA bases CSV"),
         downloadButton(ns("download_samples"), "Sample audit CSV"),
         downloadButton(ns("download_genotypes"), "DNA calls CSV"),
+        downloadButton(ns("download_sample_junctions"), "Per-sample junction counts CSV"),
+        downloadButton(ns("download_sample_bins"), "Per-sample bin counts CSV"),
         downloadButton(ns("download_audit"), "Parameters / provenance JSON"),
+        helpText("The two per-sample tables hold what Model 1 fits (one row per successful sample and junction pair or splice site, zeros included), for fitting a model with covariates or kinship outside the app."),
         hr(), uiOutput(ns("job_files")), verbatimTextOutput(ns("audit")),
         p("Exports include controlled sample metadata. Use them within the project's authorized data environment.")),
       bslib::nav_panel("Scope",
@@ -1122,10 +1143,27 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         backend$variant_bin_ratio_association(r)
       }, error = function(e) e)
     })
+    # Permutation p-values as text ("<= 1e-04" at the resolution limit); a
+    # backend without the column or the formatter leaves the table unchanged.
+    perm_display <- function(a) {
+      if ("p_permutation" %in% names(a) && is.function(backend$variant_format_perm_p))
+        a$p_permutation <- backend$variant_format_perm_p(a$p_permutation, attr(a, "permutation")$n_permutations)
+      a
+    }
+    # Sentence for a status box: how many fitted rows carry a caution flag.
+    caution_note <- function(a) {
+      if (!"caution" %in% names(a)) return("")
+      flagged <- sum(a$status == "OK" & nzchar(a$caution))
+      n_perm <- attr(a, "permutation")$n_permutations
+      paste0(if (flagged) paste0(" ", flagged, " fitted row(s) carry a caution flag (few samples in a dosage group, or a junction seen in few samples): use p_permutation for them.") else "",
+        if (isTRUE(n_perm > 0)) paste0(" p_permutation uses ", format(n_perm, big.mark = ","), " shuffles of dosage and cannot go below ",
+          format(signif(1 / (n_perm + 1), 2)), ".") else "")
+    }
+    signif_columns <- function(a, columns) intersect(columns, names(a))
     bin_ratio_display <- function(a) {
       floor <- attr(a, "gates")$p_display_floor
       for (name in c("p_value", "q_value_bh", "p_genotype_3level")) a[[name]] <- backend$variant_format_p(a[[name]], floor)
-      a
+      perm_display(a)
     }
     output$bin_ratio_status <- renderUI({
       a <- bin_ratio_association()
@@ -1144,7 +1182,8 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           " successful samples analysed; ", a$n_below_min_exon[[i]], " had fewer than ", g$min_exon_reads,
           " exon-bin reads (", a$n_both_zero[[i]], " with no reads in either bin).",
           if (a$bin_check[[i]] != "OK") tags$span(class = "text-warning", " Bin check: ", a$bin_check[[i]], ".") else NULL)),
-        if (!identical(result_mode(), "all")) "Exploratory preview subset: p-values describe only the capped samples." else "")
+        caution_note(a),
+        if (!identical(result_mode(), "all")) " Exploratory preview subset: p-values describe only the capped samples." else "")
     })
     output$bin_ratio_legend <- renderUI({
       a <- bin_ratio_association()
@@ -1168,7 +1207,11 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           item("CONSTANT_OUTCOME", "every analysed sample has the same ratio."),
           item("PERFECT_FIT", paste0("residual sum of squares ≤ ", format(g$perfect_fit_rel_tol), " × total sum of squares.")),
           item("OK", "fitted; not a significance call.")),
-        p("beta is the change in ratio per ALT allele (OLS, two-sided t test on n − 2 df). p_genotype_3level is a sensitivity F test with genotype as a factor (levels − 1 df) and is outside the BH family. q_value_bh adjusts the OK sites of this result, separately from the junction table."))
+        p("beta is the change in ratio per ALT allele (OLS, two-sided t test on n − 2 df); ci_low and ci_high are its ", 100 * g$conf_level,
+          "% confidence interval under the same assumptions. p_genotype_3level is a sensitivity F test with genotype as a factor (levels − 1 df), outside the BH family, and is reported only when every observed dosage group has at least ",
+          g$min_group_samples, " analysed samples. q_value_bh adjusts the OK sites of this result, separately from the junction table."),
+        p("p_permutation shuffles dosage across the analysed samples of the site (fixed seed, so it is reproducible) and counts how often the shuffled slope is at least as large as the observed one. It does not assume normal or equal-variance ratios, but still treats samples as unrelated. caution = SMALL_GROUP means the smallest dosage group has fewer than ",
+          g$caution_group_samples, " analysed samples, where the t test and the interval are unreliable."))
     })
     output$bin_ratio_table <- DT::renderDT({
       a <- bin_ratio_association()
@@ -1177,7 +1220,8 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         options = list(dom = "t", scrollX = TRUE, paging = FALSE)),
         c("ratio_mean_all_dosage0", "ratio_mean_all_dosage1", "ratio_mean_all_dosage2",
           "mean_exon_count_dosage0", "mean_exon_count_dosage1", "mean_exon_count_dosage2",
-          "mean_ratio_dosage0", "mean_ratio_dosage1", "mean_ratio_dosage2", "beta", "se", "t_value", "log10_p_value"), 4)
+          "mean_ratio_dosage0", "mean_ratio_dosage1", "mean_ratio_dosage2", "beta", "se", "ci_low", "ci_high",
+          "t_value", "log10_p_value") |> signif_columns(a = a), 4)
     })
     bin_ratio_samples <- reactive({
       a <- bin_ratio_association()
@@ -1231,8 +1275,9 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         gated[["LOW_MAC"]], " LOW_MAC and ", gated[["LOW_SUPPORT"]], " LOW_SUPPORT without p-values. ",
         if (!is.null(acc)) paste0(acc$analysed, " of ", acc$successful, " successful samples analysed; ",
           acc$without_usable_dosage, " without a usable biallelic diploid dosage and ", acc$below_min_denominator,
-          " below ", g$min_denominator_reads, " denominator reads were excluded. ") else "",
-        if (!identical(result_mode(), "all")) "Exploratory preview subset: p-values describe only the capped samples." else "")
+          " below ", g$min_denominator_reads, " denominator reads were excluded.") else "",
+        caution_note(a),
+        if (!identical(result_mode(), "all")) " Exploratory preview subset: p-values describe only the capped samples." else "")
     })
     output$association_legend <- renderUI({
       a <- association()
@@ -1254,24 +1299,35 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         p(paste0("Samples need at least ", g$min_denominator_reads, " denominator reads to enter any pair. ",
           "mean_denominator_dosage0/1/2 are the mean denominator reads of the analysed samples per dosage; mean_rate_dosage0/1/2 are unweighted means of per-sample rates. ",
           "p-values below ", format(g$p_display_floor), " are shown as \"< ", format(g$p_display_floor),
-          "\"; log10_p_value keeps their magnitude.")))
+          "\"; log10_p_value keeps their magnitude.")),
+        if ("p_permutation" %in% names(a)) tagList(
+          p(paste0("ci_low and ci_high are the ", 100 * g$conf_level, "% confidence interval of beta under the OLS assumptions. ",
+            "p_permutation shuffles dosage across the analysed samples (fixed seed, the same shuffles for every pair) and counts how often the shuffled slope is at least as large as the observed one; it does not assume normal or equal-variance rates, but still treats samples as unrelated. ",
+            "caution lists SMALL_GROUP (the smallest dosage group has fewer than ", g$caution_group_samples,
+            " analysed samples) and SPARSE_OUTCOME (fewer than ", 100 * g$caution_nonzero_fraction,
+            "% of analysed samples have the junction): in both cases the t-test p-value can be far too small.")),
+          p("usage_start_dosage0/1/2 is the pair's share of exact reads among all observed pairs with the same intron start, pooled over the analysed samples of each dosage group; usage_end_dosage0/1/2 is the same for pairs with the same intron end; shared_start_pairs and shared_end_pairs count those pairs. Unlike the rate, this share does not depend on the interval width. It is NA when no other observed pair shares the boundary. Pairs not saved in this result (for results saved under the earlier rule, any pair with an end outside the interval) are not in the denominator.")) else NULL)
     })
     output$association <- DT::renderDT({
       a <- association()
       req(!inherits(a, "error"))
       floor <- attr(a, "gates")$p_display_floor
       a$p_value <- backend$variant_format_p(a$p_value, floor); a$q_value_bh <- backend$variant_format_p(a$q_value_bh, floor)
+      a <- perm_display(a)
       DT::formatSignif(DT::datatable(a, rownames = FALSE, selection = "none",
         options = list(pageLength = 10, scrollX = TRUE)),
         c("mean_denominator_dosage0", "mean_denominator_dosage1", "mean_denominator_dosage2",
-          "mean_rate_dosage0", "mean_rate_dosage1", "mean_rate_dosage2", "beta", "se", "t_value", "log10_p_value"), 4)
+          "mean_rate_dosage0", "mean_rate_dosage1", "mean_rate_dosage2",
+          "usage_start_dosage0", "usage_start_dosage1", "usage_start_dosage2",
+          "usage_end_dosage0", "usage_end_dosage1", "usage_end_dosage2",
+          "beta", "se", "ci_low", "ci_high", "t_value", "log10_p_value") |> signif_columns(a = a), 4)
     })
     output$download_association <- downloadHandler("genotype_association_model1.csv", function(file) {
       a <- association()
       if (inherits(a, "error")) stop(conditionMessage(a))
       floor <- attr(a, "gates")$p_display_floor
       a$p_value <- backend$variant_format_p(a$p_value, floor); a$q_value_bh <- backend$variant_format_p(a$q_value_bh, floor)
-      utils::write.csv(a, file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8")
+      utils::write.csv(perm_display(a), file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8")
     })
     group_colors <- reactive({
       groups <- as.character(result()$group_summary$genotype)
@@ -1331,10 +1387,10 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           xlab = "1-based intron positions", main = paste0("Successful RNA samples: ", gs$analyzed_n[[i]], "; failed: ", gs$failed_n[[i]]))
         abline(v = r$variant$pos1[[1L]], lty = 2, col = "gray70")
         j <- r$junctions
-        if (nrow(j)) j <- j[j$genotype == g & j$intron_start1 >= cfg$start1 & j$intron_end1 <= cfg$end1 & is.finite(j$count_mean) & j$count_sum > 0, , drop = FALSE]
+        if (nrow(j)) j <- j[j$genotype == g & is.finite(j$count_mean) & j$count_sum > 0, , drop = FALSE]
         if (!nrow(j)) {
           text(mean(c(cfg$start1, cfg$end1)), .5,
-            if (gs$analyzed_n[[i]] == 0) "Unavailable: no successful RNA samples" else "No supported junctions fully inside this interval")
+            if (gs$analyzed_n[[i]] == 0) "Unavailable: no successful RNA samples" else "No supported junctions in this interval")
           next
         }
         j <- head(j[order(-j$count_sum, j$intron_start1), , drop = FALSE], 20L)
@@ -1343,7 +1399,14 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           h <- .15 + .65 * j$count_mean[[k]] / max(1, r$junctions$count_mean, na.rm = TRUE)
           x <- j$intron_start1[[k]] + t * (j$intron_end1[[k]] - j$intron_start1[[k]])
           lines(x, 4 * h * t * (1 - t), col = cols[[g]], lwd = 1.6)
-          text(mean(range(x)), h + .08, paste0(format(signif(j$count_mean[[k]], 3), trim = TRUE), " reads/sample ", j$strand[[k]]), cex = .7)
+          # An arc that leaves the interval is cut at the plot edge: label the
+          # visible part and name the boundary that lies outside.
+          shown <- pmin(pmax(range(x), cfg$start1), cfg$end1); mid <- mean(shown)
+          leaves <- c(if (j$intron_start1[[k]] < cfg$start1) paste0("from ", j$intron_start1[[k]]) else NULL,
+                      if (j$intron_end1[[k]] > cfg$end1) paste0("to ", j$intron_end1[[k]]) else NULL)
+          at <- (mid - j$intron_start1[[k]]) / (j$intron_end1[[k]] - j$intron_start1[[k]])
+          text(mid, min(1.12, 4 * h * at * (1 - at) + .08), paste0(format(signif(j$count_mean[[k]], 3), trim = TRUE), " reads/sample ", j$strand[[k]],
+            if (length(leaves)) paste0(" (", paste(leaves, collapse = ", "), ")") else ""), cex = .7)
         }
       }
     })
@@ -1373,6 +1436,17 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
     output$download_rna <- csv_export("rna_bases", "genotype_rna_bases.csv")
     output$download_samples <- csv_export("samples", "selected_rna_sample_audit.csv")
     output$download_genotypes <- csv_export("genotypes", "dna_genotype_calls.csv")
+    table_export <- function(build, filename) downloadHandler(filename, function(file) {
+      if (!is.function(build)) stop("This export is unavailable in this backend.")
+      utils::write.csv(build(result()), file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8")
+    })
+    output$download_sample_junctions <- table_export(backend$variant_sample_junction_table, "per_sample_junction_counts.csv")
+    output$download_sample_bins <- table_export(backend$variant_sample_bin_table, "per_sample_bin_counts.csv")
+    output$junction_scope_note <- renderUI({
+      scoped <- !is.null(result()$provenance$junction_scope)
+      p(if (scoped) "A junction is saved when the exonic base next to at least one of its boundaries lies inside the analysis interval, so a junction that leaves the interval is counted in full. One with both ends outside is absent, not zero." else
+        "This result was saved under the earlier rule: only junctions with both boundaries inside the analysis interval were kept, so a junction that leaves the interval is absent, not zero. New comparisons also keep junctions with one boundary inside.")
+    })
     output$download_depth <- downloadHandler("genotype_depth.tsv", function(file)
       utils::write.table(result()$depth, file, sep = "\t", quote = FALSE, row.names = FALSE, na = "NA"))
     output$download_audit <- downloadHandler("variant_parameters_and_provenance.json", function(file) {
