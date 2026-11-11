@@ -529,5 +529,26 @@ rate_rows <- data.frame(intron_start1 = c(10L, 20L, 30L), intron_end1 = c(90L, 8
   log10_p_value = c(-3, log10(.5), NA), status = c("OK", "OK", "LOW_SUPPORT"))
 grDevices::png(tempfile(fileext = ".png")); plot_junction_rate_by_dosage(rate_rows); grDevices::dev.off()
 grDevices::png(tempfile(fileext = ".png")); plot_junction_rate_by_dosage(rate_rows[3L, ]); grDevices::dev.off()
+# Panel text never leaves its panel: four sites wrap onto two rows of at most
+# three panels, and a subtitle wider than its panel is shrunk to fit.
+stopifnot(identical(vapply(c(0L, 1L, 3L, 4L, 7L), variant_panel_columns, integer(1)), c(1L, 1L, 3L, 3L, 3L)))
+site_rows <- data.frame(site_id = paste0("donor:+:chr1:22435", 7001:7004), n = 30L, n_dosage0 = 10L, n_dosage1 = 10L,
+  n_dosage2 = 10L, mean_ratio_dosage0 = .9, mean_ratio_dosage1 = .7, mean_ratio_dosage2 = .5, beta = -.2,
+  p_value = 1e-200, p_permutation = 1 / 10001, caution = "SMALL_GROUP",
+  bin_check = c("OK", "OK", "EXON_BIN_IN_OTHER_TRANSCRIPT_INTRON;NO_DEPTH_DROP_AT_SITE", "OK"), status = "OK",
+  stringsAsFactors = FALSE)
+attr(site_rows, "permutation") <- list(n_permutations = 10000L)
+site_samples <- data.frame(site_id = rep(site_rows$site_id, each = 30L), dosage = rep(rep(0:2, each = 10L), 4L),
+  ratio = rep(c(.9, .7, .5), each = 10L) + rep(c(-.3, rep(0, 8L), .3), 12L), in_model = TRUE, stringsAsFactors = FALSE)
+grDevices::png(tempfile(fileext = ".png"), width = 700, height = 720)
+plot_bin_ratio_by_dosage(site_samples, site_rows)
+stopifnot(identical(graphics::par("mfrow"), c(1L, 1L)))
+graphics::par(mfrow = c(1L, 4L)); graphics::plot.new()
+long <- paste(rep("OK · beta -0.384 · p 2.65e-103", 4L), collapse = " · ")
+room <- graphics::par("pin")[[1L]] + 2 * min(graphics::par("mai")[c(2L, 4L)])
+fitted <- variant_fit_mtext(long, .3, min_cex = .01)
+stopifnot(fitted < .85, graphics::strwidth(long, units = "inches", cex = fitted / graphics::par("cex")) <= room,
+          variant_fit_mtext("short", 1.4) == .85, is.na(variant_fit_mtext("", .3)))
+grDevices::dev.off()
 unlink(c(fixture_file, job_fixture_file, batch_variant_file))
 cat("VARIANT_UI_STATE_TESTS_OK\n")

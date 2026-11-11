@@ -464,6 +464,25 @@ run_bin_ratio_tests <- function() {
   b <- variant_bin_ratio_association(two)
   stopifnot(nrow(b) == 2L, attr(b, "gates")$min_exon_reads == 45L, all(b$n == sum(exon >= 45)),
             isTRUE(all.equal(b$q_value_bh, stats::p.adjust(b$p_value, "BH"))))
+  # Depth drop at the site itself, from the saved group-mean depth: the last
+  # exonic and first intronic base. A site 15 bp from a used donor has the same
+  # bin counts here but no drop of its own, and is flagged; without depth the
+  # columns are NA and nothing is flagged.
+  near <- bin_ratio_fixture(geno, intron, exon, variant_bin_geometry("c", c(1000, 1015, 2000), c("+", "+", "-"), "donor"))
+  depth_rows <- function(g, n, depth) data.frame(genotype = g, chrom = "c", pos1 = c(999L, 1000L, 1014L, 1015L, 2000L, 2001L),
+                                                 mean_depth = depth, analyzed_n = n, stringsAsFactors = FALSE)
+  near$depth <- rbind(depth_rows("0/0", 60L, c(100, 10, 10, 10, 2, 8)), depth_rows("0/1", 30L, c(100, 50, 50, 49, 0, 0)),
+                      depth_rows("NO_CALL:./.", 0L, NA_real_))
+  d <- variant_bin_ratio_association(near)
+  stopifnot(isTRUE(all.equal(d$depth_drop_dosage0, c(.9, 0, .75))), isTRUE(all.equal(d$depth_drop_dosage1, c(.5, .02, NA))),
+            all(is.na(d$depth_drop_dosage2)), identical(d$bin_check, c("OK", "NO_DEPTH_DROP_AT_SITE", "OK")),
+            isTRUE(all.equal(d$beta, rep(a$beta, 3L))), all(is.na(a[, paste0("depth_drop_dosage", 0:2)])),
+            attr(d, "gates")$caution_depth_drop == 0.1)
+  # The flag joins the annotation flags, and a gate list without the setting uses the default.
+  short <- near; short$bin_ratio$sites$adjacent_exon_min_bp <- 10L
+  old_gates <- variant_bin_ratio_gates(); old_gates$caution_depth_drop <- NULL
+  stopifnot(identical(variant_bin_ratio_association(short, old_gates)$bin_check,
+                      c("EXON_SHORTER_THAN_BIN", "EXON_SHORTER_THAN_BIN;NO_DEPTH_DROP_AT_SITE", "EXON_SHORTER_THAN_BIN")))
   # Gates.
   stopifnot(variant_bin_ratio_association(bin_ratio_fixture(geno, rep(1, 100), rep(5, 100)))$status == "TOO_FEW_SAMPLES",
             variant_bin_ratio_association(bin_ratio_fixture(rep(c("0/0", "0/1"), c(98L, 2L)), intron, pmax(exon, 10)))$status == "LOW_MAC",
