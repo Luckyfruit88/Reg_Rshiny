@@ -215,6 +215,49 @@ local({
   job_atomic_json(state, file.path(l1$job_dir, "state.json"))
   again <- resume_variant_job(l1$job_dir, root)
   stopifnot(again$lane == 1L, again$attempt == 2L, after(qsub_args(again), "-hold_jid") == "RegShiny_lane01")
+  # The request summary beside each request equals the summary of the full
+  # request; a missing, corrupt or stale copy falls back to the request itself.
+  summary_path <- file.path(l2$job_dir, "request-summary.rds")
+  expected <- job_request_summary(job_request(l2$job_dir))
+  fresh <- function() { rm(list = ls(.variant_job_metadata), envir = .variant_job_metadata); job_request_metadata(l2$job_dir) }
+  stopifnot(file.exists(summary_path), identical(fresh(), expected), expected$batch_id == "batch-A", expected$selected_n == 18L,
+    !any(c("selected_plan", "bam_states", "resources") %in% names(readRDS(summary_path)$value)))
+  good <- readRDS(summary_path); Sys.chmod(summary_path, "0600")
+  stale <- good; stale$request$size <- stale$request$size + 1; stale$value$cores <- 99L; saveRDS(stale, summary_path)
+  stopifnot(identical(fresh(), expected))
+  writeLines("not an rds file", summary_path); stopifnot(identical(fresh(), expected))
+  unlink(summary_path); stopifnot(identical(fresh(), expected))
+  saveRDS(good, summary_path)
+  # Dashboard rows are reused while they cannot have changed: a job the
+  # scheduler never accepted, and a queued job with no probe due, are not read
+  # again; a changed state.json is; a running job is read on every listing.
+  reads <- new.env(); reads$dirs <- character()
+  original_read <- read_variant_job
+  on.exit(assign("read_variant_job", original_read, .GlobalEnv), add = TRUE)
+  assign("read_variant_job", function(job_dir, ...) { reads$dirs <- c(reads$dirs, job_dir); original_read(job_dir, ...) }, .GlobalEnv)
+  listed <- function() { reads$dirs <- character(); list_variant_job_statuses(root) }
+  b1 <- listed(); b2 <- listed()
+  row_of <- function(board, job) board[board$job_dir == job$job_dir, , drop = FALSE]
+  stopifnot(identical(b1$job_dir, sort(b1$job_dir, decreasing = TRUE)), identical(b1$job_dir, b2$job_dir),
+    !l2$job_dir %in% reads$dirs, !failed_match$job_dir %in% reads$dirs,
+    row_of(b2, l2)$status == "QUEUED", row_of(b2, failed_match)$status == "PREPARATION_FAILED",
+    identical(row_of(b1, l2), row_of(b2, l2)), job_probe_idle(l2$job_dir, l2$job_id, "QUEUED"),
+    !job_probe_idle(l2$job_dir, "424242", "QUEUED"))
+  short <- list_variant_jobs(root)
+  stopifnot(identical(names(short), c("job_dir", "label")), identical(short$job_dir, b2$job_dir),
+    grepl("QUEUED", short$label[short$job_dir == l2$job_dir], fixed = TRUE))
+  running <- job_read_json(file.path(l2$job_dir, "state.json")); running$status <- "RUNNING"
+  job_atomic_json(running, file.path(l2$job_dir, "state.json"))
+  b3 <- listed(); seen3 <- reads$dirs; b4 <- listed()
+  stopifnot(l2$job_dir %in% seen3, l2$job_dir %in% reads$dirs, row_of(b3, l2)$status == "RUNNING",
+    grepl("RUNNING", row_of(b4, l2)$label, fixed = TRUE), !failed_match$job_dir %in% reads$dirs)
+  # A removed job directory leaves the listing and the row cache.
+  unlink(wide$job_dir, recursive = TRUE)
+  b5 <- listed()
+  stopifnot(!wide$job_dir %in% b5$job_dir, nrow(b5) == nrow(b4) - 1L, !exists(wide$job_dir, .variant_job_rows, inherits = FALSE))
+  assign("read_variant_job", original_read, .GlobalEnv)
+  stopifnot(job_probe_interval("qacct", "QUEUED") == 60, job_probe_interval("qstat", "QUEUED") == 300,
+    job_probe_interval("qstat", "RUNNING") == 30)
   for (key in ls(.variant_job_probes)) {
     p <- get(key, .variant_job_probes)
     if (!is.null(p$process) && p$process$is_alive()) p$process$kill()

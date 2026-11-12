@@ -952,6 +952,10 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         if (nrow(bad)) tagList(" ", nrow(bad), " could not be resumed: ",
           tags$ul(class = "mb-0", lapply(seq_len(nrow(bad)), function(i) tags$li(basename(bad$job_dir[[i]]), ": ", bad$message[[i]])))))
     })
+    # The choices last sent to the saved-job selector. With hundreds of jobs the
+    # dashboard changes every few seconds (progress counts); the selector is
+    # sent again only when a job appears, disappears or changes status.
+    saved_job_choices <- reactiveVal(NULL)
     refresh_job_list <- function() {
       if (is.null(job_api) || !isTRUE(isolate(is_active()))) return(invisible(NULL))
       found <- tryCatch(job_api$list_variant_jobs(job_root), error = function(e) e)
@@ -962,6 +966,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       job_list(found)
       dashboard_revision(isolate(dashboard_revision()) + 1L)
       choices <- if (nrow(found)) stats::setNames(found$job_dir, found$label) else character()
+      saved_job_choices(choices)
       updateSelectInput(session, "saved_job", choices = choices,
         selected = if (!is.null(active_job()) && active_job() %in% found$job_dir) active_job() else NULL)
       invisible(found)
@@ -988,10 +993,13 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       req(is_active())
       rows <- job_dashboard()
       job_list(rows[, c("job_dir", "label"), drop = FALSE])
+      choices <- stats::setNames(rows$job_dir, rows$label)
+      if (identical(choices, isolate(saved_job_choices()))) return()
+      saved_job_choices(choices)
       current <- isolate(input$saved_job)
       selected <- if (length(current) == 1L && current %in% rows$job_dir) current else
         if (!is.null(active_job()) && active_job() %in% rows$job_dir) active_job() else NULL
-      updateSelectInput(session, "saved_job", choices = stats::setNames(rows$job_dir, rows$label), selected = selected)
+      updateSelectInput(session, "saved_job", choices = choices, selected = selected)
     }, ignoreNULL = TRUE)
     output$jobs_table <- DT::renderDT({
       req(is_active())
@@ -999,9 +1007,12 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       columns <- setdiff(names(rows), c("job_dir", "label", "source_id"))
       if (!length(columns)) columns <- "label"
       selected <- match(dashboard_selected(), rows$job_dir)
+      # stateSave keeps the page, sort order and search box when the table is
+      # redrawn with new progress counts; without it a long job list jumps back
+      # to its first page on every update.
       DT::datatable(rows[, columns, drop = FALSE], rownames = FALSE,
         selection = list(mode = "single", selected = selected[!is.na(selected)]),
-        options = list(pageLength = 10, scrollX = TRUE))
+        options = list(pageLength = 10, scrollX = TRUE, stateSave = TRUE, stateDuration = -1))
     })
     observeEvent(input$jobs_table_rows_selected, {
       req(is_active())

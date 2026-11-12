@@ -2,6 +2,7 @@
 # Source backend.R and variant_backend.R first. UI probes never block on qacct.
 .variant_job_probes <- new.env(parent = emptyenv())
 .variant_job_metadata <- new.env(parent = emptyenv())
+.variant_job_rows <- new.env(parent = emptyenv())
 .variant_job_uid <- NULL
 
 job_uid <- function() {
@@ -55,22 +56,44 @@ job_request <- function(job_dir) {
   if (!is.list(x) || !identical(x$schema, "regshiny-full-job-v1")) stop("Invalid saved job request.")
   x
 }
+# The part of a request that listings and the open-job view need. The full
+# request also holds the sample plan and every BAM state (hundreds of KB), so
+# reading it for each job makes the first listing of many jobs slow.
+job_request_summary <- function(request)
+  list(variant = request$variant, cfg = request$cfg, ui_controls = request$ui_controls,
+    created_at = request$created_at, selected_n = if (identical(request$prepared, FALSE)) NA_integer_ else nrow(request$selected_plan),
+    cores = request$cores, workers = request$workers, worker_contract = request$worker_contract,
+    batch_id = request$batch_id, lane = request$lane)
+job_file_stamp <- function(path) {
+  x <- file.info(path, extra_cols = FALSE)
+  list(size = as.numeric(x$size[[1L]]), mtime = as.numeric(x$mtime[[1L]]))
+}
 job_write_request <- function(request, job_dir) {
   temp <- tempfile(".request-", tmpdir = job_dir)
   on.exit(unlink(temp), add = TRUE)
   saveRDS(request, temp); Sys.chmod(temp, "0400")
-  if (!file.rename(temp, file.path(job_dir, "request.rds"))) stop("Cannot publish the immutable job request.")
+  path <- file.path(job_dir, "request.rds")
+  if (!file.rename(temp, path)) stop("Cannot publish the immutable job request.")
+  # A small copy of the summary beside the request, bound to this exact request
+  # file. It is only a reading shortcut: a missing or stale copy is ignored.
+  tryCatch({
+    side <- tempfile(".request-summary-", tmpdir = job_dir)
+    saveRDS(list(schema = "regshiny-job-summary-v1", request = job_file_stamp(path), value = job_request_summary(request)), side)
+    Sys.chmod(side, "0400")
+    if (!file.rename(side, file.path(job_dir, "request-summary.rds"))) unlink(side)
+  }, error = function(e) NULL)
+  invisible(NULL)
 }
 job_request_metadata <- function(job_dir) {
   path <- file.path(job_dir, "request.rds")
   stat <- file.info(path)[, c("size", "mtime"), drop = FALSE]
   cached <- if (exists(job_dir, .variant_job_metadata, inherits = FALSE)) get(job_dir, .variant_job_metadata) else NULL
   if (!is.null(cached) && identical(cached$stat, stat)) return(cached$value)
-  request <- job_request(job_dir)
-  value <- list(variant = request$variant, cfg = request$cfg, ui_controls = request$ui_controls,
-    created_at = request$created_at, selected_n = if (identical(request$prepared, FALSE)) NA_integer_ else nrow(request$selected_plan),
-    cores = request$cores, workers = request$workers, worker_contract = request$worker_contract,
-    batch_id = request$batch_id, lane = request$lane)
+  side <- file.path(job_dir, "request-summary.rds")
+  summary <- if (file.exists(side)) tryCatch(readRDS(side), error = function(e) NULL) else NULL
+  value <- if (is.list(summary) && identical(summary$schema, "regshiny-job-summary-v1") &&
+               identical(summary$request, job_file_stamp(path)) && is.list(summary$value)) summary$value else
+    job_request_summary(job_request(job_dir))
   assign(job_dir, list(stat = stat, value = value), .variant_job_metadata)
   value
 }
@@ -135,6 +158,20 @@ job_parse_accounting <- function(lines, expected_job_id) {
   exit_status <- suppressWarnings(as.integer(value("exit_status")))
   if (is.na(failed) || is.na(exit_status)) return(NULL)
   list(job_id = as.character(expected_job_id), failed = failed, exit_status = exit_status)
+}
+# Seconds between scheduler probes of one job. A job that has not started
+# changes state by itself when its worker starts, so a long batch queue is
+# probed rarely; this only delays noticing a queued job that was deleted.
+job_probe_interval <- function(kind, status)
+  if (identical(kind, "qacct")) 60 else if (identical(status, "QUEUED")) 300 else 30
+# TRUE when this job has a probe that is neither running nor due, i.e. calling
+# job_scheduler_probe() now would do nothing.
+job_probe_idle <- function(job_dir, job_id, status) {
+  key <- paste(job_dir, job_id, sep = "|")
+  if (!exists(key, .variant_job_probes, inherits = FALSE)) return(FALSE)
+  probe <- get(key, .variant_job_probes)
+  is.null(probe$process) && is.numeric(probe$last_checked) &&
+    as.numeric(Sys.time()) - probe$last_checked < job_probe_interval(probe$kind, status)
 }
 # Polling commands run asynchronously and are throttled. Closing the UI may stop
 # a harmless probe, never the submitted qsub analysis.
@@ -220,12 +257,16 @@ job_scheduler_probe <- function(job_dir, state) {
     assign(key, probe, .variant_job_probes)
   }
   if (isTRUE(state$result_ready) || !is.null(state$accounting)) return(state)
-  if (is.null(probe)) probe <- list(kind = "qstat", last_checked = 0, process = NULL)
-  # A job that has not started changes state by itself when its worker starts,
-  # so a long batch queue is probed rarely; this only delays noticing a queued
-  # job that was deleted or rejected.
-  interval <- if (probe$kind == "qacct") 60 else if (identical(state$status, "QUEUED")) 300 else 30
-  if (now - probe$last_checked < interval) return(state)
+  if (is.null(probe)) {
+    # Hundreds of queued jobs first seen together (app start, a large batch)
+    # must not all query the scheduler in the same second: spread their first
+    # probe over one interval.
+    # The offset comes from the job id, not from the session's random stream.
+    first <- if (identical(state$status, "QUEUED")) now - as.numeric(state$job_id) %% job_probe_interval("qstat", "QUEUED") else 0
+    probe <- list(kind = "qstat", last_checked = first, process = NULL)
+    assign(key, probe, .variant_job_probes)
+  }
+  if (now - probe$last_checked < job_probe_interval(probe$kind, state$status)) return(state)
   executable <- unname(Sys.which(probe$kind))
   if (!nzchar(executable)) return(state)
   probe$stdout <- tempfile(paste0(probe$kind, "-", state$job_id, "-probe-"), tmpdir = job_dir, fileext = ".txt")
@@ -253,44 +294,71 @@ read_variant_job <- function(job_dir, job_root = Sys.getenv("REGSHINY_JOB_ROOT")
     scheduler_terminal = !is.null(state$accounting), accounting = state$accounting,
     request = request)
 }
-list_variant_jobs <- function(job_root = Sys.getenv("REGSHINY_JOB_ROOT")) {
-  root <- variant_user_job_root(job_root)
-  dirs <- list.dirs(root, recursive = FALSE, full.names = TRUE)
-  rows <- lapply(dirs, function(d) tryCatch({
-    d <- validate_variant_job_dir(d, job_root); x <- job_request_metadata(d)
-    state <- job_read_json(file.path(d, "state.json"))
-    data.frame(job_dir = d, label = paste(x$created_at, x$variant$record_id,
-      if (is.null(state)) "UNKNOWN" else state$status, sep = " | "), stringsAsFactors = FALSE)
-  }, error = function(e) NULL))
-  rows <- Filter(Negate(is.null), rows)
-  if (!length(rows)) return(data.frame(job_dir = character(), label = character()))
-  out <- do.call(rbind, rows); out[order(out$job_dir, decreasing = TRUE), , drop = FALSE]
+# One dashboard row per job directory, newest first. Reading a job costs several
+# file reads and a scheduler probe, so a row is kept and reused while it cannot
+# have changed: state.json is unchanged and the job is either settled (terminal
+# scheduler accounting, or never accepted by the scheduler) or still queued with
+# no probe due. Running jobs are read on every call. A directory that fails the
+# ownership/privacy check or has no readable request is not listed.
+job_status_row <- function(job_dir, label_time, x) {
+  scalar <- function(v, default = NA_character_) if (length(v) == 1L) v else default
+  v <- x$request$variant; p <- x$progress
+  record <- scalar(v$record_id)
+  data.frame(job_dir = x$job_dir, label = paste(label_time, record, x$status, sep = " | "),
+    job_id = scalar(x$job_id), status = x$status,
+    variant = paste(v$chrom, v$pos1, v$ref, v$alt, sep = ":"),
+    source_id = scalar(x$request$cfg$data_source_id), batch = scalar(x$request$batch_id),
+    lane = if (job_valid_lane(x$request$lane)) as.integer(x$request$lane) else NA_integer_,
+    cores = scalar(x$request$cores, NA_integer_),
+    workers = scalar(x$request$workers, NA_integer_), total = scalar(p$total, NA_integer_),
+    completed = scalar(p$completed, NA_integer_), success = scalar(p$success, NA_integer_),
+    failed = scalar(p$failed, NA_integer_), result_ready = x$result_ready, error = scalar(x$error),
+    stringsAsFactors = FALSE)
 }
 list_variant_job_statuses <- function(job_root = Sys.getenv("REGSHINY_JOB_ROOT")) {
-  jobs <- list_variant_jobs(job_root)
-  scalar <- function(x, default = NA_character_) if (length(x) == 1L) x else default
-  rows <- lapply(seq_len(nrow(jobs)), function(i) {
-    x <- tryCatch(read_variant_job(jobs$job_dir[[i]], job_root), error = function(e) e)
-    if (inherits(x, "error")) return(data.frame(job_dir = jobs$job_dir[[i]], label = jobs$label[[i]],
-      job_id = NA_character_, status = "STATUS_UNAVAILABLE", variant = NA_character_, source_id = NA_character_,
-      batch = NA_character_, lane = NA_integer_,
-      cores = NA_integer_, workers = NA_integer_, total = NA_integer_, completed = NA_integer_,
-      success = NA_integer_, failed = NA_integer_, result_ready = FALSE, error = conditionMessage(x)))
-    v <- x$request$variant; p <- x$progress
-    data.frame(job_dir = x$job_dir, label = jobs$label[[i]], job_id = scalar(x$job_id), status = x$status,
-      variant = paste(v$chrom, v$pos1, v$ref, v$alt, sep = ":"),
-      source_id = scalar(x$request$cfg$data_source_id), batch = scalar(x$request$batch_id),
-      lane = if (job_valid_lane(x$request$lane)) as.integer(x$request$lane) else NA_integer_,
-      cores = scalar(x$request$cores, NA_integer_),
-      workers = scalar(x$request$workers, NA_integer_), total = scalar(p$total, NA_integer_),
-      completed = scalar(p$completed, NA_integer_), success = scalar(p$success, NA_integer_),
-      failed = scalar(p$failed, NA_integer_), result_ready = x$result_ready, error = scalar(x$error),
-      stringsAsFactors = FALSE)
-  })
-  if (length(rows)) do.call(rbind, rows) else data.frame(job_dir = character(), label = character(),
+  empty <- data.frame(job_dir = character(), label = character(),
     job_id = character(), status = character(), variant = character(), source_id = character(),
-    batch = character(), lane = integer(), cores = integer(), workers = integer(), total = integer(), completed = integer(), success = integer(),
-    failed = integer(), result_ready = logical(), error = character(), stringsAsFactors = FALSE)
+    batch = character(), lane = integer(), cores = integer(), workers = integer(), total = integer(),
+    completed = integer(), success = integer(), failed = integer(), result_ready = logical(), error = character(),
+    stringsAsFactors = FALSE)
+  root <- variant_user_job_root(job_root)
+  dirs <- list.dirs(root, recursive = FALSE, full.names = TRUE)
+  dirs <- sort(dirs[grepl("^run-[A-Za-z0-9_-]+$", basename(dirs))], decreasing = TRUE)
+  stale <- setdiff(ls(.variant_job_rows, all.names = TRUE), dirs)
+  if (length(stale)) rm(list = stale, envir = .variant_job_rows)
+  if (!length(dirs)) return(empty)
+  info <- file.info(file.path(dirs, "state.json"), extra_cols = FALSE)
+  rows <- lapply(seq_along(dirs), function(i) {
+    d <- dirs[[i]]
+    stamp <- list(size = as.numeric(info$size[[i]]), mtime = as.numeric(info$mtime[[i]]))
+    cached <- if (exists(d, .variant_job_rows, inherits = FALSE)) get(d, .variant_job_rows) else NULL
+    if (!is.null(cached) && !is.na(stamp$size) && identical(cached$stamp, stamp) &&
+        (cached$settled || (cached$queued && job_probe_idle(d, cached$job_id, "QUEUED")))) return(cached$row)
+    created <- tryCatch({ d <- validate_variant_job_dir(d, job_root); job_request_metadata(d)$created_at }, error = function(e) NULL)
+    if (is.null(created)) { if (exists(dirs[[i]], .variant_job_rows, inherits = FALSE)) rm(list = dirs[[i]], envir = .variant_job_rows); return(NULL) }
+    x <- tryCatch(read_variant_job(d, job_root), error = function(e) e)
+    if (inherits(x, "error")) {
+      if (exists(dirs[[i]], .variant_job_rows, inherits = FALSE)) rm(list = dirs[[i]], envir = .variant_job_rows)
+      row <- empty[NA_integer_, , drop = FALSE]; rownames(row) <- NULL
+      row$job_dir <- d; row$label <- paste(created, "UNKNOWN", sep = " | "); row$status <- "STATUS_UNAVAILABLE"
+      row$result_ready <- FALSE; row$error <- conditionMessage(x)
+      return(row)
+    }
+    row <- job_status_row(d, created, x)
+    accepted <- length(x$job_id) == 1L && grepl("^[0-9]+$", as.character(x$job_id))
+    # The probe may just have rewritten state.json: stamp the file as it is now.
+    assign(dirs[[i]], list(stamp = job_file_stamp(file.path(d, "state.json")), row = row,
+      settled = isTRUE(x$scheduler_terminal) || !accepted,
+      queued = accepted && identical(x$status, "QUEUED"), job_id = x$job_id), .variant_job_rows)
+    row
+  })
+  rows <- Filter(Negate(is.null), rows)
+  if (length(rows)) do.call(rbind, rows) else empty
+}
+list_variant_jobs <- function(job_root = Sys.getenv("REGSHINY_JOB_ROOT")) {
+  x <- list_variant_job_statuses(job_root)[, c("job_dir", "label"), drop = FALSE]
+  rownames(x) <- NULL
+  x
 }
 read_variant_job_logs <- function(job_dir, job_root = Sys.getenv("REGSHINY_JOB_ROOT"), max_lines = 100L) {
   job_dir <- validate_variant_job_dir(job_dir, job_root)
