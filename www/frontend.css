@@ -125,3 +125,6 @@
 .regshiny-interp-detail > .card { overflow: visible; height: auto; }
 .regshiny-interp-detail > .card > .card-body, .regshiny-interp-detail .tab-content { overflow: visible; }
 .regshiny-interp-table .shiny-output-error-validation { position: static !important; min-height: 1.6rem; margin-bottom: 1rem; overflow: visible; }
+/* The few-sentence reading above the evidence cards. */
+.regshiny-reading { margin-bottom: 0.8rem; }
+.regshiny-reading p { margin: 0.2rem 0; }

@@ -429,6 +429,23 @@ s4 <- interp_evidence_summary(intronic, broken, list(open_targets = simpleError(
 stopifnot(level(s4, "Protein abundance (pQTL)") == "Not assessed", level(s4, "Gene expression (eQTL)") == "Not assessed",
   level(s4, "Disease and traits") == "Not assessed", level(s4, "Tissue") == "Not assessed")
 
+# The reading in a few sentences restates the rows and names what was not run.
+reading_rows <- data.frame(question = c("Protein sequence", "Protein abundance (pQTL)", "Splicing", "Gene expression (eQTL)", "Disease and traits"),
+  level = c("None found", "Moderate", "Strong", "Moderate", "Moderate"), finding = c("no change", "pqtl finding", "splicing finding", "eqtl finding", "trait finding"),
+  stringsAsFactors = FALSE)
+reading <- interp_overall_reading(reading_rows)
+stopifnot(length(reading) == 4L, reading[[1L]] == "Best-supported molecular effect: splicing (Strong). splicing finding",
+  reading[[2L]] == "Also supported: protein abundance (Moderate), gene expression (Moderate).", reading[[3L]] == "Disease and traits (Moderate): trait finding",
+  grepl("^Not run yet: SpliceAI", reading[[4L]]), grepl("the LD scan", reading[[4L]], fixed = TRUE), grepl("the public query", reading[[4L]], fixed = TRUE))
+all_done <- interp_overall_reading(reading_rows, list(public = TRUE, spliceai = TRUE, ld = TRUE))
+stopifnot(length(all_done) == 3L, !any(grepl("Not run yet", all_done)))
+tied <- reading_rows; tied$level <- c("Strong", "Not assessed", "Strong", "None found", "None found")
+stopifnot(grepl("a change to the protein sequence and splicing (Strong)", interp_overall_reading(tied)[[1L]], fixed = TRUE),
+  interp_overall_reading(tied)[[2L]] == "Disease and traits: nothing reported for this variant in the sources consulted.")
+blank <- reading_rows; blank$level <- c("None found", "Not assessed", "None found", "Not assessed", "Not assessed")
+stopifnot(interp_overall_reading(blank)[[1L]] == "No molecular effect of this variant is supported by the sources consulted so far.",
+  interp_overall_reading(blank)[[2L]] == "Disease and traits: not assessed yet.")
+
 # Genes the variant can act through: overlapped genes first, QTL targets after, one row per gene.
 lg_pairs <- rbind(pair("sQTL", "Lung", "chr1:10:90:clu_5_+:ENSGPLUS.1", 2, .1, 1e-50, TRUE, "ENSGPLUS.1"), pair("eQTL", "Lung", "ENSG9.2", .5, .05, 1e-20, TRUE, "ENSG9.2"),
   pair("eQTL", "PBMC", "ENSG9.2", .5, .05, 1e-20, TRUE, "ENSG9.2"), pair("eQTL", "Lung", "ENSG8.1", .1, .05, .04, FALSE, "ENSG8.1"))

@@ -16,6 +16,7 @@ interpretation_ui <- function(id) {
     shiny::helpText("Local sources are read automatically. A public query sends only the variant's chromosome, position and alleles, and the Ensembl IDs of the genes it overlaps, to Open Targets, GTEx and MyVariant.info. No sample, genotype or cohort information is sent. SpliceAI and the LD scan run on SCC and send nothing."),
     shiny::uiOutput(ns("public_status"), role = "status", `aria-live` = "polite"),
     shiny::h5("Evidence summary"),
+    shiny::uiOutput(ns("reading")),
     shiny::uiOutput(ns("summary")),
     shiny::tags$details(class = "regshiny-definitions", shiny::tags$summary("How the levels are assigned"),
       shiny::tags$ul(
@@ -422,6 +423,9 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
         if (!inherits(raw$gtex, "error") && identical(raw$gtex$variant_in_gtex, FALSE)) " GTEx did not test this variant." else "")
     })
     output$summary <- shiny::renderUI(interpretation_summary_cards(summary_now()))
+    reading_now <- shiny::reactive(backend$interp_overall_reading(summary_now(), list(public = !is.null(public_now()),
+      spliceai = !is.null(spliceai_now()) && !inherits(spliceai_now(), "error"), ld = !is.null(ld_now()) && !inherits(ld_now(), "error"))))
+    output$reading <- shiny::renderUI(shiny::div(class = "regshiny-context regshiny-reading", lapply(reading_now(), shiny::p)))
     output$gene_summary <- show_table(function() local_now()$gene_summary, empty = "No transcript within 5 kb of the variant.")
     output$consequences <- show_table(function() {
       x <- local_now()$consequences
@@ -615,7 +619,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     export <- function() {
       x <- local_now(); p <- public_now(); s <- spliceai_now()
       plain <- function(v) if (inherits(v, "error")) list(error = conditionMessage(v)) else v
-      list(variant = x$variant, gencode_release = x$release, summary = summary_now(), gene_summary = x$gene_summary,
+      list(variant = x$variant, gencode_release = x$release, reading = reading_now(), summary = summary_now(), gene_summary = x$gene_summary,
         consequences = x$consequences, local = if (is.null(x$local)) NULL else lapply(x$local, plain),
         public = if (is.null(p)) NULL else lapply(p, plain), spliceai = if (is.null(s)) NULL else plain(s),
         gwas_ld = if (is.null(ld_now())) NULL else plain(ld_now()), rna_evidence = rna_now())

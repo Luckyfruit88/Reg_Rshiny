@@ -110,7 +110,7 @@ Each source fails on its own: the others are still shown and the failure is name
 
 ## Evidence summary
 
-Seven fixed questions, each with a level, a one-sentence finding, the evidence lines behind it and the sources.
+Seven fixed questions, each with a level, a one-sentence finding, the evidence lines behind it and the sources. Above them a short reading restates the result: the best-supported molecular effect with its level, what else is supported, the disease or trait link, and which on-request steps (SpliceAI, the LD scan, the public query) have not been run for this variant. The reading adds no evidence of its own.
 
 | Level | Meaning |
 |---|---|

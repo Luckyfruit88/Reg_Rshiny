@@ -1932,6 +1932,35 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   out <- do.call(rbind, rows); rownames(out) <- NULL; out
 }
 
+# The summary in a few sentences: the best-supported molecular effect, what else
+# is supported, the disease or trait link, and which optional steps have not
+# been run. It restates the rows above with their levels; it adds no evidence.
+# `done` says which on-request steps were run for this variant.
+interp_overall_reading <- function(summary, done = list(public = FALSE, spliceai = FALSE, ld = FALSE)) {
+  level <- function(q) summary$level[match(q, summary$question)]
+  finding <- function(q) summary$finding[match(q, summary$question)]
+  short <- c(`Protein sequence` = "a change to the protein sequence", `Protein abundance (pQTL)` = "protein abundance",
+    Splicing = "splicing", `Gene expression (eQTL)` = "gene expression")
+  molecular <- intersect(names(short), summary$question)
+  rank <- match(level(molecular), interp_levels())
+  lines <- character()
+  supported <- rank <= 3L & !is.na(rank)
+  if (any(supported)) {
+    best <- min(rank[supported]); top <- molecular[supported & rank == best]
+    lines <- c(lines, sprintf("Best-supported molecular effect: %s (%s). %s", paste(short[top], collapse = " and "), interp_levels()[[best]], finding(top[[1L]])))
+    others <- molecular[supported & rank > best]
+    if (length(others)) lines <- c(lines, paste0("Also supported: ", paste(sprintf("%s (%s)", short[others], level(others)), collapse = ", "), "."))
+  } else lines <- c(lines, "No molecular effect of this variant is supported by the sources consulted so far.")
+  disease <- level("Disease and traits")
+  if (length(disease) && !is.na(disease)) lines <- c(lines, if (disease %in% c("Strong", "Moderate", "Limited"))
+    sprintf("Disease and traits (%s): %s", disease, finding("Disease and traits")) else if (disease == "None found")
+    "Disease and traits: nothing reported for this variant in the sources consulted." else "Disease and traits: not assessed yet.")
+  todo <- c(if (!isTRUE(done$spliceai)) "SpliceAI (splice-site prediction)", if (!isTRUE(done$ld)) "the LD scan (published signals this variant travels with)",
+    if (!isTRUE(done$public)) "the public query (fine-mapping, pQTL credible sets, tissue expression)")
+  if (length(todo)) lines <- c(lines, paste0("Not run yet: ", paste(todo, collapse = "; "), "."))
+  lines
+}
+
 # Fill gene names into TOPMed pairs from a gene_id -> gene_name table.
 interp_name_genes <- function(pairs, names) {
   if (is.null(pairs) || !nrow(pairs) || is.null(names) || !nrow(names)) return(pairs)

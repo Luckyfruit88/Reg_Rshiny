@@ -158,6 +158,9 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   header <- html_text(output$header)
   stopifnot(grepl("chrT:161:A:G", header, fixed = TRUE), grepl("GENCODE v48", header, fixed = TRUE), !grepl("does not match", header, fixed = TRUE))
   stopifnot(grepl("regshiny-level-strong", html_text(output$summary), fixed = TRUE), !length(readLines(request_log)))
+  # The reading names the best-supported effect and the steps that have not been run.
+  stopifnot(grepl("Best-supported molecular effect: a change to the protein sequence and splicing (Strong)", html_text(output$reading), fixed = TRUE),
+    grepl("Not run yet: SpliceAI", html_text(output$reading), fixed = TRUE))
   stopifnot(grepl("has not been run", html_text(output$spliceai_status), fixed = TRUE))
   # Nothing is sent until the user asks.
   session$setInputs(public = 1L); await(session, public_task, function() !is.null(public_now()))
