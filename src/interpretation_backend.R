@@ -1002,6 +1002,108 @@ interp_gwas_catalog <- function(variant, sources = interp_local_sources()) {
   out
 }
 
+# GWAS Catalog traits that are the blood level of one protein (pQTL studies map
+# to "level of <protein> in blood"). Deliberately narrow: clinical measurements
+# such as cholesterol or "protein measurement" in general are not counted.
+interp_is_protein_trait <- function(mapped_trait) grepl("^level of .+ in blood( plasma| serum)?$", mapped_trait, ignore.case = TRUE)
+interp_protein_name <- function(mapped_trait) sub("^level of (.+) in blood( plasma| serum)?$", "\\1", mapped_trait, ignore.case = TRUE)
+
+# -- Linkage disequilibrium with nearby GWAS Catalog variants (run on request) --
+# ALT-allele dosage (0, 1, 2; NA when any allele is missing) from VCF GT strings.
+interp_gt_dosage <- function(gt, allele = 1L) {
+  first <- sub("[/|].*$", "", gt); rest <- sub("^[^/|]*[/|]?", "", gt)
+  second <- sub("[/|].*$", "", rest)
+  missing <- first == "." | second == "." | !nzchar(first)
+  d <- (first == as.character(allele)) + ifelse(nzchar(second), second == as.character(allele), 0L)
+  d[missing] <- NA_integer_
+  as.numeric(d)
+}
+
+interp_gwas_ld_empty <- function() data.frame(rs_id = character(), position = integer(), distance = integer(), ref = character(),
+  alt = character(), r2 = numeric(), r = numeric(), n = integer(), risk_allele = character(), risk_allele_travels_with = character(),
+  trait = character(), mapped_trait = character(), p_value = numeric(), effect = numeric(), pubmed = character(),
+  study_accession = character(), stringsAsFactors = FALSE)
+
+# r2 between this variant and every variant the GWAS Catalog reports within
+# `window` bp, from the genotypes of the dataset's own VCF. Only correlations
+# and counts leave this function: no genotype and no sample identifier.
+# Rows with r2 >= keep_r2 are returned. A GWAS signal can be carried by this
+# variant only if the two are in LD in the population studied; this cohort's
+# LD is the available estimate of that.
+interp_gwas_ld <- function(variant, vcf, sources = interp_local_sources(), window = 500000L, max_positions = 300L, keep_r2 = 0.2,
+                           bcftools = unname(Sys.which("bcftools")), timeout = 900) {
+  out <- list(available = FALSE, found = FALSE, ld = interp_gwas_ld_empty(), window = window, keep_r2 = keep_r2, positions_in_window = 0L,
+    positions_examined = 0L, truncated = FALSE, samples = 0L, release = "", ran_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z", tz = "UTC"))
+  file <- sources$gwas_catalog
+  if (!interp_readable(sources$tabix) || !interp_readable(file) || !interp_readable(paste0(file, ".tbi")))
+    stop("The local GWAS Catalog copy is not readable (see scripts/build_gwas_index.sh).", call. = FALSE)
+  if (!nzchar(bcftools) || !file.exists(bcftools)) stop("bcftools is not available in PATH.", call. = FALSE)
+  if (length(vcf) != 1L || !interp_readable(vcf)) stop("The dataset's VCF for this chromosome is not readable.", call. = FALSE)
+  out$available <- TRUE
+  out$release <- sub("^.*_(e[0-9]+_r[0-9-]+).*$", "\\1", basename(file)); if (identical(out$release, basename(file))) out$release <- ""
+  lines <- interp_tabix(sources, file, variant$chrom, max(1L, variant$pos1 - window), variant$pos1 + window)
+  lines <- lines[!startsWith(lines, "#")]
+  f <- strsplit(lines, "\t", fixed = TRUE)
+  field <- function(i) vapply(f, function(x) if (length(x) >= i) x[[i]] else "", character(1))
+  catalog <- data.frame(position = suppressWarnings(as.integer(field(2L))), rs_id = field(3L), risk_allele = field(4L), trait = field(5L),
+    mapped_trait = field(6L), p_value = suppressWarnings(as.numeric(field(7L))), mlog = suppressWarnings(as.numeric(field(8L))),
+    effect = suppressWarnings(as.numeric(field(9L))), pubmed = field(13L), study_accession = field(16L), stringsAsFactors = FALSE)
+  catalog <- catalog[is.finite(catalog$position) & catalog$position != variant$pos1, , drop = FALSE]
+  positions <- sort(unique(catalog$position)); out$positions_in_window <- length(positions)
+  if (length(positions) > max_positions) {
+    # A dense locus: keep the nearest positions and say so.
+    positions <- sort(positions[order(abs(positions - variant$pos1))][seq_len(max_positions)]); out$truncated <- TRUE
+  }
+  out$positions_examined <- length(positions)
+  if (!length(positions)) return(out)
+  targets <- tempfile("regshiny_ld_", fileext = ".tsv"); on.exit(unlink(targets), add = TRUE)
+  file.create(targets); Sys.chmod(targets, "0600")
+  writeLines(paste(variant$chrom, sort(unique(c(positions, variant$pos1))), sep = "\t"), targets)
+  p <- processx::run(bcftools, c("query", "-R", targets, "-f", "%CHROM\t%POS\t%REF\t%ALT\t%ID[\t%GT]\n", vcf), timeout = timeout, error_on_status = FALSE)
+  if (isTRUE(p$timeout)) stop("Reading genotypes timed out.", call. = FALSE)
+  if (is.na(p$status) || p$status != 0L) stop("bcftools failed: ", trimws(p$stderr), call. = FALSE)
+  records <- strsplit(strsplit(p$stdout, "\n", fixed = TRUE)[[1L]], "\t", fixed = TRUE)
+  records <- records[lengths(records) > 5L]
+  own <- Filter(function(x) x[[2L]] == as.character(variant$pos1) && x[[3L]] == variant$ref &&
+    variant$alt %in% strsplit(x[[4L]], ",", fixed = TRUE)[[1L]], records)
+  if (length(own) != 1L) stop("This variant's own record was not found once in the VCF.", call. = FALSE)
+  own <- own[[1L]]
+  target <- interp_gt_dosage(own[-(1:5)], match(variant$alt, strsplit(own[[4L]], ",", fixed = TRUE)[[1L]]))
+  out$samples <- sum(is.finite(target))
+  if (!is.finite(stats::var(target, na.rm = TRUE)) || stats::var(target, na.rm = TRUE) == 0)
+    stop("This variant does not vary among the samples with a genotype call.", call. = FALSE)
+  rows <- list()
+  for (x in records) {
+    pos <- as.integer(x[[2L]])
+    if (!pos %in% positions) next
+    alts <- strsplit(x[[4L]], ",", fixed = TRUE)[[1L]]
+    here <- catalog[catalog$position == pos, , drop = FALSE]
+    # With several records at one position, a record whose ID is the catalog's rsID answers for that rsID.
+    ids <- strsplit(x[[5L]], ";", fixed = TRUE)[[1L]]
+    named <- vapply(records, function(y) y[[2L]] == x[[2L]] && any(strsplit(y[[5L]], ";", fixed = TRUE)[[1L]] %in% here$rs_id), logical(1))
+    if (any(named)) here <- here[here$rs_id %in% ids, , drop = FALSE]
+    if (!nrow(here)) next
+    for (j in seq_along(alts)) {
+      d <- interp_gt_dosage(x[-(1:5)], j); ok <- is.finite(d) & is.finite(target)
+      if (sum(ok) < 10L || stats::var(d[ok]) == 0 || stats::var(target[ok]) == 0) next
+      r <- stats::cor(d[ok], target[ok])
+      risk <- toupper(sub("^.*-", "", here$risk_allele)); risk[!grepl("-", here$risk_allele, fixed = TRUE)] <- ""
+      # Which allele of this variant the reported risk allele is found with.
+      with <- ifelse(risk == alts[[j]], if (r > 0) "ALT" else "REF", ifelse(risk == x[[3L]], if (r > 0) "REF" else "ALT", ""))
+      rows[[length(rows) + 1L]] <- data.frame(rs_id = here$rs_id, position = pos, distance = pos - variant$pos1, ref = x[[3L]], alt = alts[[j]],
+        r2 = r^2, r = r, n = sum(ok), risk_allele = here$risk_allele, risk_allele_travels_with = with, trait = here$trait,
+        mapped_trait = here$mapped_trait, p_value = here$p_value, mlog = here$mlog, effect = here$effect, pubmed = here$pubmed,
+        study_accession = here$study_accession, stringsAsFactors = FALSE)
+    }
+  }
+  if (!length(rows)) return(out)
+  ld <- do.call(rbind, rows); ld <- ld[ld$r2 >= keep_r2, , drop = FALSE]
+  ld <- ld[order(-round(ld$r2, 6), -ifelse(is.finite(ld$mlog), ld$mlog, -Inf), ld$trait), names(interp_gwas_ld_empty()), drop = FALSE]
+  rownames(ld) <- NULL
+  out$ld <- ld; out$found <- nrow(ld) > 0L
+  out
+}
+
 # ClinVar record of this exact allele from a tabix-indexed ClinVar VCF.
 interp_clinvar_empty <- function() data.frame(variation_id = character(), clinical_significance = character(),
   review_status = character(), conditions = character(), gene = character(), molecular_consequence = character(),
@@ -1458,7 +1560,7 @@ interp_summary_row <- function(question, level, finding, evidence = character(),
   data.frame(question = question, level = level, finding = finding, evidence = paste(evidence[nzchar(evidence)], collapse = " | "),
     sources = paste(unique(sources[nzchar(sources)]), collapse = "; "), stringsAsFactors = FALSE)
 
-interp_evidence_summary <- function(consequences, local = NULL, public = NULL, spliceai = NULL, rna = NULL) {
+interp_evidence_summary <- function(consequences, local = NULL, public = NULL, spliceai = NULL, rna = NULL, ld = NULL) {
   rows <- list()
   genic <- consequences[!consequences$most_severe %in% c("upstream_gene_variant", "downstream_gene_variant"), , drop = FALSE]
   ot <- if (interp_ok(public) && interp_ok(public$open_targets) && isTRUE(public$open_targets$found)) public$open_targets else NULL
@@ -1520,27 +1622,44 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       c(src, if (is.finite(cadd)) "CADD v1.7", if (!is.null(am) && nrow(am)) "Open Targets", if (is.finite(revel)) "MyVariant.info"))
   }
 
-  # 2. Protein abundance (pQTL credible sets).
-  if (!ot_queried) {
-    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "Not assessed", "Public databases were not queried; no pQTL results are stored locally.")
+  # 2. Protein abundance: pQTL credible sets (public), and published protein-level associations (local).
+  catalog_p <- if (interp_ok(local) && interp_ok(local$gwas_catalog) && isTRUE(local$gwas_catalog$available)) local$gwas_catalog$associations else NULL
+  protein_here <- if (!is.null(catalog_p)) catalog_p[interp_is_protein_trait(catalog_p$mapped_trait) & is.finite(catalog_p$p_value) & catalog_p$p_value <= 5e-8, , drop = FALSE] else NULL
+  protein_ld <- if (interp_ok(ld) && isTRUE(ld$available)) ld$ld[ld$ld$r2 >= 0.8 & interp_is_protein_trait(ld$ld$mapped_trait) &
+    is.finite(ld$ld$p_value) & ld$ld$p_value <= 5e-8, , drop = FALSE] else NULL
+  local_lines <- c(
+    if (!is.null(protein_here) && nrow(protein_here)) paste0("GWAS Catalog, at this variant: ", interp_join(unique(interp_protein_name(protein_here$mapped_trait)), ", ", max = 6)),
+    if (!is.null(protein_ld) && nrow(protein_ld)) paste0("GWAS Catalog, through LD (r2 >= 0.8 in this cohort): ",
+      interp_join(unique(sprintf("%s (%s, r2 %.2f)", interp_protein_name(protein_ld$mapped_trait), protein_ld$rs_id, protein_ld$r2)), ", ", max = 6)))
+  local_sources <- c(if (length(local_lines)) "GWAS Catalog", if (!is.null(protein_ld) && nrow(protein_ld)) "cohort WGS genotypes")
+  pq <- if (!is.null(ot)) ot$qtl[ot$qtl$qtl_type == "pqtl", , drop = FALSE] else NULL
+  if (!is.null(pq) && nrow(pq)) {
+    pip <- ifelse(is.na(pq$posterior_probability), 0, pq$posterior_probability)
+    cis <- !(pq$trans %in% TRUE)
+    level <- if (any(pip >= 0.9 & cis)) "Strong" else "Moderate"
+    if (!any(pip >= 0.1) && !length(local_lines)) level <- "Limited"
+    # Cis sets first: they concern the protein encoded next to the variant.
+    order_best <- order(!cis, -pip)
+    best <- pq[order_best, , drop = FALSE]; best_pip <- pip[order_best]; best_cis <- cis[order_best]
+    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", level,
+      sprintf("In %d pQTL credible set(s), %d in cis; leading set: %s in %s (%s), posterior probability %.2f.", nrow(pq), sum(cis),
+        best$gene[[1L]], best$biosample[[1L]], if (best_cis[[1L]]) "cis" else "trans", best_pip[[1L]]),
+      c(sprintf("%s in %s: PIP %.2f, beta %+.2f, p %s%s", head(best$gene, 6L), head(best$biosample, 6L), head(best_pip, 6L),
+        head(best$beta, 6L), interp_fmt_p(head(best$p_value, 6L)), ifelse(head(best_cis, 6L), "", " (trans)")), local_lines),
+      c("Open Targets", local_sources))
+  } else if (length(local_lines)) {
+    # A published association with a protein level, at the variant or at one it travels with: not fine-mapped, so Moderate.
+    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "Moderate",
+      paste0("Associated with the blood level of ", length(unique(c(interp_protein_name(protein_here$mapped_trait), interp_protein_name(protein_ld$mapped_trait)))),
+        " protein(s) in published GWAS; not fine-mapped to this variant, and cis or trans is not determined here."),
+      c(local_lines, if (!ot_queried) "pQTL credible sets not consulted: public query not run"), local_sources)
+  } else if (ot_queried) {
+    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "None found", "Not in any pQTL credible set in Open Targets.", sources = "Open Targets")
   } else {
-    pq <- if (!is.null(ot)) ot$qtl[ot$qtl$qtl_type == "pqtl", , drop = FALSE] else NULL
-    if (is.null(pq) || !nrow(pq)) {
-      rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "None found", "Not in any pQTL credible set in Open Targets.", sources = "Open Targets")
-    } else {
-      pip <- ifelse(is.na(pq$posterior_probability), 0, pq$posterior_probability)
-      cis <- !(pq$trans %in% TRUE)
-      level <- if (any(pip >= 0.9 & cis)) "Strong" else if (any(pip >= 0.1)) "Moderate" else "Limited"
-      # Cis sets first: they concern the protein encoded next to the variant.
-      order_best <- order(!cis, -pip)
-      best <- pq[order_best, , drop = FALSE]; best_pip <- pip[order_best]; best_cis <- cis[order_best]
-      rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", level,
-        sprintf("In %d pQTL credible set(s), %d in cis; leading set: %s in %s (%s), posterior probability %.2f.", nrow(pq), sum(cis),
-          best$gene[[1L]], best$biosample[[1L]], if (best_cis[[1L]]) "cis" else "trans", best_pip[[1L]]),
-        sprintf("%s in %s: PIP %.2f, beta %+.2f, p %s%s", head(best$gene, 6L), head(best$biosample, 6L), head(best_pip, 6L),
-          head(best$beta, 6L), interp_fmt_p(head(best$p_value, 6L)), ifelse(head(best_cis, 6L), "", " (trans)")),
-        "Open Targets")
-    }
+    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "Not assessed", paste0(
+      if (!is.null(catalog_p)) "No protein-level association is reported at this position in the GWAS Catalog" else "No local pQTL source was readable",
+      if (!is.null(catalog_p) && !(interp_ok(ld) && isTRUE(ld$available))) " (variants in LD not checked: run the LD scan)" else "",
+      "; pQTL credible sets need the public query."))
   }
 
   # 3. Splicing.
@@ -1701,6 +1820,25 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     sources <- c(sources, trimws(paste("GWAS Catalog", catalog$release)))
     # A published association at the variant itself; alone it does not single the variant out from its LD neighbours.
     level <- rank_up(level, if (any(genome_wide)) "Moderate" else "Limited")
+  }
+  if (interp_ok(ld) && isTRUE(ld$available)) {
+    # LD with other reported variants: the variant can carry their signal only if it travels with them.
+    x <- ld$ld; tight <- x[x$r2 >= 0.8, , drop = FALSE]; loose <- x[x$r2 < 0.8, , drop = FALSE]
+    wide <- function(y) is.finite(y$p_value) & y$p_value <= 5e-8
+    name <- function(y) interp_join(unique(ifelse(nzchar(y$mapped_trait), y$mapped_trait, y$trait)), "; ", max = 5)
+    scan <- sprintf("%d GWAS Catalog variant(s) within %d kb%s, %d samples", ld$positions_examined, round(ld$window / 1000),
+      if (isTRUE(ld$truncated)) paste0(" (nearest of ", ld$positions_in_window, ")") else "", ld$samples)
+    if (nrow(tight)) {
+      evidence <- c(evidence, sprintf("LD in this cohort: r2 >= 0.8 with %d other reported variant(s) (%d association(s), %d at p <= 5e-8) for %s",
+        length(unique(tight$rs_id)), nrow(tight), sum(wide(tight)), name(tight)))
+      level <- rank_up(level, if (any(wide(tight))) "Moderate" else "Limited")
+    }
+    if (nrow(loose)) {
+      evidence <- c(evidence, sprintf("LD in this cohort: r2 %.1f-0.8 with %d more reported variant(s) for %s", ld$keep_r2, length(unique(loose$rs_id)), name(loose)))
+      level <- rank_up(level, "Limited")
+    }
+    if (!nrow(x)) evidence <- c(evidence, sprintf("LD in this cohort: no other reported variant with r2 >= %.1f (%s)", ld$keep_r2, scan))
+    sources <- c(sources, "cohort WGS genotypes")
   }
   if (!is.null(ot) && nrow(ot$pharmacogenomics)) {
     evidence <- c(evidence, paste0("Pharmacogenomics: ", interp_join(ot$pharmacogenomics$drugs, ", ", max = 6)))

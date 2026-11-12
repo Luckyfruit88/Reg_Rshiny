@@ -715,6 +715,69 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   st <- interp_local_status(srcs)
   stopifnot(st$available[st$source == "CADD v1.7"], st$available[st$source == "TOPMed multi-tissue cis-QTL"], !st$available[st$source == "SpliceAI 1.3.1"],
     st$available[st$source == "GWAS Catalog"], st$available[st$source == "ClinVar VCF"])
+  # LD with nearby reported variants, from a small VCF: twelve samples, the target's ALT dosage 0,0,0,0,1,1,1,1,2,2,2,2.
+  stopifnot(identical(interp_gt_dosage(c("0/0", "0|1", "1/1", "./.", "1", "0", "1/2", "2|2", "./1"), 1L), c(0, 1, 2, NA, 1, 0, 1, 0, NA)),
+    identical(interp_gt_dosage(c("1/2", "2|2", "0/0"), 2L), c(1, 2, 0)))
+  bcftools <- unname(Sys.which("bcftools"))
+  if (nzchar(bcftools)) {
+    gt <- function(d) c("0/0", "0|1", "1/1")[d + 1L]
+    own <- c(0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2); vcf_row <- function(pos, id, ref, alt, calls) paste(c("chr1", pos, id, ref, alt, ".", "PASS", ".", "GT", calls), collapse = "\t")
+    partial <- gt(own); partial[[3L]] <- "./."
+    third <- rep("0/0", 12L); third[own == 1] <- "0/2"; third[own == 2] <- "2/2"; third[[1L]] <- "0/1"
+    ld_vcf <- file.path(work, "disease", "cohort.vcf.gz")
+    index(c("##fileformat=VCFv4.2", "##contig=<ID=chr1,length=100000>", "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">",
+      paste(c("#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", paste0("S", 1:12)), collapse = "\t"),
+      vcf_row(100, "rs1", "G", "A", gt(own)), vcf_row(150, "rs150", "C", "T", gt(own)), vcf_row(180, "rs180", "A", "G", gt(2 - own)),
+      vcf_row(220, "rs220", "T", "C", gt(rep(0:2, 4L))), vcf_row(260, "rs260", "G", "A", partial), vcf_row(260, ".", "G", "T", gt(rep(c(0, 1), 6L))),
+      vcf_row(300, "rs300", "A", "C,T", third), vcf_row(350, "rs350", "C", "G", rep("0/0", 12L))), ld_vcf, c("-p", "vcf"))
+    raw <- file.path(work, "gwas_ld.tsv")
+    writeLines(c(paste(catalog_cols, collapse = "\t"), catalog_row("1", "100", "rs1-A", "rs1", "Own trait", "1E-20", "20"),
+      catalog_row("1", "150", "rs150-T", "rs150", "Level of protein X in blood", "1E-30", "30"), catalog_row("1", "180", "rs180-G", "rs180", "Opposite trait", "2E-9", "8.7"),
+      catalog_row("1", "220", "rs220-C", "rs220", "Unlinked trait", "1E-12", "12"), catalog_row("1", "260", "rs260-?", "rs260", "Partial trait", "3E-6", "5.5"),
+      catalog_row("1", "300", "rs300-T", "rs300", "Third allele trait", "1E-9", "9"), catalog_row("1", "350", "rs350-G", "rs350", "Monomorphic", "1E-9", "9"),
+      catalog_row("1", "400", "rs400-A", "rs400", "Absent from the VCF", "1E-9", "9"), catalog_row("1", "90000", "rs9-A", "rs9", "Far away", "1E-9", "9")), raw)
+    ld_catalog <- file.path(work, "disease", "gwas_catalog_e998_r2099-01-02.b38.tsv.gz")
+    stopifnot(!is.null(system2("bash", c("scripts/build_gwas_index.sh", shQuote(raw), shQuote(ld_catalog)), stdout = TRUE, stderr = TRUE,
+      env = c(paste0("BGZIP=", bgzip), paste0("TABIX=", tabix)))), file.exists(ld_catalog))
+    ld_src <- srcs; ld_src$gwas_catalog <- ld_catalog
+    ld <- interp_gwas_ld(v, ld_vcf, ld_src, window = 1000L)
+    row_of <- function(id, alt = NULL) ld$ld[ld$ld$rs_id == id & (is.null(alt) | ld$ld$alt == (if (is.null(alt)) "" else alt)), ]
+    stopifnot(ld$available, ld$found, ld$samples == 12L, ld$positions_in_window == 7L, ld$positions_examined == 7L, !ld$truncated, ld$release == "e998_r2099-01-02",
+      # The variant's own catalog row is not an LD partner; unlinked, monomorphic and absent variants give no row.
+      !any(c("rs1", "rs220", "rs350", "rs400", "rs9") %in% ld$ld$rs_id),
+      abs(row_of("rs150")$r2 - 1) < 1e-12, row_of("rs150")$r > 0, row_of("rs150")$risk_allele_travels_with == "ALT", row_of("rs150")$distance == 50L, row_of("rs150")$n == 12L,
+      # Opposite phase: r2 is 1 and the reported risk allele is found with this variant's REF.
+      abs(row_of("rs180")$r2 - 1) < 1e-12, row_of("rs180")$r < 0, row_of("rs180")$risk_allele_travels_with == "REF",
+      # A missing call drops that sample; the unnamed second record at the position is not used for rs260.
+      nrow(row_of("rs260")) == 1L, row_of("rs260")$alt == "A", row_of("rs260")$n == 11L, row_of("rs260")$risk_allele_travels_with == "",
+      # Multi-allelic record: each ALT has its own dosage; the T allele follows the target apart from one sample.
+      row_of("rs300", "T")$r2 > .8, row_of("rs300", "T")$risk_allele_travels_with == "ALT", !nrow(row_of("rs300", "C")),
+      # Strongest LD first, then the smaller p-value.
+      ld$ld$rs_id[[1L]] == "rs150", all(diff(round(ld$ld$r2, 6)) <= 0))
+    near <- interp_gwas_ld(v, ld_vcf, ld_src, window = 1000L, max_positions = 2L)
+    stopifnot(near$truncated, near$positions_examined == 2L, near$positions_in_window == 7L, identical(sort(unique(near$ld$rs_id)), c("rs150", "rs180")))
+    expect_error(interp_gwas_ld(interp_variant("chr1", 150L, "C", "G"), ld_vcf, ld_src, window = 1000L), "own record was not found")
+    expect_error(interp_gwas_ld(interp_variant("chr1", 350L, "C", "G"), ld_vcf, ld_src, window = 1000L), "does not vary")
+    expect_error(interp_gwas_ld(v, "/missing.vcf.gz", ld_src), "VCF for this chromosome is not readable")
+    expect_error(interp_gwas_ld(v, ld_vcf, none), "GWAS Catalog copy is not readable")
+    alone <- interp_gwas_ld(interp_variant("chr1", 100L, "G", "A"), ld_vcf, ld_src, window = 10L)
+    stopifnot(alone$available, !alone$found, alone$positions_examined == 0L)
+    # Disease: LD with a genome-wide significant reported variant is an association (Moderate), named with its traits.
+    dl <- interp_evidence_summary(missense, list(clinvar = none_here, gwas_catalog = far), ld = ld)
+    dline <- dl[dl$question == "Disease and traits", ]
+    stopifnot(dline$level == "Moderate", grepl("r2 >= 0.8 with 4 other reported variant(s) (4 association(s), 3 at p <= 5e-8)", dline$evidence, fixed = TRUE),
+      !any(ld$ld$r2 < .8), !grepl("r2 0.2-0.8 with", dline$evidence, fixed = TRUE), grepl("cohort WGS genotypes", dline$sources, fixed = TRUE))
+    quiet_ld <- interp_evidence_summary(missense, list(clinvar = none_here, gwas_catalog = far), ld = alone)
+    stopifnot(level(quiet_ld, "Disease and traits") == "None found",
+      grepl("no other reported variant with r2 >= 0.2", quiet_ld$evidence[quiet_ld$question == "Disease and traits"], fixed = TRUE))
+    # Protein abundance: a published protein-level association at a variant in tight LD counts; clinical traits do not.
+    pl <- dl[dl$question == "Protein abundance (pQTL)", ]
+    stopifnot(pl$level == "Moderate", grepl("through LD (r2 >= 0.8 in this cohort): protein x (rs150, r2 1.00)", pl$evidence, fixed = TRUE),
+      grepl("blood level of 1 protein(s)", pl$finding, fixed = TRUE), level(quiet_ld, "Protein abundance (pQTL)") == "Not assessed",
+      identical(interp_is_protein_trait(c("level of liver carboxylesterase 1 in blood", "Level of X in blood serum", "protein measurement",
+        "high density lipoprotein cholesterol measurement", "apolipoprotein A 1 measurement")), c(TRUE, TRUE, FALSE, FALSE, FALSE)),
+      interp_protein_name("level of liver carboxylesterase 1 in blood") == "liver carboxylesterase 1")
+  } else if (native) stop("--native needs bcftools")
 } else if (native) stop("--native needs tabix and bgzip") else cat("tabix/bgzip not found: indexed-source checks skipped\n")
 unlink(work, recursive = TRUE)
 cat("interpretation backend tests passed\n")

@@ -47,6 +47,14 @@ writeLines(c(
   '    study = list(id = "S1", traitFromSource = "Synthetic trait", diseases = list(list(name = "Synthetic disease"))))) else list()',
   '  list(data = list(variant = list(credibleSets = list(count = length(rows), rows = rows))))',
   '}',
+  'interp_gwas_ld <- function(variant, vcf, ...) {',
+  '  if (!nzchar(vcf)) stop("The dataset\'s VCF for this chromosome is not readable.")',
+  '  ld <- interp_gwas_ld_empty()[1, ]; ld$rs_id <- "rs88"; ld$position <- variant$pos1 + 40L; ld$distance <- 40L; ld$ref <- "C"; ld$alt <- "T"',
+  '  ld$r2 <- .93; ld$r <- .964; ld$n <- 100L; ld$risk_allele <- "rs88-T"; ld$risk_allele_travels_with <- "ALT"; ld$trait <- "Protein Z levels"',
+  '  ld$mapped_trait <- "level of protein Z in blood"; ld$p_value <- 1e-20; ld$effect <- .2; ld$pubmed <- "1"; ld$study_accession <- "GCST1"',
+  '  list(available = TRUE, found = TRUE, ld = ld, window = 500000L, keep_r2 = .2, positions_in_window = 3L, positions_examined = 3L, truncated = FALSE,',
+  '    samples = 100L, release = vcf, ran_at = "now")',
+  '}',
   'interp_spliceai <- function(variant, fasta, ...) {',
   '  if (!nzchar(fasta)) stop("SpliceAI needs the reference FASTA of the connected dataset.")',
   '  list(scores = interp_parse_spliceai(c("#h", paste0("chrT\\t", variant$pos1, "\\t.\\tA\\tG\\t.\\t.\\tSpliceAI=G|PLUS|0.00|0.00|0.05|0.93|3|4|9|-1")), variant),',
@@ -131,7 +139,7 @@ await <- function(session, task, ready) {
 html_text <- function(x) gsub("[[:space:]]+", " ", if (is.list(x) && !is.null(x$html)) as.character(x$html) else as.character(x))
 level <- function(s, question) s$level[s$question == question]
 record <- function(chrom = "chrT", pos = 161L, ref = "A", alt = "G", build = "GRCh38")
-  data.frame(chrom = chrom, pos1 = pos, ref = ref, alt = alt, build = build, stringsAsFactors = FALSE)
+  data.frame(chrom = chrom, pos1 = pos, ref = ref, alt = alt, build = build, vcf = "/synthetic/chrT.vcf.gz", stringsAsFactors = FALSE)
 current <- reactiveVal(record())
 bins <- reactiveVal(data.frame(site_id = "donor:+:chrT:161", splice_site_type = "donor", splice_site_position = 161L, status = "OK", beta = -.4,
   p_permutation = 1e-4, n = 800L, bin_check = "OK", stringsAsFactors = FALSE))
@@ -165,14 +173,22 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   stopifnot(nrow(sites) == 1L, sites$effect == "donor loss", sites$site_position == 161L, sites$annotated_site == "yes",
     grepl("bin ratio -0.400", sites$observed_in_cohort, fixed = TRUE), grepl("SYNTHETIC SpliceAI", html_text(output$spliceai_status), fixed = TRUE))
   stopifnot(grepl("donor loss 0.93 at exon base 160", isolate(summary_now())$evidence[3L], fixed = TRUE))
+  # The LD scan runs on request with the record's own VCF and feeds Disease and the pQTL question.
+  stopifnot(is.null(isolate(ld_now())), grepl("Not computed for this variant yet", html_text(output$ld_status), fixed = TRUE))
+  session$setInputs(ld = 1L); await(session, ld_task, function() !is.null(ld_now()))
+  l <- isolate(ld_now()); s <- isolate(summary_now())
+  stopifnot(l$release == "/synthetic/chrT.vcf.gz", grepl("3 GWAS Catalog position(s) within 500 kb", html_text(output$ld_status), fixed = TRUE),
+    grepl("1 variant(s) with r2 of at least 0.2, 1 of them at 0.8 or more", html_text(output$ld_status), fixed = TRUE),
+    grepl("r2 >= 0.8 with 1 other reported variant(s)", s$evidence[s$question == "Disease and traits"], fixed = TRUE),
+    grepl("through LD (r2 >= 0.8 in this cohort): protein Z (rs88, r2 0.93)", s$evidence[s$question == "Protein abundance (pQTL)"], fixed = TRUE))
   # A new variant starts clean: earlier public and SpliceAI answers are not shown for it.
   current(record(pos = 124L, ref = "G", alt = "A")); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 124L))
-  stopifnot(is.null(isolate(public_now())), is.null(isolate(spliceai_now())))
+  stopifnot(is.null(isolate(public_now())), is.null(isolate(spliceai_now())), is.null(isolate(ld_now())))
   s <- isolate(summary_now())
   stopifnot(isolate(local_now())$consequences$hgvs_p == "p.Ala2Thr", level(s, "Protein sequence") == "Moderate", level(s, "Disease and traits") == "Not assessed")
   # Going back shows the answers already fetched for that variant.
   current(record()); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 161L))
-  stopifnot(!is.null(isolate(public_now())), !is.null(isolate(spliceai_now())))
+  stopifnot(!is.null(isolate(public_now())), !is.null(isolate(spliceai_now())), !is.null(isolate(ld_now())))
   # Changing the GENCODE release recomputes consequences and keeps the public answer.
   release("50"); session$flushReact(); await(session, local_task, function() identical(local_now()$release, "50"))
   stopifnot(!is.null(isolate(public_now())))

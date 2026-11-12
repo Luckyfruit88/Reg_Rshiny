@@ -10,9 +10,10 @@ interpretation_ui <- function(id) {
     shiny::div(class = "regshiny-actions",
       bslib::input_task_button(ns("public"), "Query public databases"),
       bslib::input_task_button(ns("spliceai"), "Run SpliceAI (about 1-2 min)"),
+      bslib::input_task_button(ns("ld"), "LD with GWAS variants (about 30 s)"),
       shiny::downloadButton(ns("download_json"), "Interpretation JSON"),
       shiny::downloadButton(ns("download_summary"), "Evidence summary CSV")),
-    shiny::helpText("Local sources are read automatically. A public query sends only the variant's chromosome, position and alleles, and the Ensembl IDs of the genes it overlaps, to Open Targets, GTEx and MyVariant.info. No sample, genotype or cohort information is sent."),
+    shiny::helpText("Local sources are read automatically. A public query sends only the variant's chromosome, position and alleles, and the Ensembl IDs of the genes it overlaps, to Open Targets, GTEx and MyVariant.info. No sample, genotype or cohort information is sent. SpliceAI and the LD scan run on SCC and send nothing."),
     shiny::uiOutput(ns("public_status"), role = "status", `aria-live` = "polite"),
     shiny::h5("Evidence summary"),
     shiny::uiOutput(ns("summary")),
@@ -67,6 +68,10 @@ interpretation_ui <- function(id) {
         shiny::uiOutput(ns("catalog_status")),
         interpretation_table_output(ns("catalog")),
         shiny::p("Read from the local copy of the GWAS Catalog; nothing is sent. The catalog lists the variant each study reported, by rsID and position. risk_allele_is says whether the reported risk allele is this variant's ALT or REF. A reported association shows that the variant, or one in linkage disequilibrium with it, is associated with the trait; fine-mapping (below) is what singles a variant out."),
+        shiny::h5("Linkage disequilibrium with nearby GWAS Catalog variants"),
+        shiny::uiOutput(ns("ld_status"), role = "status", `aria-live` = "polite"),
+        interpretation_table_output(ns("ld_table")),
+        shiny::p("For every variant the GWAS Catalog reports within 500 kb, r2 with this variant is computed from the connected dataset's own WGS genotypes; rows with r2 of at least 0.2 are listed. Only correlations and counts are kept: no genotype and no sample identifier. r2 near 1 means the two variants are found together, so this variant can carry that published signal (or the reverse); it does not say which of them is causal. risk_allele_travels_with says which allele of this variant the reported risk allele is found with. LD here is this cohort's; a study in another ancestry can differ."),
         shiny::h5("GWAS credible sets containing this variant (Open Targets)"),
         shiny::uiOutput(ns("gwas_status")),
         interpretation_table_output(ns("gwas")),
@@ -213,7 +218,8 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       v <- variant(); shiny::req(!is.null(v))
       alt <- strsplit(as.character(v$alt[[1L]]), ",", fixed = TRUE)[[1L]]
       list(chrom = as.character(v$chrom[[1L]]), pos1 = as.integer(v$pos1[[1L]]), ref = as.character(v$ref[[1L]]), alt = alt,
-        build = if (is.null(v$build)) "GRCh38" else as.character(v$build[[1L]]))
+        build = if (is.null(v$build)) "GRCh38" else as.character(v$build[[1L]]),
+        vcf = if (is.null(v$vcf) || is.na(v$vcf[[1L]])) "" else as.character(v$vcf[[1L]]))
     })
     selected_alt <- shiny::reactive({
       a <- alleles()
@@ -295,7 +301,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     bslib::bind_task_button(public_task, "public")
     # A click made while the local lookup is still loading waits for it instead
     # of being dropped; a click for a variant that has since changed is dropped.
-    pending <- shiny::reactiveValues(public = NULL, spliceai = NULL)
+    pending <- shiny::reactiveValues(public = NULL, spliceai = NULL, ld = NULL)
     local_ready <- shiny::reactive(tryCatch(local_now(), error = function(e) NULL))
     shiny::observeEvent(input$public, pending$public <- variant_key())
     shiny::observe({
@@ -339,6 +345,29 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     }, ignoreInit = TRUE)
     spliceai_now <- shiny::reactive(spliceai_store()[[variant_key()]])
 
+    # LD with nearby GWAS Catalog variants, from the dataset's own genotypes: on request.
+    ld_store <- shiny::reactiveVal(list())
+    ld_task <- shiny::ExtendedTask$new(function(key, variant, vcf, interpretation_file) {
+      promises::future_promise({
+        e <- new.env(parent = globalenv()); sys.source(interpretation_file, envir = e)
+        list(key = key, value = tryCatch(e$interp_gwas_ld(variant, vcf), error = function(err) err))
+      }, seed = TRUE)
+    })
+    bslib::bind_task_button(ld_task, "ld")
+    shiny::observeEvent(input$ld, pending$ld <- variant_key())
+    shiny::observe({
+      wanted <- pending$ld; x <- local_ready()
+      shiny::req(!is.null(wanted), !is.null(x))
+      pending$ld <- NULL
+      if (!identical(wanted, shiny::isolate(variant_key()))) return()
+      ld_task$invoke(wanted, x$variant, shiny::isolate(alleles())$vcf, interpretation_file)
+    })
+    shiny::observeEvent(ld_task$status(), {
+      if (ld_task$status() != "success") return()
+      r <- ld_task$result(); store <- ld_store(); store[[r$key]] <- r$value; ld_store(store)
+    }, ignoreInit = TRUE)
+    ld_now <- shiny::reactive(ld_store()[[variant_key()]])
+
     backend <- new.env(parent = globalenv()); sys.source(interpretation_file, envir = backend)
     rna_now <- shiny::reactive({
       get_table <- function(f) if (is.null(f)) NULL else tryCatch(f(), error = function(e) NULL)
@@ -346,7 +375,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     })
     summary_now <- shiny::reactive({
       x <- local_now()
-      backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now())
+      backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now(), ld_now())
     })
 
     show_table <- function(expr, digits = 3L, empty = "No rows.") DT::renderDT({
@@ -375,7 +404,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     })
     output$public_status <- shiny::renderUI({
       s <- public_task$status()
-      waiting <- c(if (!is.null(pending$public)) "the public query", if (!is.null(pending$spliceai)) "SpliceAI")
+      waiting <- c(if (!is.null(pending$public)) "the public query", if (!is.null(pending$spliceai)) "SpliceAI", if (!is.null(pending$ld)) "the LD scan")
       if (length(waiting)) return(shiny::div(class = "alert alert-info", paste0("Reading local sources first; ",
         paste(waiting, collapse = " and "), " will start as soon as they are in.")))
       if (s == "running") return(shiny::div(class = "alert alert-info", "Querying Open Targets, GTEx and MyVariant.info..."))
@@ -532,6 +561,18 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     })
     output$catalog <- show_table(function() { g <- local_part("gwas_catalog"); if (is.null(g)) NULL else g$associations },
       empty = "No GWAS Catalog association is reported at this position.")
+    output$ld_status <- shiny::renderUI({
+      s <- ld_task$status(); r <- ld_now()
+      if (s == "running") return(shiny::div(class = "alert alert-info", "Reading genotypes at the nearby GWAS Catalog positions. This takes about half a minute; the rest of the app stays usable."))
+      if (inherits(r, "error")) return(shiny::div(class = "alert alert-danger", conditionMessage(r)))
+      if (is.null(r)) return(shiny::p("Not computed for this variant yet. Use the LD button above; it reads the dataset's genotypes on SCC and sends nothing."))
+      shiny::div(class = if (nrow(r$ld)) "alert alert-success" else "alert alert-warning", paste0(r$positions_examined, " GWAS Catalog position(s) within ",
+        round(r$window / 1000), " kb", if (isTRUE(r$truncated)) paste0(" (the nearest of ", r$positions_in_window, ")") else "", ", ", r$samples,
+        " samples with a genotype call; ", length(unique(r$ld$rs_id)), " variant(s) with r2 of at least ", r$keep_r2, ", ",
+        length(unique(r$ld$rs_id[r$ld$r2 >= 0.8])), " of them at 0.8 or more. Computed at ", r$ran_at, "."))
+    })
+    output$ld_table <- show_table(function() { r <- ld_now(); if (is.null(r) || inherits(r, "error")) NULL else r$ld },
+      empty = "No row: the scan has not been run, or no reported variant nearby is in LD with this one.")
     pathways_part <- function(field) function() { lp <- local_part("pathways"); if (is.null(lp)) NULL else lp[[field]] }
     output$linked_genes <- show_table(pathways_part("genes"), empty = "No gene overlaps the variant or is a significant QTL target of it.")
     output$local_reactome <- show_table(pathways_part("reactome"), empty = "No Reactome pathway for the linked genes, or the local mapping is not readable.")
@@ -567,13 +608,17 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       cat("Public query:", if (is.null(p)) "not run" else if (inherits(p, "error")) conditionMessage(p) else
         paste0("run at ", p$queried_at, "; sent variant ", p$variant, " and gene IDs ", paste(p$gene_ids, collapse = ", ")), "\n")
       cat("SpliceAI:", if (is.null(s)) "not run" else if (inherits(s, "error")) conditionMessage(s) else paste(s$model, "at", s$ran_at), "\n")
+      l <- ld_now()
+      cat("LD scan:", if (is.null(l)) "not run" else if (inherits(l, "error")) conditionMessage(l) else
+        paste0(l$positions_examined, " positions, ", l$samples, " samples, at ", l$ran_at), "\n")
     })
     export <- function() {
       x <- local_now(); p <- public_now(); s <- spliceai_now()
       plain <- function(v) if (inherits(v, "error")) list(error = conditionMessage(v)) else v
       list(variant = x$variant, gencode_release = x$release, summary = summary_now(), gene_summary = x$gene_summary,
         consequences = x$consequences, local = if (is.null(x$local)) NULL else lapply(x$local, plain),
-        public = if (is.null(p)) NULL else lapply(p, plain), spliceai = if (is.null(s)) NULL else plain(s), rna_evidence = rna_now())
+        public = if (is.null(p)) NULL else lapply(p, plain), spliceai = if (is.null(s)) NULL else plain(s),
+        gwas_ld = if (is.null(ld_now())) NULL else plain(ld_now()), rna_evidence = rna_now())
     }
     output$download_json <- shiny::downloadHandler(function() paste0("interpretation_", gsub(":", "_", local_now()$variant$id), ".json"),
       function(file) writeLines(jsonlite::toJSON(export(), dataframe = "rows", auto_unbox = TRUE, na = "null", null = "null", digits = NA, pretty = TRUE), file))
@@ -581,7 +626,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       utils::write.csv(summary_now(), file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8"))
     output$download_consequences <- shiny::downloadHandler("transcript_consequences.csv", function(file)
       utils::write.csv(local_now()$consequences, file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8"))
-    invisible(list(summary = summary_now, local = local_now, public = public_now, spliceai = spliceai_now,
-      tasks = list(local = local_task, public = public_task, spliceai = spliceai_task)))
+    invisible(list(summary = summary_now, local = local_now, public = public_now, spliceai = spliceai_now, ld = ld_now,
+      tasks = list(local = local_task, public = public_task, spliceai = spliceai_task, ld = ld_task)))
   })
 }
