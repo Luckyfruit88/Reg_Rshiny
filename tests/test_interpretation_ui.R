@@ -9,7 +9,8 @@ future::plan(future::sequential)
 # Local sources must not be read from a test: point every one at nothing.
 Sys.setenv(REGSHINY_CADD_SNV = "/nonexistent/cadd", REGSHINY_CADD_INDEL = "/nonexistent/cadd", REGSHINY_VEP_CACHE = "/nonexistent/vep",
   REGSHINY_TOPMED_QTL = "/nonexistent/topmed", REGSHINY_FHS_SQTL = "/nonexistent/a;/nonexistent/b", REGSHINY_FHS_EQTL = "/nonexistent/e",
-  REGSHINY_SPLICEAI = "/nonexistent/spliceai")
+  REGSHINY_SPLICEAI = "/nonexistent/spliceai", REGSHINY_GWAS_CATALOG = "/nonexistent/gwas", REGSHINY_CLINVAR_VCF = "/nonexistent/clinvar",
+  REGSHINY_REACTOME = "/nonexistent/reactome", REGSHINY_MSIGDB = "/nonexistent/msigdb")
 scratch <- tempfile("interpretation-ui-"); dir.create(scratch)
 backend_file <- normalizePath("src/interpretation_backend.R")
 fixture_backend <- file.path(scratch, "backend.R")
@@ -82,7 +83,19 @@ stopifnot(grepl("regshiny-level-strong", cards, fixed = TRUE), grepl("regshiny-l
 stopifnot(interpretation_level_class("Moderate") == "regshiny-level-moderate", interpretation_level_class("Context") == "regshiny-level-context")
 css <- paste(readLines("www/frontend.css", warn = FALSE), collapse = "\n")
 for (cls in c("regshiny-level-strong", "regshiny-level-moderate", "regshiny-level-limited", "regshiny-level-none", "regshiny-level-context",
-  "regshiny-level-unknown", "regshiny-evidence-row")) stopifnot(grepl(paste0(".", cls), css, fixed = TRUE))
+  "regshiny-level-unknown", "regshiny-evidence-row", "regshiny-cell-wrap", "regshiny-site-list")) stopifnot(grepl(paste0(".", cls), css, fixed = TRUE))
+# Table helper: p-value columns keep their stored value and get the scientific renderer, long text gets the wrapping
+# renderer, other numbers are rounded; rows stay on one line.
+stopifnot(identical(interpretation_p_columns(c("p_value", "p_nominal", "p_threshold", "min_p", "q_p_value", "p_permutation", "pip",
+  "posterior_probability", "log10_p", "phenotype", "pooled_slope")), c(TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE)))
+tab <- interpretation_datatable(data.frame(trait = "x", p_value = 0, pip = .123456, min_p = 1.23456e-9, log10_p = -3.21987, n = 5L, stringsAsFactors = FALSE))
+rendered <- Filter(function(d) !is.null(d$render), tab$x$options$columnDefs)
+stopifnot(inherits(tab, "datatables"), length(rendered) == 2L, identical(as.numeric(rendered[[1L]]$targets), c(1, 3)), grepl("1e-300", rendered[[1L]]$render, fixed = TRUE),
+  identical(as.numeric(rendered[[2L]]$targets), 0), grepl("regshiny-cell-wrap", rendered[[2L]]$render, fixed = TRUE),
+  tab$x$data$p_value == 0, tab$x$data$min_p == 1.23456e-9, tab$x$data$pip == .123, tab$x$data$log10_p == -3.22, tab$x$data$n == 5L,
+  grepl("nowrap", tab$x$container, fixed = TRUE) || grepl("nowrap", paste(unlist(tab$x), collapse = " "), fixed = TRUE),
+  # A short table needs no search box or pager.
+  tab$x$options$dom == "t", interpretation_datatable(data.frame(n = 1:11))$x$options$dom == "ftip")
 # Plots draw with and without data.
 pair <- function(type, context, phenotype, slope, significant) data.frame(qtl_type = type, context = context, phenotype = phenotype,
   gene_id = "ENSG1.1", gene = "ONE", alt_frequency = .1, n_estimated = 500L, slope_alt = slope, slope_se = .1, p_nominal = 1e-9,
@@ -145,7 +158,7 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   sites <- isolate(spliceai_sites())
   stopifnot(nrow(sites) == 1L, sites$effect == "donor loss", sites$site_position == 161L, sites$annotated_site == "yes",
     grepl("bin ratio -0.400", sites$observed_in_cohort, fixed = TRUE), grepl("SYNTHETIC SpliceAI", html_text(output$spliceai_status), fixed = TRUE))
-  stopifnot(grepl("donor loss 0.93 at 160", isolate(summary_now())$evidence[3L], fixed = TRUE))
+  stopifnot(grepl("donor loss 0.93 at exon base 160", isolate(summary_now())$evidence[3L], fixed = TRUE))
   # A new variant starts clean: earlier public and SpliceAI answers are not shown for it.
   current(record(pos = 124L, ref = "G", alt = "A")); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 124L))
   stopifnot(is.null(isolate(public_now())), is.null(isolate(spliceai_now())))
@@ -182,6 +195,30 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(record(p
     !isolate(rna_now())$available)
   session$setInputs(spliceai = 1L); await(session, spliceai_task, function() !is.null(spliceai_now()))
   stopifnot(inherits(isolate(spliceai_now()), "error"), grepl("reference FASTA", html_text(output$spliceai_status), fixed = TRUE))
+})
+# A click made before the local lookup has come back is kept and runs once it has.
+writeLines(character(), request_log)
+shiny::testServer(interpretation_server, args = list(variant = reactive(record()), annotation_resources = list(release = "48"),
+  annotation_file = annotation_source, reference = list(fasta = "/synthetic.fa"), splice_file = splice_source, interpretation_file = fixture_backend), {
+  session$flushReact()
+  session$setInputs(spliceai = 1L, public = 1L)
+  stopifnot(is.null(isolate(local_ready())), isolate(pending$spliceai) == isolate(variant_key()), !length(readLines(request_log)),
+    grepl("will start as soon as they are in", html_text(output$public_status), fixed = TRUE))
+  await(session, spliceai_task, function() !is.null(spliceai_now())); await(session, public_task, function() !is.null(public_now()))
+  stopifnot(!inherits(isolate(spliceai_now()), "error"), isolate(public_now())$open_targets$found, is.null(isolate(pending$spliceai)),
+    is.null(isolate(pending$public)), grepl("T_161_A_G", paste(readLines(request_log), collapse = "\n"), fixed = TRUE))
+})
+# A click whose variant was replaced before the lookup came back is dropped: nothing is sent for either variant.
+writeLines(character(), request_log)
+moving <- reactiveVal(record())
+shiny::testServer(interpretation_server, args = list(variant = reactive(moving()), annotation_resources = list(release = "48"),
+  annotation_file = annotation_source, reference = list(fasta = "/synthetic.fa"), splice_file = splice_source, interpretation_file = fixture_backend), {
+  session$flushReact()
+  session$setInputs(public = 1L)
+  moving(record(pos = 124L, ref = "G", alt = "A")); session$flushReact()
+  await(session, local_task, function() identical(local_now()$variant$pos1, 124L))
+  for (i in 1:5) { later::run_now(.05); session$flushReact() }
+  stopifnot(is.null(isolate(pending$public)), is.null(isolate(public_now())), !length(readLines(request_log)))
 })
 unlink(scratch, recursive = TRUE)
 cat("interpretation UI tests passed\n")

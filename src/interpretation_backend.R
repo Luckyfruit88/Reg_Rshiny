@@ -843,6 +843,10 @@ interp_local_sources <- function() {
     topmed_qtl = env("REGSHINY_TOPMED_QTL", file.path(lab, "projectnb/RNAseq/TOPMed_cis-sQTL")),
     fhs_sqtl = stats::setNames(sqtl, c("discovery", "replication")[seq_along(sqtl)]),
     fhs_eqtl = env("REGSHINY_FHS_EQTL", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/topmed_qtl/fhs_whole_blood_eqtl_gene_combined_1e-7.sorted.csv")),
+    gwas_catalog = env("REGSHINY_GWAS_CATALOG", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/disease/gwas_catalog_e114_r2025-07-21.b38.tsv.gz")),
+    clinvar_vcf = env("REGSHINY_CLINVAR_VCF", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/disease/clinvar_2025-07-21.GRCh38.vcf.gz")),
+    reactome = env("REGSHINY_REACTOME", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/pathway/reactome_ensembl_all_levels_2026-09-22.human.tsv")),
+    msigdb = env("REGSHINY_MSIGDB", "/restricted/projectnb/cbmhive/MSigDB/2026.1.Hs"),
     spliceai = env("REGSHINY_SPLICEAI", "/share/pkg.8/spliceai/1.3.1/install/bin/spliceai"))
 }
 
@@ -862,6 +866,14 @@ interp_local_status <- function(sources = interp_local_sources()) {
       nzchar(sources$look) && all(vapply(sources$fhs_sqtl, interp_readable, logical(1))), sources$fhs_sqtl),
     row("FHS whole-blood gene eQTL", "Combined set, p < 1e-7 (position-sorted copy)",
       nzchar(sources$look) && interp_readable(sources$fhs_eqtl), sources$fhs_eqtl),
+    row("GWAS Catalog", "Published trait associations reported at the variant's position (position-indexed copy)",
+      tabix && interp_readable(sources$gwas_catalog) && interp_readable(paste0(sources$gwas_catalog, ".tbi")), sources$gwas_catalog),
+    row("ClinVar VCF", "Germline classification, review status and conditions of this allele",
+      tabix && interp_readable(sources$clinvar_vcf) && interp_readable(paste0(sources$clinvar_vcf, ".tbi")), sources$clinvar_vcf),
+    row("Reactome gene-to-pathway mapping", "Pathways of the genes the variant overlaps or is a QTL for (gene-sorted copy)",
+      interp_readable(sources$look) && interp_readable(sources$reactome), sources$reactome),
+    row("MSigDB gene sets", "Hallmark, canonical pathways (KEGG, WikiPathways, PID, BioCarta) and GO biological process",
+      length(interp_msigdb_files(sources)) > 0L, sources$msigdb),
     row("SpliceAI 1.3.1", "Predicted gain or loss of splice sites within 500 bp (run on request)", interp_readable(sources$spliceai), sources$spliceai))
 }
 
@@ -943,6 +955,82 @@ interp_known_variant <- function(variant, sources = interp_local_sources()) {
     if (length(freq)) out$frequencies <- do.call(rbind, freq)
     break
   }
+  out
+}
+
+# Position range that covers the variant in VCF form and its changed bases.
+interp_variant_span <- function(variant) c(min(variant$pos1, variant$start1), max(variant$pos1 + nchar(variant$ref) - 1L, variant$end1))
+
+# GWAS Catalog associations reported at this position (position-indexed copy,
+# see scripts/build_gwas_index.sh). The catalog keys a row by rsID and position,
+# not by allele: risk_allele_is says whether the reported risk allele is this
+# variant's ALT, its REF, or neither / not reported.
+interp_gwas_catalog_empty <- function() data.frame(rs_id = character(), risk_allele = character(), risk_allele_is = character(),
+  trait = character(), mapped_trait = character(), p_value = numeric(), effect = numeric(), ci_text = character(),
+  risk_allele_frequency = character(), mapped_gene = character(), pubmed = character(), first_author = character(),
+  date = character(), study_accession = character(), initial_sample = character(), stringsAsFactors = FALSE)
+
+interp_gwas_catalog <- function(variant, sources = interp_local_sources()) {
+  out <- list(available = FALSE, found = FALSE, associations = interp_gwas_catalog_empty(), release = "",
+    source = "GWAS Catalog associations (local position-indexed copy)")
+  file <- sources$gwas_catalog
+  if (!interp_readable(sources$tabix) || !interp_readable(file) || !interp_readable(paste0(file, ".tbi"))) return(out)
+  out$available <- TRUE
+  out$release <- sub("^.*_(e[0-9]+_r[0-9-]+).*$", "\\1", basename(file))
+  if (identical(out$release, basename(file))) out$release <- ""
+  span <- interp_variant_span(variant)
+  lines <- interp_tabix(sources, file, variant$chrom, span[[1L]], span[[2L]])
+  lines <- lines[!startsWith(lines, "#")]
+  if (!length(lines)) return(out)
+  f <- strsplit(lines, "\t", fixed = TRUE)
+  field <- function(i) vapply(f, function(x) if (length(x) >= i) x[[i]] else "", character(1))
+  allele <- toupper(sub("^.*-", "", field(4L))); allele[!grepl("-", field(4L), fixed = TRUE)] <- ""
+  is <- ifelse(allele == variant$alt | allele == variant$alt_changed, "ALT",
+    ifelse(allele == variant$ref | allele == variant$ref_changed, "REF", ifelse(allele %in% c("", "?"), "not reported", "another allele")))
+  x <- data.frame(rs_id = field(3L), risk_allele = field(4L), risk_allele_is = is, trait = field(5L), mapped_trait = field(6L),
+    p_value = suppressWarnings(as.numeric(field(7L))), effect = suppressWarnings(as.numeric(field(9L))), ci_text = field(10L),
+    risk_allele_frequency = field(11L), mapped_gene = field(12L), pubmed = field(13L), first_author = field(14L), date = field(15L),
+    study_accession = field(16L), initial_sample = field(17L), stringsAsFactors = FALSE)
+  # A p-value too small for a double is kept as 0 and ordered by its stored -log10.
+  mlog <- suppressWarnings(as.numeric(field(8L)))
+  x <- x[order(-ifelse(is.finite(mlog), mlog, -Inf), x$trait), , drop = FALSE]; rownames(x) <- NULL
+  out$associations <- x; out$found <- TRUE
+  out
+}
+
+# ClinVar record of this exact allele from a tabix-indexed ClinVar VCF.
+interp_clinvar_empty <- function() data.frame(variation_id = character(), clinical_significance = character(),
+  review_status = character(), conditions = character(), gene = character(), molecular_consequence = character(),
+  rs_id = character(), stringsAsFactors = FALSE)
+
+interp_clinvar_local <- function(variant, sources = interp_local_sources()) {
+  out <- list(available = FALSE, found = FALSE, records = interp_clinvar_empty(), other_alleles = 0L, file_date = "",
+    source = "ClinVar VCF (local)")
+  file <- sources$clinvar_vcf
+  if (!interp_readable(sources$tabix) || !interp_readable(file) || !interp_readable(paste0(file, ".tbi"))) return(out)
+  out$available <- TRUE
+  header <- tryCatch(interp_run_lines(sources$tabix, c("-H", file)), error = function(e) character())
+  date <- sub("^##fileDate=", "", grep("^##fileDate=", header, value = TRUE))
+  if (length(date)) { out$file_date <- date[[1L]]; out$source <- paste0("ClinVar VCF ", date[[1L]], " (local)") }
+  span <- interp_variant_span(variant)
+  lines <- interp_tabix(sources, file, interp_bare_chrom(variant$chrom), span[[1L]], span[[2L]])
+  rows <- list()
+  for (line in lines) {
+    f <- strsplit(line, "\t", fixed = TRUE)[[1L]]
+    if (length(f) < 8L) next
+    if (!identical(f[[2L]], as.character(variant$pos1)) || !identical(f[[4L]], variant$ref) || !identical(f[[5L]], variant$alt)) {
+      if (!identical(f[[5L]], ".")) out$other_alleles <- out$other_alleles + 1L
+      next
+    }
+    info <- strsplit(f[[8L]], ";", fixed = TRUE)[[1L]]
+    kv <- stats::setNames(sub("^[^=]*=", "", info), sub("=.*$", "", info))
+    get <- function(key) if (key %in% names(kv)) utils::URLdecode(gsub("_", " ", kv[[key]])) else ""
+    rows[[length(rows) + 1L]] <- data.frame(variation_id = f[[3L]], clinical_significance = get("CLNSIG"),
+      review_status = get("CLNREVSTAT"), conditions = gsub("|", "; ", get("CLNDN"), fixed = TRUE),
+      gene = sub(":.*$", "", get("GENEINFO")), molecular_consequence = gsub("SO:[0-9]+\\|", "", get("MC")),
+      rs_id = if (nzchar(get("RS"))) paste0("rs", get("RS")) else "", stringsAsFactors = FALSE)
+  }
+  if (length(rows)) { out$records <- do.call(rbind, rows); out$found <- TRUE }
   out
 }
 
@@ -1204,11 +1292,108 @@ interp_spliceai_sites <- function(scores, strand, introns = NULL, min_delta = 0.
   out <- do.call(rbind, rows); out <- out[order(-out$delta), , drop = FALSE]; rownames(out) <- NULL; out
 }
 
+# ---- Genes linked to the variant, and their pathways -------------------------
+# Genes the variant can act through: the ones it overlaps, and the ones whose
+# splicing or expression is associated with it in the local QTL sources.
+interp_linked_genes <- function(consequences, local = NULL) {
+  rows <- list()
+  add <- function(gene_id, gene, relation) if (length(gene_id)) rows[[length(rows) + 1L]] <<- data.frame(
+    gene_id = interp_bare_gene(gene_id), gene = gene, relation = relation, stringsAsFactors = FALSE)
+  genic <- consequences[!consequences$most_severe %in% c("upstream_gene_variant", "downstream_gene_variant"), , drop = FALSE]
+  add(genic$gene_id, genic$gene_name, "overlaps")
+  topmed <- if (interp_ok(local) && interp_ok(local$topmed) && isTRUE(local$topmed$available)) local$topmed$pairs else NULL
+  if (!is.null(topmed) && nrow(topmed)) {
+    hit <- topmed[topmed$significant %in% TRUE, , drop = FALSE]
+    add(hit$gene_id[hit$qtl_type == "sQTL"], hit$gene[hit$qtl_type == "sQTL"], "sQTL target (TOPMed)")
+    add(hit$gene_id[hit$qtl_type == "eQTL"], hit$gene[hit$qtl_type == "eQTL"], "eQTL target (TOPMed)")
+  }
+  if (!length(rows)) return(data.frame(gene_id = character(), gene = character(), relation = character(), stringsAsFactors = FALSE))
+  x <- unique(do.call(rbind, rows))
+  # One row per gene; a name from any row, relations joined in a fixed order.
+  out <- do.call(rbind, lapply(split(x, x$gene_id), function(g) data.frame(gene_id = g$gene_id[[1L]],
+    gene = { n <- g$gene[nzchar(g$gene) & !startsWith(g$gene, "ENSG")]; if (length(n)) n[[1L]] else "" },
+    relation = paste(unique(g$relation), collapse = "; "), stringsAsFactors = FALSE)))
+  out <- out[order(!grepl("overlaps", out$relation), out$gene, out$gene_id), , drop = FALSE]; rownames(out) <- NULL; out
+}
+
+# Reactome's top-level pathways. The mapping file lists every level, so a gene's
+# rows with one of these names are its top-level pathways.
+interp_reactome_top_levels <- function() c("Autophagy", "Cell Cycle", "Cell-Cell communication", "Cellular responses to stimuli",
+  "Chromatin organization", "Circadian clock", "Developmental Biology", "Digestion and absorption", "Disease", "DNA Repair",
+  "DNA Replication", "Drug ADME", "Extracellular matrix organization", "Gene expression (Transcription)", "Hemostasis",
+  "Immune System", "Metabolism", "Metabolism of proteins", "Metabolism of RNA", "Muscle contraction", "Neuronal System",
+  "Organelle biogenesis and maintenance", "Programmed Cell Death", "Protein localization", "Reproduction", "Sensory Perception",
+  "Signal Transduction", "Transport of small molecules", "Vesicle-mediated transport")
+
+interp_msigdb_files <- function(sources) {
+  if (length(sources$msigdb) != 1L || !nzchar(sources$msigdb) || !dir.exists(sources$msigdb)) return(character())
+  pick <- function(pattern) { f <- Sys.glob(file.path(sources$msigdb, pattern)); if (length(f)) f[[1L]] else NA_character_ }
+  files <- c(Hallmark = pick("h.all.v*.Hs.symbols.gmt"), `Canonical pathways` = pick("c2.cp.v*.Hs.symbols.gmt"),
+    `GO biological process` = pick("c5.go.bp.v*.Hs.symbols.gmt"))
+  files[!is.na(files) & vapply(files, interp_readable, logical(1))]
+}
+
+interp_pathways_empty <- function() list(
+  reactome = data.frame(gene = character(), relation = character(), pathway = character(), pathway_id = character(),
+    top_level = logical(), evidence = character(), stringsAsFactors = FALSE),
+  gene_sets = data.frame(gene = character(), relation = character(), collection = character(), gene_set = character(),
+    genes_in_set = integer(), stringsAsFactors = FALSE))
+
+# Pathways and gene sets of the linked genes, from local files only. They
+# describe the genes; they are not evidence that the variant changes a pathway.
+interp_local_pathways <- function(genes, sources = interp_local_sources()) {
+  out <- c(list(available = FALSE, reactome_available = FALSE, msigdb_available = FALSE, genes = genes), interp_pathways_empty(),
+    list(source = character()))
+  if (is.null(genes) || !nrow(genes)) return(out)
+  label <- ifelse(nzchar(genes$gene), genes$gene, genes$gene_id)
+  if (interp_readable(sources$look) && interp_readable(sources$reactome)) {
+    out$reactome_available <- TRUE; out$source <- c(out$source, paste0("Reactome (", basename(sources$reactome), ")"))
+    rows <- list()
+    for (i in seq_len(nrow(genes))) {
+      lines <- interp_run_lines(sources$look, c(paste0(genes$gene_id[[i]], "\t"), sources$reactome), env = c("current", LC_ALL = "C"))
+      if (!length(lines)) next
+      f <- strsplit(lines, "\t", fixed = TRUE)
+      x <- data.frame(gene = label[[i]], relation = genes$relation[[i]], pathway = vapply(f, `[[`, character(1), 4L),
+        pathway_id = vapply(f, `[[`, character(1), 2L), evidence = vapply(f, `[[`, character(1), 5L), stringsAsFactors = FALSE)
+      # The same pathway can be listed once per evidence code.
+      x <- do.call(rbind, lapply(split(x, x$pathway_id), function(g) { g$evidence <- paste(sort(unique(g$evidence)), collapse = ", "); g[1L, ] }))
+      x$top_level <- x$pathway %in% interp_reactome_top_levels()
+      rows[[length(rows) + 1L]] <- x[order(!x$top_level, x$pathway), c("gene", "relation", "pathway", "pathway_id", "top_level", "evidence")]
+    }
+    if (length(rows)) { out$reactome <- do.call(rbind, rows); rownames(out$reactome) <- NULL }
+  }
+  files <- interp_msigdb_files(sources)
+  named <- nzchar(genes$gene)
+  if (length(files)) {
+    out$msigdb_available <- TRUE
+    out$source <- c(out$source, paste0("MSigDB ", sub("^.*\\.v([0-9.]+)\\.Hs\\..*$", "\\1", basename(files[[1L]]))))
+    rows <- list()
+    if (any(named)) for (collection in names(files)) {
+      sets <- strsplit(readLines(files[[collection]], warn = FALSE), "\t", fixed = TRUE)
+      # Reactome sets are left to the Reactome mapping above, which is keyed by gene ID.
+      sets <- sets[!startsWith(vapply(sets, `[[`, character(1), 1L), "REACTOME_")]
+      for (i in which(named)) {
+        hit <- vapply(sets, function(set) genes$gene[[i]] %in% set[-(1:2)], logical(1))
+        if (any(hit)) rows[[length(rows) + 1L]] <- data.frame(gene = genes$gene[[i]], relation = genes$relation[[i]], collection = collection,
+          gene_set = vapply(sets[hit], `[[`, character(1), 1L), genes_in_set = lengths(sets[hit]) - 2L, stringsAsFactors = FALSE)
+      }
+    }
+    if (length(rows)) {
+      x <- do.call(rbind, rows)
+      out$gene_sets <- x[order(match(x$gene, genes$gene), match(x$collection, names(files)), x$genes_in_set), , drop = FALSE]
+      rownames(out$gene_sets) <- NULL
+    }
+  }
+  out$available <- out$reactome_available || out$msigdb_available
+  out
+}
+
 # All local lookups; each source fails on its own.
 interp_local_evidence <- function(variant, sources = interp_local_sources()) {
   attempt <- function(expr) tryCatch(expr, error = function(e) e)
   list(cadd = attempt(interp_cadd(variant, sources)), known = attempt(interp_known_variant(variant, sources)),
     fhs = attempt(interp_fhs_qtl(variant, sources)), topmed = attempt(interp_topmed_qtl(variant, sources)),
+    gwas_catalog = attempt(interp_gwas_catalog(variant, sources)), clinvar = attempt(interp_clinvar_local(variant, sources)),
     status = interp_local_status(sources))
 }
 
@@ -1292,7 +1477,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     reference <- genic[grepl("MANE_Select|Ensembl_canonical", genic$transcript_flags), , drop = FALSE]
     ref_top <- if (nrow(reference)) reference[1L, ] else top
     n_severe <- sum(genic$most_severe == top$most_severe & genic$gene_id == top$gene_id)
-    n_gene <- sum(genic$gene_id == top$gene_id)
+    # Same denominator as the per-gene table: every transcript of the gene within reach.
+    n_gene <- sum(consequences$gene_id == top$gene_id)
     where <- sprintf("%s in %s, %d of %d transcripts", top$most_severe, top$gene_name, n_severe, n_gene)
     hgvs <- trimws(paste(ref_top$hgvs_c, ref_top$hgvs_p))
     evidence <- c(where, if (nzchar(hgvs)) paste0("reference transcript ", ref_top$transcript_id, ": ", ref_top$consequence, " ", hgvs) else "",
@@ -1370,7 +1556,7 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   if (!is.null(sai)) {
     s <- sai[which.max(sai$max_delta), ]
     kinds <- c(acceptor_gain = "acceptor gain", acceptor_loss = "acceptor loss", donor_gain = "donor gain", donor_loss = "donor loss")
-    parts <- vapply(names(kinds), function(k) if (s[[k]] >= 0.1) sprintf("%s %.2f at %d", kinds[[k]], s[[k]], s[[paste0(k, "_pos1")]]) else "", character(1))
+    parts <- vapply(names(kinds), function(k) if (s[[k]] >= 0.1) sprintf("%s %.2f at exon base %d", kinds[[k]], s[[k]], s[[paste0(k, "_pos1")]]) else "", character(1))
     evidence <- c(evidence, paste0("SpliceAI (", s$gene, "): ", if (any(nzchar(parts))) paste(parts[nzchar(parts)], collapse = ", ") else
       sprintf("largest change %.2f", sai_max)))
     sources <- c(sources, "SpliceAI")
@@ -1469,14 +1655,25 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   # 5. Disease and traits.
   evidence <- character(); sources <- character(); level <- "None found"
   rank_up <- function(current, new) interp_levels()[[min(match(current, interp_levels()), match(new, interp_levels()))]]
-  significance <- character()
+  clinvar_local <- if (interp_ok(local) && interp_ok(local$clinvar) && isTRUE(local$clinvar$available)) local$clinvar else NULL
+  catalog <- if (interp_ok(local) && interp_ok(local$gwas_catalog) && isTRUE(local$gwas_catalog$available)) local$gwas_catalog else NULL
+  significance <- character(); detail <- ""
   if (!is.null(myv) && nrow(myv$clinvar)) { significance <- tolower(myv$clinvar$clinical_significance); sources <- c(sources, "ClinVar via MyVariant.info") }
+  if (!length(significance) && !is.null(clinvar_local) && isTRUE(clinvar_local$found)) {
+    r <- clinvar_local$records
+    significance <- tolower(trimws(unlist(strsplit(r$clinical_significance, "[|/,]"))))
+    conditions <- setdiff(unique(trimws(unlist(strsplit(r$conditions, ";", fixed = TRUE)))), c("", "not provided", "not specified"))
+    detail <- paste0(if (length(conditions)) paste0(" for ", interp_join(conditions, ", ", max = 4)) else "",
+      if (any(nzchar(r$review_status))) paste0(" (", interp_join(unique(r$review_status), "; "), ")") else "")
+    sources <- c(sources, clinvar_local$source)
+  }
   if (!length(significance) && !is.null(known) && nzchar(known$clinvar_significance)) {
     significance <- tolower(gsub("_", " ", strsplit(known$clinvar_significance, ", ", fixed = TRUE)[[1L]]))
     sources <- c(sources, "ClinVar 2023-10 (VEP cache)")
   }
+  significance <- unique(significance[nzchar(significance)])
   if (length(significance)) {
-    evidence <- c(evidence, paste0("ClinVar: ", interp_join(significance, ", ", max = 6)))
+    evidence <- c(evidence, paste0("ClinVar: ", interp_join(significance, ", ", max = 6), detail))
     pathogenic <- any(grepl("^(likely )?pathogenic", significance))
     benign <- any(grepl("benign", significance))
     level <- rank_up(level, if (pathogenic && !benign) "Strong" else if (pathogenic || any(grepl("risk|drug|association|protective|affects|conflicting", significance))) "Moderate" else "Limited")
@@ -1491,35 +1688,74 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     sources <- c(sources, "Open Targets")
     level <- rank_up(level, if (any(pip >= 0.5)) "Strong" else if (any(pip >= 0.1)) "Moderate" else "Limited")
   }
+  if (!is.null(catalog) && isTRUE(catalog$found)) {
+    a <- catalog$associations
+    genome_wide <- is.finite(a$p_value) & a$p_value <= 5e-8
+    traits <- unique(ifelse(nzchar(a$mapped_trait), a$mapped_trait, a$trait))
+    evidence <- c(evidence, sprintf("GWAS Catalog: %d association(s) reported at this position, %d at p <= 5e-8, %d distinct trait(s); strongest: %s",
+      nrow(a), sum(genome_wide), length(traits), interp_join(traits, "; ", max = 5)))
+    sources <- c(sources, trimws(paste("GWAS Catalog", catalog$release)))
+    # A published association at the variant itself; alone it does not single the variant out from its LD neighbours.
+    level <- rank_up(level, if (any(genome_wide)) "Moderate" else "Limited")
+  }
   if (!is.null(ot) && nrow(ot$pharmacogenomics)) {
     evidence <- c(evidence, paste0("Pharmacogenomics: ", interp_join(ot$pharmacogenomics$drugs, ", ", max = 6)))
     level <- rank_up(level, "Moderate"); sources <- c(sources, "Open Targets")
   }
-  # Without the public lookup only an offline ClinVar snapshot was consulted.
-  if (!ot_queried && is.null(myv) && level == "None found") level <- "Not assessed"
+  consulted <- c(if (!is.null(clinvar_local)) clinvar_local$source else if (!is.null(known)) "ClinVar 2023-10 (VEP cache)",
+    if (!is.null(catalog)) trimws(paste("GWAS Catalog", catalog$release)), if (!is.null(myv)) "ClinVar via MyVariant.info",
+    if (ot_queried) "Open Targets")
+  # ClinVar and published associations are both needed before saying "none".
+  local_complete <- !is.null(catalog) && (!is.null(clinvar_local) || !is.null(myv))
+  if (level == "None found" && !ot_queried && !local_complete) level <- "Not assessed"
+  if (!ot_queried) evidence <- c(evidence, "GWAS fine-mapping (credible sets) not consulted: public query not run")
   finding <- switch(level, Strong = "Reported as disease-causing, or fine-mapped as the likely causal variant of a GWAS signal.",
     Moderate = "Linked to a disease, trait or drug response, without being singled out as causal.",
-    Limited = "Present in ClinVar or in GWAS credible sets with weak support for this variant.",
-    `None found` = "No clinical or GWAS record for this variant.",
-    if (!is.null(known)) "No ClinVar significance in the local snapshot (2023-10); GWAS and curated evidence need the public query." else
+    Limited = "Present in ClinVar or in GWAS records with weak support for this variant.",
+    `None found` = paste0("No clinical record and no published GWAS association for this variant in ", interp_join(consulted, ", "), "."),
+    if (length(consulted)) paste0("Only ", interp_join(consulted, ", "), " could be consulted and reports nothing; run the public query for GWAS and curated evidence.") else
       "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.")
-  rows[[5L]] <- interp_summary_row("Disease and traits", level, finding, evidence, sources)
+  rows[[5L]] <- interp_summary_row("Disease and traits", level, finding, evidence, if (length(evidence) > !ot_queried) sources else consulted)
 
-  # 6. Pathway (context for the genes the variant falls in; not evidence about the variant).
-  genes <- if (interp_ok(public) && interp_ok(public$genes)) public$genes else NULL
-  if (is.null(genes) || !nrow(genes$genes)) {
-    rows[[6L]] <- interp_summary_row("Pathway", "Not assessed", if (nrow(genic)) paste0("Public lookup not run for ",
-      interp_join(genic$gene_name, ", ", max = 4), ".") else "No gene overlaps the variant.")
+  # 6. Pathway (context for the genes the variant acts through; not evidence about the variant).
+  genes <- if (interp_ok(public) && interp_ok(public$genes) && nrow(public$genes$genes)) public$genes else NULL
+  lp <- if (interp_ok(local) && interp_ok(local$pathways) && isTRUE(local$pathways$available) && nrow(local$pathways$genes)) local$pathways else NULL
+  if (is.null(genes) && is.null(lp)) {
+    rows[[6L]] <- interp_summary_row("Pathway", "Not assessed", if (nrow(genic)) paste0("No pathway source was available for ",
+      interp_join(genic$gene_name, ", ", max = 4), "; run the public query.") else "No gene overlaps the variant or is a QTL target of it.")
   } else {
-    per_gene <- vapply(genes$genes$gene, function(g) {
-      top <- unique(genes$pathways$top_level[genes$pathways$gene == g])
-      paste0(g, ": ", if (length(top)) interp_join(top, ", ", max = 5) else "no Reactome pathway")
-    }, character(1))
-    rows[[6L]] <- interp_summary_row("Pathway", "Context", paste(per_gene, collapse = " · "),
-      sprintf("%s: %d Reactome pathway(s), %d GO term(s), %d associated disease(s) in Open Targets", genes$genes$gene,
-        vapply(genes$genes$gene, function(g) sum(genes$pathways$gene == g), integer(1)),
-        vapply(genes$genes$gene, function(g) sum(genes$go$gene == g), integer(1)), genes$genes$associated_diseases),
-      "Reactome and GO via Open Targets")
+    evidence <- character(); sources <- character(); finding <- character()
+    if (!is.null(lp)) {
+      g <- utils::head(lp$genes, 6L); label <- ifelse(nzchar(g$gene), g$gene, g$gene_id)
+      pretty <- function(set) tolower(gsub("_", " ", sub("^[A-Z]+_", "", set)))
+      bare <- character()
+      for (i in seq_len(nrow(g))) {
+        r <- lp$reactome[lp$reactome$gene == label[[i]], , drop = FALSE]
+        m <- lp$gene_sets[lp$gene_sets$gene == label[[i]], , drop = FALSE]
+        top <- r$pathway[r$top_level]
+        # Without a Reactome entry, name the gene's most specific (smallest) gene sets.
+        named <- if (length(top)) interp_join(top, ", ", max = 4) else if (nrow(m))
+          interp_join(pretty(m$gene_set[order(m$genes_in_set)]), ", ", max = 3) else "no pathway annotation"
+        if (!nrow(r) && !nrow(m)) { bare <- c(bare, label[[i]]); next }
+        finding <- c(finding, paste0(label[[i]], " (", g$relation[[i]], "): ", named))
+        evidence <- c(evidence, sprintf("%s: %d Reactome pathway(s), %d gene set(s)", label[[i]], nrow(r), nrow(m)))
+      }
+      if (length(bare)) evidence <- c(evidence, paste0("no pathway annotation: ", interp_join(bare, ", ")))
+      if (!length(finding)) finding <- "None of the linked genes has a pathway annotation in the local sources."
+      if (nrow(lp$genes) > 6L) evidence <- c(evidence, paste0(nrow(lp$genes) - 6L, " more linked gene(s) in the table"))
+      sources <- c(sources, lp$source)
+    }
+    if (!is.null(genes)) {
+      if (is.null(lp)) finding <- vapply(genes$genes$gene, function(gene) {
+        top <- unique(genes$pathways$top_level[genes$pathways$gene == gene])
+        paste0(gene, ": ", if (length(top)) interp_join(top, ", ", max = 5) else "no Reactome pathway")
+      }, character(1))
+      evidence <- c(evidence, sprintf("Open Targets, %s: %d Reactome pathway(s), %d GO term(s), %d associated disease(s)", genes$genes$gene,
+        vapply(genes$genes$gene, function(gene) sum(genes$pathways$gene == gene), integer(1)),
+        vapply(genes$genes$gene, function(gene) sum(genes$go$gene == gene), integer(1)), genes$genes$associated_diseases))
+      sources <- c(sources, "Reactome and GO via Open Targets")
+    }
+    rows[[6L]] <- interp_summary_row("Pathway", "Context", paste(finding, collapse = " · "), evidence, sources)
   }
 
   # 7. Tissue.

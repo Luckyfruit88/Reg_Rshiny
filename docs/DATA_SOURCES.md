@@ -34,7 +34,7 @@ An optional FASTA needs an existing `.fai`. An optional GENCODE input is either 
 
 ## Reference sources for Variant interpretation
 
-The Variant interpretation tab reads shared reference files on SCC (CADD, the Ensembl VEP cache, TOPMed and FHS QTL summary statistics, SpliceAI). They are not part of a dataset profile: defaults point at the lab's copies and each can be redirected with a `REGSHINY_*` variable in `config/runtime.Renviron`. A source that is not readable is skipped and listed as unavailable. See [Variant interpretation](INTERPRETATION.md#local-sources).
+The Variant interpretation tab reads shared reference files on SCC (CADD, the Ensembl VEP cache, TOPMed and FHS QTL summary statistics, the GWAS Catalog, ClinVar, Reactome and MSigDB gene sets, SpliceAI). They are not part of a dataset profile: defaults point at the lab's copies and each can be redirected with a `REGSHINY_*` variable in `config/runtime.Renviron`. A source that is not readable is skipped and listed as unavailable. See [Variant interpretation](INTERPRETATION.md#local-sources).
 
 ## Reuse and switch
 

@@ -12,6 +12,8 @@ It has three layers, in the order they appear.
 
 A public query sends the variant's chromosome, position, REF and ALT, and the Ensembl IDs of the genes it overlaps. No sample, genotype count, cohort name or result is sent. Answers are kept for the browser session and written only to the files you download.
 
+A button pressed while the local lookup is still loading waits for it and then starts; the line under the buttons says so. If another variant is selected before that, the request is dropped and nothing is sent.
+
 ## Transcript and protein consequences
 
 Computed in the app from the GENCODE release selected in the top bar and the dataset's reference FASTA, for every transcript within 5 kb.
@@ -36,6 +38,10 @@ Every path can be overridden in `config/runtime.Renviron`; a source that is miss
 | TOPMed multi-tissue cis-QTL | `REGSHINY_TOPMED_QTL` | cis-eQTL and cis-sQTL in lung, monocytes, nasal epithelium, PBMC, T cells and whole blood | tabix |
 | FHS whole-blood isoform-ratio sQTL | `REGSHINY_FHS_SQTL` (`discovery;replication`) | Rows with p < 1e-4, N about 2,622 and 1,093 | `look` |
 | FHS whole-blood gene eQTL | `REGSHINY_FHS_EQTL` | Rows with p < 1e-7, N about 2,622 | `look` |
+| GWAS Catalog associations (e114, 2025-07-21) | `REGSHINY_GWAS_CATALOG` | Published trait associations reported at the variant's position | tabix |
+| ClinVar VCF (2025-07-21) | `REGSHINY_CLINVAR_VCF` | Classification, review status and conditions of the exact allele | tabix |
+| Reactome gene-to-pathway mapping | `REGSHINY_REACTOME` | Pathways of the genes linked to the variant | `look` |
+| MSigDB gene sets (2026.1) | `REGSHINY_MSIGDB` (directory) | Hallmark, canonical pathways and GO biological process of those genes | read |
 | SpliceAI 1.3.1 | `REGSHINY_SPLICEAI` | Predicted splice-site gain and loss | SCC module wrapper |
 
 `REGSHINY_TABIX` names the tabix binary; without it the app uses the one on `PATH` or the newest `htslib` module on SCC. The local sources are GRCh38 only.
@@ -51,6 +57,24 @@ scripts/build_qtl_index.sh SOURCE.csv DEST.csv
 ```
 
 which only reads the source.
+
+**GWAS Catalog.** Every association the catalog reports at the variant's position, strongest first: trait, mapped ontology trait, p-value, effect, risk allele, study and PubMed ID. The catalog keys an association by rsID and position, not by allele; `risk_allele_is` says whether the reported risk allele is this variant's ALT, its REF, another allele or not reported. A p-value too small for a double is stored as 0 and shown as `< 1e-300`. The position-indexed copy is made once from the catalog's "all associations v1.0.2" file with
+
+```bash
+scripts/build_gwas_index.sh gwas_catalog_v1.0.2-associations_eNNN_rYYYY-MM-DD.tsv DEST.tsv.gz
+```
+
+Rows without a mapped position are left out and a row that reports several variants becomes one row each. Name the copy `..._eNNN_rYYYY-MM-DD...` so the release shows in the tab.
+
+**ClinVar.** The record of the exact REF/ALT allele from a tabix-indexed ClinVar VCF: germline classification, review status, conditions, gene and molecular consequence. Records of other alleles at the same position are counted and not shown. When the VCF is unreadable the older significance stored in the VEP cache (2023-10) is used; after a public query the per-condition records from MyVariant.info are shown instead.
+
+**Linked genes and pathways.** The genes a variant can act through are the ones it overlaps and the ones whose splicing or expression is significantly associated with it in a TOPMed context (`sQTL target`, `eQTL target`). For each, the tab lists its Reactome pathways (all levels; `top_level` marks Reactome's top-level pathways) and its MSigDB gene sets (Hallmark; canonical pathways from KEGG, WikiPathways, PID and BioCarta; GO biological process; `genes_in_set` is the set's size, smaller being more specific). Reactome is matched by Ensembl gene ID, MSigDB by gene symbol. The Reactome copy is made once with
+
+```bash
+scripts/build_pathway_index.sh Ensembl2Reactome_All_Levels.txt DEST.tsv
+```
+
+Pathways describe the gene. They do not show that the variant changes the pathway.
 
 **SpliceAI.** Runs the SCC module on a one-line VCF with the dataset's reference and a 500 bp window. Scores are the change in predicted splice-site probability (0 to 1); common cut-offs are 0.2 (permissive), 0.5 (recommended) and 0.8 (high precision). SpliceAI reports the exonic boundary base; `site_position` converts it to the intronic base next to the site, the coordinate used in Genotype association, and `annotated_site` says whether the selected GENCODE release has a site there. When the open result has a bin-ratio row for that site, it is shown beside the prediction. SpliceAI and its models are free for academic and not-for-profit use only.
 
@@ -84,8 +108,9 @@ Rules:
 - **Protein abundance (pQTL).** Strong: a cis pQTL credible set with posterior probability ≥ 0.9. Moderate: any pQTL credible set with posterior probability ≥ 0.1. Limited: in a credible set with less. Needs the public query.
 - **Splicing.** *Associated* means any of: a Model 1 row of the open result (bin ratio or junction) with permutation p below 0.05 divided by the number of fitted rows of its table, sites flagged `NO_DEPTH_DROP_AT_SITE` set aside; a significant TOPMed sQTL; an FHS isoform-ratio sQTL that replicates in cis; a GTEx sQTL. *Pinned to the variant* means any of: an essential splice-site term; SpliceAI ≥ 0.5; a TOPMed sQTL SuSiE probability ≥ 0.5; an Open Targets splicing or transcript-usage credible set with probability ≥ 0.5. Strong: associated and pinned. Moderate: associated, or predicted (essential site or SpliceAI ≥ 0.5), not both. Limited: a splice-region term or SpliceAI 0.2–0.5 only.
 - **Gene expression (eQTL).** Strong: a TOPMed or Open Targets eQTL credible set with posterior probability ≥ 0.5. Moderate: a significant eQTL in TOPMed, FHS, GTEx or Open Targets without that.
-- **Disease and traits.** Strong: ClinVar pathogenic or likely pathogenic with no benign assertion, or a GWAS credible set with posterior probability ≥ 0.5. Moderate: a GWAS posterior probability of 0.1–0.5, ClinVar risk factor, drug response, association or conflicting assertions, or a pharmacogenomic annotation. Limited: other ClinVar records, or GWAS credible sets with posterior probability below 0.1. Without the public query only the 2023-10 ClinVar snapshot is consulted, and an empty answer reads Not assessed.
-- **Pathway** and **Tissue** are Context lines: Reactome top-level pathways of the overlapped genes; where the QTL effect is seen and where the gene is expressed. This cohort's RNA is whole blood.
+- **Disease and traits.** Strong: ClinVar pathogenic or likely pathogenic with no benign assertion, or a GWAS credible set with posterior probability ≥ 0.5. Moderate: a GWAS Catalog association at p ≤ 5e-8 reported at the variant's position, a GWAS posterior probability of 0.1–0.5, ClinVar risk factor, drug response, association or conflicting assertions, or a pharmacogenomic annotation. Limited: other ClinVar records, GWAS Catalog associations above 5e-8 only, or GWAS credible sets with posterior probability below 0.1. A catalog association shows that the variant or a neighbour in linkage disequilibrium is associated, so on its own it stops at Moderate; fine-mapping needs the public query, and the card says when it was not run. None found needs both the local GWAS Catalog and a ClinVar source to have been read; otherwise an empty answer reads Not assessed.
+- **Pathway** is a Context line: for each linked gene, its Reactome top-level pathways, or its most specific gene sets when Reactome has none. It works without the public query; after one, Open Targets' counts for the overlapped genes are added.
+- **Tissue** is a Context line: where the QTL effect is seen and where the gene is expressed. This cohort's RNA is whole blood.
 
 What the levels are not: a clinical classification, a causal proof, or a replacement for reading the tables. A QTL association can be carried by a neighbour in linkage disequilibrium, which is why association alone stops at Moderate. Fine-mapping probabilities depend on the reference panel and the study. Model 1 is unadjusted for covariates and relatedness.
 

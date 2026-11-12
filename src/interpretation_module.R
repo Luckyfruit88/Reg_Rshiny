@@ -42,7 +42,7 @@ interpretation_ui <- function(id) {
       bslib::nav_panel("QTL by tissue",
         shiny::h5("TOPMed cis-QTL in six tissues and cell types"),
         shiny::uiOutput(ns("topmed_status")),
-        shiny::plotOutput(ns("context_plot"), height = 420),
+        shiny::plotOutput(ns("context_plot"), height = 400),
         DT::DTOutput(ns("heterogeneity")),
         shiny::p("One row per gene (eQTL) or intron (sQTL) that is significant in at least one context. Slopes are per ALT allele on normalised phenotypes, so they compare across contexts but not with Model 1. A pair is significant when its nominal p is below that gene's permutation threshold (FDR 5%). q_p_value and i_squared describe how much the slopes differ between contexts (Cochran's Q); the contexts share donors, so read them as descriptive. A context with few samples can miss an effect that is there."),
         shiny::h5("Tested pairs"),
@@ -53,10 +53,15 @@ interpretation_ui <- function(id) {
         DT::DTOutput(ns("fhs_table")),
         shiny::h5("GTEx v10 (public query)"),
         DT::DTOutput(ns("gtex_qtl")),
-        shiny::plotOutput(ns("expression_plot"), height = 430)),
+        shiny::plotOutput(ns("expression_plot"), height = 900)),
       bslib::nav_panel("Disease and traits",
         shiny::h5("ClinVar"),
+        shiny::uiOutput(ns("clinvar_source")),
         DT::DTOutput(ns("clinvar")),
+        shiny::h5("GWAS Catalog associations reported at this position"),
+        shiny::uiOutput(ns("catalog_status")),
+        DT::DTOutput(ns("catalog")),
+        shiny::p("Read from the local copy of the GWAS Catalog; nothing is sent. The catalog lists the variant each study reported, by rsID and position. risk_allele_is says whether the reported risk allele is this variant's ALT or REF. A reported association shows that the variant, or one in linkage disequilibrium with it, is associated with the trait; fine-mapping (below) is what singles a variant out."),
         shiny::h5("GWAS credible sets containing this variant (Open Targets)"),
         shiny::uiOutput(ns("gwas_status")),
         DT::DTOutput(ns("gwas")),
@@ -66,11 +71,19 @@ interpretation_ui <- function(id) {
         shiny::h5("Pharmacogenomics"),
         DT::DTOutput(ns("pgx"))),
       bslib::nav_panel("Protein, genes and pathways",
+        shiny::h5("Genes linked to this variant"),
+        DT::DTOutput(ns("linked_genes")),
+        shiny::p("overlaps: the variant lies in the gene. sQTL / eQTL target: the gene's splicing or expression is significantly associated with the variant in a TOPMed context. Pathways below are listed for each of these genes."),
+        shiny::h5("Reactome pathways of the linked genes (local)"),
+        DT::DTOutput(ns("local_reactome")),
+        shiny::h5("Gene sets of the linked genes (MSigDB, local)"),
+        DT::DTOutput(ns("local_gene_sets")),
+        shiny::p("top_level marks Reactome's top-level pathways. Gene sets are Hallmark, canonical pathways (KEGG, WikiPathways, PID, BioCarta) and GO biological process; genes_in_set is the size of the set, smaller sets being more specific."),
         shiny::h5("Protein and molecular QTL credible sets (Open Targets)"),
         DT::DTOutput(ns("ot_qtl")),
-        shiny::h5("Genes the variant falls in"),
+        shiny::h5("Genes the variant falls in (Open Targets)"),
         DT::DTOutput(ns("genes")),
-        shiny::h5("Reactome pathways"),
+        shiny::h5("Reactome pathways (Open Targets)"),
         DT::DTOutput(ns("pathways")),
         shiny::h5("Gene Ontology"),
         DT::DTOutput(ns("go")),
@@ -101,6 +114,28 @@ interpretation_summary_cards <- function(summary) {
   }))
 }
 
+# One table style for the tab: cells stay on one line (the table scrolls
+# sideways), long text gets a fixed-width wrapping block, p-values are shown in
+# scientific notation with "< 1e-300" for a stored zero, other numbers are
+# rounded to `digits` significant figures. Sorting uses the stored numbers.
+interpretation_p_columns <- function(names) grepl("^(p|q)_|^p$|_p$|_p_value$|^p_value$", names) & !grepl("log10", names)
+
+interpretation_datatable <- function(x, digits = 3L, page_length = 10L) {
+  numeric <- vapply(x, function(col) is.numeric(col) && !is.integer(col), logical(1))
+  p_col <- numeric & interpretation_p_columns(names(x))
+  x[numeric & !p_col] <- lapply(x[numeric & !p_col], function(col) signif(col, digits))
+  text <- vapply(x, function(col) is.character(col) || is.factor(col), logical(1))
+  defs <- list()
+  if (any(p_col)) defs[[length(defs) + 1L]] <- list(targets = unname(which(p_col)) - 1L, render = DT::JS(
+    "function(d, type) { if (type !== 'display' || d === null || d === '') return d; var v = Number(d); if (!isFinite(v)) return d;",
+    "  if (v === 0) return '&lt; 1e-300'; return (v < 1e-3) ? v.toExponential(2) : String(Number(v.toPrecision(3))); }"))
+  if (any(text)) defs[[length(defs) + 1L]] <- list(targets = unname(which(text)) - 1L, render = DT::JS(
+    "function(d, type) { return (type === 'display' && typeof d === 'string' && d.length > 48) ?",
+    "  '<span class=\"regshiny-cell-wrap\">' + d + '</span>' : d; }"))
+  DT::datatable(x, rownames = FALSE, selection = "none", class = "display nowrap",
+    options = list(pageLength = page_length, scrollX = TRUE, dom = if (nrow(x) > page_length) "ftip" else "t", columnDefs = defs))
+}
+
 # Slopes of the leading phenotypes in every context, with 95% intervals.
 interpretation_plot_contexts <- function(pairs, heterogeneity, max_panels = 4L) {
   if (is.null(pairs) || !nrow(pairs) || is.null(heterogeneity) || !nrow(heterogeneity)) {
@@ -108,28 +143,32 @@ interpretation_plot_contexts <- function(pairs, heterogeneity, max_panels = 4L) 
   }
   h <- utils::head(heterogeneity, max_panels)
   contexts <- unique(pairs$context)
-  old <- graphics::par(mfrow = c(1L, nrow(h)), mar = c(4.2, if (nrow(h) > 2L) 6.6 else 8.4, 3.6, 1), cex = .85)
-  on.exit(graphics::par(old))
+  # Context names are written once, beside the first panel, which is wider by that margin.
+  label_lines <- 9.5
+  graphics::layout(matrix(seq_len(nrow(h)), nrow = 1L), widths = c(1 + if (nrow(h) > 1L) .42 else 0, rep(1, nrow(h) - 1L)))
+  old <- graphics::par(cex = 1, cex.axis = .95, cex.lab = 1, mgp = c(2.3, .7, 0))
+  on.exit({ graphics::par(old); graphics::layout(1) })
   key <- paste(pairs$qtl_type, sub("^([^:]+:[0-9]+:[0-9]+):.*:(ENSG[^:]*)$", "\\1:\\2", pairs$phenotype))
   for (i in seq_len(nrow(h))) {
+    graphics::par(mar = c(4.4, if (i == 1L) label_lines else 1.2, 4.6, 1))
     x <- pairs[key == paste(h$qtl_type[[i]], h$phenotype[[i]]), , drop = FALSE]
     x <- x[match(contexts, x$context), , drop = FALSE]; y <- rev(seq_along(contexts))
     lo <- x$slope_alt - 1.96 * x$slope_se; hi <- x$slope_alt + 1.96 * x$slope_se
     lim <- range(c(0, lo, hi), na.rm = TRUE); if (!all(is.finite(lim))) lim <- c(-1, 1)
     graphics::plot(NA, xlim = lim + c(-.05, .05) * diff(lim), ylim = c(.5, length(contexts) + .5), yaxt = "n", ylab = "",
-      xlab = "Slope per ALT allele (95% CI)")
-    graphics::axis(2, at = y, labels = contexts, las = 1, cex.axis = .85)
-    graphics::abline(v = 0, lty = 2, col = "#888888")
-    graphics::segments(lo, y, hi, y, col = "#1F4E79", lwd = 1.6)
+      xlab = "Slope per ALT allele")
+    if (i == 1L) graphics::axis(2, at = y, labels = contexts, las = 1) else graphics::axis(2, at = y, labels = FALSE)
+    graphics::abline(h = y, col = "#EEEEEE"); graphics::abline(v = 0, lty = 2, col = "#888888")
+    graphics::segments(lo, y, hi, y, col = "#1F4E79", lwd = 2)
     significant <- x$significant %in% TRUE
-    graphics::points(x$slope_alt, y, pch = ifelse(significant, 19, 21), col = "#1F4E79", bg = "white", cex = 1.3)
+    graphics::points(x$slope_alt, y, pch = ifelse(significant, 19, 21), col = "#1F4E79", bg = "white", cex = 1.5)
     missing <- is.na(x$slope_alt)
-    if (any(missing)) graphics::text(mean(lim), y[missing], "not tested", cex = .8, col = "#777777")
-    gene <- if (nzchar(h$gene[[i]])) h$gene[[i]] else h$gene_id[[i]]
+    if (any(missing)) graphics::text(mean(lim), y[missing], "not tested", cex = .9, col = "#666666")
+    gene <- if (nzchar(h$gene[[i]])) h$gene[[i]] else sub("\\..*$", "", h$gene_id[[i]])
     intron <- if (h$qtl_type[[i]] == "sQTL") sub("^[^:]+:([0-9]+):([0-9]+):.*$", "intron \\1-\\2", h$phenotype[[i]]) else "expression"
-    graphics::title(main = paste0(h$qtl_type[[i]], " · ", gene), cex.main = .95, line = 2.1)
-    graphics::mtext(intron, side = 3, line = .9, cex = .68)
-    graphics::mtext("filled: significant", side = 3, line = .1, cex = .6, col = "#555555")
+    graphics::title(main = paste0(h$qtl_type[[i]], " \u00b7 ", gene), cex.main = 1, line = 3)
+    graphics::mtext(intron, side = 3, line = 1.7, cex = .85)
+    graphics::mtext("bar: 95% CI; filled: significant", side = 3, line = .5, cex = .78, col = "#555555")
   }
   invisible(h)
 }
@@ -138,7 +177,7 @@ interpretation_plot_expression <- function(expression, gene) {
   x <- expression[expression$gene == gene & is.finite(expression$median_tpm), , drop = FALSE]
   if (!nrow(x)) { graphics::plot.new(); graphics::text(.5, .5, "Run the public query to see GTEx expression by tissue"); return(invisible(NULL)) }
   x <- x[order(x$median_tpm), , drop = FALSE]
-  old <- graphics::par(mar = c(4.2, 15, 2.6, 1), cex = .72); on.exit(graphics::par(old))
+  old <- graphics::par(mar = c(4.2, 17, 2.6, 1), cex = .8); on.exit(graphics::par(old))
   graphics::barplot(x$median_tpm, names.arg = x$tissue, horiz = TRUE, las = 1, border = NA,
     col = ifelse(x$tissue == "Whole Blood", "#B7410E", "#7A9CC6"), xlab = "Median TPM (GTEx v10)",
     main = paste0(gene, " expression by tissue · whole blood in orange"))
@@ -204,6 +243,8 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
             names <- tryCatch(a$annotation_gene_names(annotation, out$local$topmed$pairs$gene_id), error = function(err) NULL)
             out$local$topmed$pairs <- e$interp_name_genes(out$local$topmed$pairs, names)
           }
+          if (!is.null(out$local)) out$local$pathways <- tryCatch(
+            e$interp_local_pathways(e$interp_linked_genes(out$consequences, out$local)), error = function(err) err)
           out
         }, error = function(err) err)
         list(key = key, value = value)
@@ -233,11 +274,19 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       }, seed = TRUE)
     })
     bslib::bind_task_button(public_task, "public")
-    shiny::observeEvent(input$public, {
-      x <- local_now()
+    # A click made while the local lookup is still loading waits for it instead
+    # of being dropped; a click for a variant that has since changed is dropped.
+    pending <- shiny::reactiveValues(public = NULL, spliceai = NULL)
+    local_ready <- shiny::reactive(tryCatch(local_now(), error = function(e) NULL))
+    shiny::observeEvent(input$public, pending$public <- variant_key())
+    shiny::observe({
+      wanted <- pending$public; x <- local_ready()
+      shiny::req(!is.null(wanted), !is.null(x))
+      pending$public <- NULL
+      if (!identical(wanted, shiny::isolate(variant_key()))) return()
       genic <- x$consequences[!x$consequences$most_severe %in% c("upstream_gene_variant", "downstream_gene_variant"), , drop = FALSE]
       genes <- unique(if (nrow(genic)) genic$gene_id else utils::head(x$consequences$gene_id, 3L))
-      public_task$invoke(variant_key(), x$variant, genes, interpretation_file)
+      public_task$invoke(wanted, x$variant, genes, interpretation_file)
     })
     shiny::observeEvent(public_task$status(), {
       if (public_task$status() != "success") return()
@@ -256,10 +305,14 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       }, seed = TRUE)
     })
     bslib::bind_task_button(spliceai_task, "spliceai")
-    shiny::observeEvent(input$spliceai, {
-      x <- local_now()
+    shiny::observeEvent(input$spliceai, pending$spliceai <- variant_key())
+    shiny::observe({
+      wanted <- pending$spliceai; x <- local_ready()
+      shiny::req(!is.null(wanted), !is.null(x))
+      pending$spliceai <- NULL
+      if (!identical(wanted, shiny::isolate(variant_key()))) return()
       fasta <- if (!is.null(reference) && !inherits(reference, "error")) reference$fasta else ""
-      spliceai_task$invoke(variant_key(), x$variant, fasta, interpretation_file)
+      spliceai_task$invoke(wanted, x$variant, fasta, interpretation_file)
     })
     shiny::observeEvent(spliceai_task$status(), {
       if (spliceai_task$status() != "success") return()
@@ -277,14 +330,11 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now())
     })
 
-    table_options <- list(pageLength = 10, scrollX = TRUE, dom = "ftip")
     show_table <- function(expr, digits = 3L, empty = "No rows.") DT::renderDT({
       x <- expr()
       shiny::validate(shiny::need(is.data.frame(x) && nrow(x) > 0L, empty))
-      numeric <- vapply(x, function(col) is.numeric(col) && !is.integer(col), logical(1))
-      x[numeric] <- lapply(x[numeric], function(col) signif(col, digits))
-      x
-    }, rownames = FALSE, selection = "none", options = table_options)
+      interpretation_datatable(x, digits)
+    })
 
     output$header <- shiny::renderUI({
       a <- alleles(); x <- local_now(); v <- x$variant
@@ -306,6 +356,9 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     })
     output$public_status <- shiny::renderUI({
       s <- public_task$status()
+      waiting <- c(if (!is.null(pending$public)) "the public query", if (!is.null(pending$spliceai)) "SpliceAI")
+      if (length(waiting)) return(shiny::div(class = "alert alert-info", paste0("Reading local sources first; ",
+        paste(waiting, collapse = " and "), " will start as soon as they are in.")))
       if (s == "running") return(shiny::div(class = "alert alert-info", "Querying Open Targets, GTEx and MyVariant.info..."))
       raw <- public_store()[[variant_key()]]
       if (s == "error" || inherits(raw, "error")) return(shiny::div(class = "alert alert-danger", "Public query failed: ",
@@ -381,7 +434,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
         " tested context-and-type combinations.", if (length(untested)) paste0(" Not tested (absent or below the frequency cut-off): ",
           paste(untested, collapse = ", "), ".") else ""))
     })
-    output$context_plot <- shiny::renderPlot(interpretation_plot_contexts(topmed_now()$pairs, heterogeneity_now()))
+    output$context_plot <- shiny::renderPlot(interpretation_plot_contexts(topmed_now()$pairs, heterogeneity_now()), res = 96)
     output$heterogeneity <- show_table(heterogeneity_now, empty = "This variant is not a significant cis-QTL in any TOPMed context.")
     output$topmed_pairs <- show_table(function() topmed_now()$pairs, empty = "This variant was not tested in the TOPMed cis-QTL runs.")
     fhs_now <- shiny::reactive({
@@ -414,15 +467,40 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       p <- public_now()
       if (is.null(p) || inherits(p$gtex, "error") || !nrow(p$gtex$expression)) return(interpretation_plot_expression(backend$interp_gtex_empty()$expression, ""))
       interpretation_plot_expression(p$gtex$expression, expression_gene())
+    }, res = 96)
+    local_part <- function(name) {
+      x <- local_now()
+      if (is.null(x$local) || is.null(x$local[[name]]) || inherits(x$local[[name]], "error")) NULL else x$local[[name]]
+    }
+    # ClinVar: the per-condition records of the public query when it was run,
+    # otherwise the local VCF, otherwise the older snapshot in the VEP cache.
+    clinvar_now <- shiny::reactive({
+      p <- public_now(); x <- local_now(); cv <- local_part("clinvar")
+      if (!is.null(p) && !inherits(p$myvariant, "error") && nrow(p$myvariant$clinvar))
+        return(list(source = "ClinVar via MyVariant.info (public query)", table = p$myvariant$clinvar))
+      if (!is.null(cv) && isTRUE(cv$found)) return(list(source = cv$source, table = cv$records))
+      known <- local_part("known")
+      if ((is.null(cv) || !isTRUE(cv$available)) && !is.null(known) && nzchar(known$clinvar_significance))
+        return(list(source = "ClinVar 2023-10 (Ensembl VEP 112 cache)",
+          table = data.frame(clinical_significance = known$clinvar_significance, stringsAsFactors = FALSE)))
+      list(source = if (!is.null(cv) && isTRUE(cv$available)) paste0(cv$source, if (cv$other_alleles > 0L)
+        paste0("; ", cv$other_alleles, " record(s) for other alleles at this position are not shown") else "") else "", table = NULL)
     })
-    output$clinvar <- show_table(function() {
-      p <- public_now(); x <- local_now()
-      if (!is.null(p) && !inherits(p$myvariant, "error") && nrow(p$myvariant$clinvar)) return(p$myvariant$clinvar)
-      known <- if (!is.null(x$local) && !inherits(x$local$known, "error")) x$local$known else NULL
-      if (!is.null(known) && nzchar(known$clinvar_significance))
-        return(data.frame(source = "ClinVar 2023-10 (Ensembl VEP 112 cache)", clinical_significance = known$clinvar_significance, stringsAsFactors = FALSE))
-      NULL
-    }, empty = "No ClinVar record for this allele in the sources consulted.")
+    output$clinvar_source <- shiny::renderUI({ src <- clinvar_now()$source; if (nzchar(src)) shiny::p(paste0("Source: ", src, ".")) })
+    output$clinvar <- show_table(function() clinvar_now()$table, empty = "No ClinVar record for this allele in the sources consulted.")
+    output$catalog_status <- shiny::renderUI({
+      g <- local_part("gwas_catalog")
+      if (is.null(g) || !isTRUE(g$available)) return(shiny::p("The local GWAS Catalog copy is not readable from this session (see scripts/build_gwas_index.sh)."))
+      a <- g$associations
+      shiny::p(paste0("GWAS Catalog ", g$release, ": ", nrow(a), " association(s) at this position", if (nrow(a)) paste0(", ",
+        sum(is.finite(a$p_value) & a$p_value <= 5e-8), " at p <= 5e-8, ", length(unique(a$pubmed)), " publication(s)") else "", "."))
+    })
+    output$catalog <- show_table(function() { g <- local_part("gwas_catalog"); if (is.null(g)) NULL else g$associations },
+      empty = "No GWAS Catalog association is reported at this position.")
+    pathways_part <- function(field) function() { lp <- local_part("pathways"); if (is.null(lp)) NULL else lp[[field]] }
+    output$linked_genes <- show_table(pathways_part("genes"), empty = "No gene overlaps the variant or is a significant QTL target of it.")
+    output$local_reactome <- show_table(pathways_part("reactome"), empty = "No Reactome pathway for the linked genes, or the local mapping is not readable.")
+    output$local_gene_sets <- show_table(pathways_part("gene_sets"), empty = "No MSigDB gene set for the linked genes, or the gene sets are not readable.")
     output$gwas_status <- shiny::renderUI({
       p <- public_now()
       if (is.null(p) || inherits(p$open_targets, "error") || !isTRUE(p$open_targets$found)) return(NULL)
@@ -449,7 +527,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       x <- local_now(); p <- public_store()[[variant_key()]]; s <- spliceai_now()
       cat("Variant:", x$variant$id, "\nGENCODE release:", if (is.null(x$release)) "unavailable" else x$release, "\n")
       cat("Reference base(s) at the variant:", x$reference_base, "\n")
-      if (!is.null(x$local)) for (n in c("cadd", "known", "fhs", "topmed")) if (inherits(x$local[[n]], "error"))
+      if (!is.null(x$local)) for (n in c("cadd", "known", "fhs", "topmed", "gwas_catalog", "clinvar", "pathways")) if (inherits(x$local[[n]], "error"))
         cat("Local source", n, "failed:", conditionMessage(x$local[[n]]), "\n")
       cat("Public query:", if (is.null(p)) "not run" else if (inherits(p, "error")) conditionMessage(p) else
         paste0("run at ", p$queried_at, "; sent variant ", p$variant, " and gene IDs ", paste(p$gene_ids, collapse = ", ")), "\n")

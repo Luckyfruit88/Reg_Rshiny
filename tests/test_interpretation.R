@@ -298,12 +298,18 @@ stopifnot(src$cadd_snv == "/tmp/custom_cadd.tsv.gz", identical(unname(src$fhs_sq
   identical(names(src$fhs_sqtl), c("discovery", "replication")))
 for (n in names(old_env)) if (is.na(old_env[[n]])) Sys.unsetenv(n) else do.call(Sys.setenv, stats::setNames(list(old_env[[n]]), n))
 none <- list(tabix = "", look = "", cadd_snv = "/missing", cadd_indel = "/missing", vep_cache = "/missing", topmed_qtl = "/missing",
-  fhs_sqtl = c(discovery = "/missing", replication = "/missing"), fhs_eqtl = "/missing", spliceai = "/missing")
+  fhs_sqtl = c(discovery = "/missing", replication = "/missing"), fhs_eqtl = "/missing", gwas_catalog = "/missing",
+  clinvar_vcf = "/missing", reactome = "/missing", msigdb = "/missing", spliceai = "/missing")
 status <- interp_local_status(none)
-stopifnot(nrow(status) == 6L, !any(status$available))
+stopifnot(nrow(status) == 10L, !any(status$available))
+# A source list written before a source existed simply reports it as unavailable.
+stopifnot(!any(interp_local_status(none[c("tabix", "look", "cadd_snv", "cadd_indel", "vep_cache", "topmed_qtl", "fhs_sqtl", "fhs_eqtl", "spliceai")])$available))
 gone <- interp_local_evidence(v, none)
 stopifnot(!gone$cadd$available, !gone$known$available, !gone$fhs$sqtl_available, !gone$fhs$eqtl_available, !gone$topmed$available,
-  !nrow(gone$topmed$pairs), !nrow(gone$fhs$sqtl))
+  !nrow(gone$topmed$pairs), !nrow(gone$fhs$sqtl), !gone$gwas_catalog$available, !gone$clinvar$available,
+  !nrow(gone$gwas_catalog$associations), !nrow(gone$clinvar$records))
+no_paths <- interp_local_pathways(data.frame(gene_id = "ENSG1", gene = "G", relation = "overlaps", stringsAsFactors = FALSE), none)
+stopifnot(!no_paths$available, !nrow(no_paths$reactome), !nrow(no_paths$gene_sets))
 
 # Replication needs the same transcript and direction in both sets.
 sq <- data.frame(set = c("discovery", "replication", "discovery", "replication", "discovery"), feature = c("T1", "T1", "T2", "T2", "T3"),
@@ -423,6 +429,15 @@ s4 <- interp_evidence_summary(intronic, broken, list(open_targets = simpleError(
 stopifnot(level(s4, "Protein abundance (pQTL)") == "Not assessed", level(s4, "Gene expression (eQTL)") == "Not assessed",
   level(s4, "Disease and traits") == "Not assessed", level(s4, "Tissue") == "Not assessed")
 
+# Genes the variant can act through: overlapped genes first, QTL targets after, one row per gene.
+lg_pairs <- rbind(pair("sQTL", "Lung", "chr1:10:90:clu_5_+:ENSGPLUS.1", 2, .1, 1e-50, TRUE, "ENSGPLUS.1"), pair("eQTL", "Lung", "ENSG9.2", .5, .05, 1e-20, TRUE, "ENSG9.2"),
+  pair("eQTL", "PBMC", "ENSG9.2", .5, .05, 1e-20, TRUE, "ENSG9.2"), pair("eQTL", "Lung", "ENSG8.1", .1, .05, .04, FALSE, "ENSG8.1"))
+lg_pairs$gene[lg_pairs$gene_id == "ENSG9.2"] <- "NINE"
+lg <- interp_linked_genes(missense, list(topmed = list(available = TRUE, pairs = lg_pairs)))
+stopifnot(nrow(lg) == 3L, identical(lg$gene, c("PARTIAL", "PLUS", "NINE")), lg$gene_id[[2L]] == "ENSGPLUS",
+  lg$relation[[1L]] == "overlaps", lg$relation[[2L]] == "overlaps; sQTL target (TOPMed)", lg$relation[[3L]] == "eQTL target (TOPMed)",
+  !"ENSG8" %in% lg$gene_id, nrow(interp_linked_genes(interp_empty_consequences())) == 0L, nrow(interp_linked_genes(missense)) == 2L)
+
 # ---- Sorted-file lookup and tabix-backed sources ----------------------------
 work <- tempfile("regshiny_interp_"); dir.create(work, mode = "0700")
 if (nzchar(Sys.which("look"))) {
@@ -435,6 +450,34 @@ if (nzchar(Sys.which("look"))) {
   stopifnot(f$sqtl_available, f$eqtl_available, nrow(f$sqtl) == 4L, nrow(f$eqtl) == 2L, f$eqtl$gene[[1L]] == "GENEA", f$eqtl$cis[[1L]],
     !f$eqtl$cis[[2L]], f$eqtl$beta_alt[[1L]] == .2, f$eqtl$alt_frequency[[1L]] == .1, f$eqtl$n[[1L]] == 2622L,
     !nrow(interp_fhs_qtl(interp_variant("chr1", 10L, "G", "A"), srcs)$eqtl), !nrow(interp_fhs_qtl(interp_variant("chr1", 100L, "G", "T"), srcs)$eqtl))
+  # Reactome mapping through its build script, and MSigDB gene sets.
+  raw <- file.path(work, "Ensembl2Reactome_All_Levels.txt")
+  writeLines(c("ENSG00000000002\tR-HSA-9\turl\tSignal Transduction\tIEA\tHomo sapiens", "ENSMUSG00000000001\tR-MMU-1\turl\tMetabolism\tIEA\tMus musculus",
+    "ENSG00000000001\tR-HSA-2\turl\tSphingolipid metabolism\tTAS\tHomo sapiens", "ENSG00000000001\tR-HSA-1\turl\tMetabolism\tTAS\tHomo sapiens",
+    "ENSG00000000001\tR-HSA-1\turl\tMetabolism\tIEA\tHomo sapiens", "P12345\tR-HSA-1\turl\tMetabolism\tTAS\tHomo sapiens"), raw)
+  reactome <- file.path(work, "pathway", "reactome.tsv")
+  built <- system2("bash", c("scripts/build_pathway_index.sh", shQuote(raw), shQuote(reactome)), stdout = TRUE, stderr = TRUE)
+  stopifnot(file.exists(reactome), length(readLines(reactome)) == 4L, grepl("genes: 2", built[[length(built)]], fixed = TRUE),
+    grepl("up to date", system2("bash", c("scripts/build_pathway_index.sh", shQuote(raw), shQuote(reactome)), stdout = TRUE), fixed = TRUE))
+  msig <- file.path(work, "msigdb"); dir.create(msig)
+  writeLines(c("HALLMARK_ONE\turl\tGENEA\tGENEB\tGENEC", "HALLMARK_TWO\turl\tGENEB"), file.path(msig, "h.all.v2099.1.Hs.symbols.gmt"))
+  writeLines(c("WP_SMALL\turl\tGENEA\tX1", "REACTOME_DROPPED\turl\tGENEA", "KEGG_BIG\turl\tGENEA\tX1\tX2\tX3"), file.path(msig, "c2.cp.v2099.1.Hs.symbols.gmt"))
+  srcs$reactome <- reactome; srcs$msigdb <- msig
+  linked <- data.frame(gene_id = c("ENSG00000000001", "ENSG00000000003", "ENSG00000000002"), gene = c("GENEA", "", "GENEAB"),
+    relation = c("overlaps", "eQTL target (TOPMed)", "sQTL target (TOPMed)"), stringsAsFactors = FALSE)
+  lp <- interp_local_pathways(linked, srcs)
+  stopifnot(lp$available, lp$reactome_available, lp$msigdb_available, nrow(lp$reactome) == 3L,
+    # Top-level pathways first; the two evidence codes of one pathway are merged.
+    identical(lp$reactome$pathway[lp$reactome$gene == "GENEA"], c("Metabolism", "Sphingolipid metabolism")), lp$reactome$top_level[[1L]],
+    !lp$reactome$top_level[[2L]], lp$reactome$evidence[[1L]] == "IEA, TAS", lp$reactome$gene[[3L]] == "GENEAB",
+    # Whole-symbol match only, Reactome sets left to the mapping, smaller sets first within a collection.
+    identical(lp$gene_sets$gene_set, c("HALLMARK_ONE", "WP_SMALL", "KEGG_BIG")), identical(lp$gene_sets$genes_in_set, c(3L, 2L, 4L)),
+    identical(lp$gene_sets$collection, c("Hallmark", "Canonical pathways", "Canonical pathways")), grepl("MSigDB 2099.1", lp$source[[2L]], fixed = TRUE))
+  st <- interp_local_status(srcs)
+  stopifnot(st$available[st$source == "Reactome gene-to-pathway mapping"], st$available[st$source == "MSigDB gene sets"])
+  sp <- interp_evidence_summary(interp_empty_consequences(), list(pathways = lp))
+  stopifnot(level(sp, "Pathway") == "Context", grepl("GENEA (overlaps): Metabolism", sp$finding[sp$question == "Pathway"], fixed = TRUE),
+    grepl("no pathway annotation: ENSG00000000003", sp$evidence[sp$question == "Pathway"], fixed = TRUE))
 } else if (native) stop("--native needs look")
 tabix <- interp_local_sources()$tabix; bgzip <- file.path(dirname(tabix), "bgzip")
 if (nzchar(tabix) && file.exists(bgzip)) {
@@ -508,8 +551,62 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   hh <- interp_context_heterogeneity(t$pairs)
   stopifnot(hh$contexts_tested[hh$qtl_type == "eQTL"] == 3L, hh$contexts_significant[hh$qtl_type == "eQTL"] == "Lung, Whole blood")
   stopifnot(!nrow(interp_topmed_qtl(interp_variant("chr1", 100L, "G", "T"), srcs)$pairs))
+  # GWAS Catalog through its build script: columns found by name, multi-variant rows split, unmapped rows dropped.
+  catalog_cols <- c("PUBMEDID", "FIRST AUTHOR", "DATE", "DISEASE/TRAIT", "INITIAL SAMPLE SIZE", "CHR_ID", "CHR_POS", "MAPPED_GENE",
+    "STRONGEST SNP-RISK ALLELE", "SNPS", "RISK ALLELE FREQUENCY", "P-VALUE", "PVALUE_MLOG", "OR or BETA", "95% CI (TEXT)", "MAPPED_TRAIT", "STUDY ACCESSION")
+  catalog_row <- function(chr, pos, allele, snp, trait, p, mlog, effect = "") paste("1", "Author A", "2020-01-01", trait, "1,000 cases", chr, pos, "GENEA",
+    allele, snp, "0.1", p, mlog, effect, "[1.1-1.3]", tolower(trait), "GCST1", sep = "\t")
+  raw <- file.path(work, "gwas.tsv")
+  writeLines(c(paste(catalog_cols, collapse = "\t"), catalog_row("1", "100", "rs1-A", "rs1", "Weak trait", "3E-6", "5.52"),
+    catalog_row("1", "100", "rs1-G", "rs1", "Strong trait", "1E-400", "400", "1.2"), catalog_row("1", "100", "rs1-?", "rs1", "Middle trait", "2E-9", "8.7"),
+    catalog_row("1;2", "100;300", "rs1-A; rs5-T", "rs1; rs5", "Pair trait", "5E-8", "7.3"), catalog_row("", "", "rs7-A", "rs7", "Unmapped", "1E-9", "9"),
+    catalog_row("X", "50", "rs8-C", "rs8", "Other place", "1E-9", "9")), raw)
+  catalog <- file.path(work, "disease", "gwas_catalog_e999_r2099-01-01.b38.tsv.gz")
+  built <- system2("bash", c("scripts/build_gwas_index.sh", shQuote(raw), shQuote(catalog)), stdout = TRUE, stderr = TRUE,
+    env = c(paste0("BGZIP=", bgzip), paste0("TABIX=", tabix)))
+  stopifnot(file.exists(catalog), file.exists(paste0(catalog, ".tbi")), grepl("rows: 6", built[[length(built)]], fixed = TRUE))
+  srcs$gwas_catalog <- catalog
+  g <- interp_gwas_catalog(v, srcs)
+  stopifnot(g$available, g$found, g$release == "e999_r2099-01-01", nrow(g$associations) == 4L,
+    # Strongest first by the stored -log10 p; a p-value below double precision is kept as 0.
+    identical(g$associations$trait, c("Strong trait", "Middle trait", "Pair trait", "Weak trait")), g$associations$p_value[[1L]] == 0,
+    identical(g$associations$risk_allele_is, c("REF", "not reported", "ALT", "ALT")), g$associations$effect[[1L]] == 1.2,
+    g$associations$rs_id[[3L]] == "rs1", g$associations$mapped_gene[[1L]] == "GENEA", g$associations$pubmed[[1L]] == "1")
+  far <- interp_gwas_catalog(interp_variant("chr1", 101L, "G", "A"), srcs)
+  stopifnot(far$available, !far$found, interp_gwas_catalog(interp_variant("chr2", 300L, "C", "T"), srcs)$associations$rs_id == "rs5",
+    interp_gwas_catalog(interp_variant("chrX", 50L, "A", "C"), srcs)$associations$risk_allele_is == "ALT")
+  # ClinVar VCF: this exact allele only; other alleles at the position are counted, not shown.
+  clinvar <- file.path(work, "disease", "clinvar.vcf.gz")
+  index(c("##fileformat=VCFv4.1", "##fileDate=2099-02-03", "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+    "1\t100\t11\tG\tA\t.\t.\tCLNDN=Disease_one|not_provided;CLNREVSTAT=criteria_provided,_single_submitter;CLNSIG=Pathogenic/Likely_pathogenic;GENEINFO=GENEA:1;MC=SO:0001583|missense_variant;RS=1",
+    "1\t100\t12\tG\tC\t.\t.\tCLNDN=Disease_two;CLNREVSTAT=no_assertion_criteria_provided;CLNSIG=Benign",
+    "1\t100\t13\tGT\tG\t.\t.\tCLNSIG=Uncertain_significance"), clinvar, c("-p", "vcf"))
+  srcs$clinvar_vcf <- clinvar
+  cv <- interp_clinvar_local(v, srcs)
+  stopifnot(cv$available, cv$found, nrow(cv$records) == 1L, cv$records$variation_id == "11", cv$records$clinical_significance == "Pathogenic/Likely pathogenic",
+    cv$records$conditions == "Disease one; not provided", cv$records$review_status == "criteria provided, single submitter", cv$records$gene == "GENEA",
+    cv$records$molecular_consequence == "missense variant", cv$records$rs_id == "rs1", cv$other_alleles == 2L, cv$file_date == "2099-02-03",
+    cv$source == "ClinVar VCF 2099-02-03 (local)")
+  none_here <- interp_clinvar_local(interp_variant("chr1", 100L, "G", "T"), srcs)
+  stopifnot(none_here$available, !none_here$found, none_here$other_alleles == 3L, interp_clinvar_local(interp_variant("chr1", 100L, "GT", "G"), srcs)$found)
+  # Disease level from local sources alone.
+  disease <- function(local) { s <- interp_evidence_summary(missense, local); s[s$question == "Disease and traits", ] }
+  d1 <- disease(list(clinvar = cv, gwas_catalog = g))
+  stopifnot(d1$level == "Strong", grepl("ClinVar: pathogenic, likely pathogenic for Disease one", d1$evidence, fixed = TRUE),
+    grepl("GWAS Catalog: 4 association(s) reported at this position, 3 at p <= 5e-8, 4 distinct trait(s)", d1$evidence, fixed = TRUE),
+    grepl("not consulted: public query not run", d1$evidence, fixed = TRUE), grepl("ClinVar VCF 2099-02-03 (local); GWAS Catalog e999_r2099-01-01", d1$sources, fixed = TRUE))
+  # A published association at the variant is Moderate; below genome-wide significance, Limited.
+  stopifnot(disease(list(clinvar = none_here, gwas_catalog = g))$level == "Moderate")
+  weak_only <- g; weak_only$associations <- g$associations[g$associations$trait == "Weak trait", ]
+  stopifnot(disease(list(clinvar = none_here, gwas_catalog = weak_only))$level == "Limited")
+  # Both local sources consulted and empty: None found, naming what was read. One of them missing: Not assessed.
+  d0 <- disease(list(clinvar = none_here, gwas_catalog = far))
+  stopifnot(d0$level == "None found", grepl("ClinVar VCF 2099-02-03 (local), GWAS Catalog e999_r2099-01-01", d0$finding, fixed = TRUE),
+    disease(list(clinvar = none_here))$level == "Not assessed", disease(list(gwas_catalog = far))$level == "Not assessed",
+    grepl("Only GWAS Catalog", disease(list(gwas_catalog = far))$finding, fixed = TRUE))
   st <- interp_local_status(srcs)
-  stopifnot(st$available[st$source == "CADD v1.7"], st$available[st$source == "TOPMed multi-tissue cis-QTL"], !st$available[st$source == "SpliceAI 1.3.1"])
+  stopifnot(st$available[st$source == "CADD v1.7"], st$available[st$source == "TOPMed multi-tissue cis-QTL"], !st$available[st$source == "SpliceAI 1.3.1"],
+    st$available[st$source == "GWAS Catalog"], st$available[st$source == "ClinVar VCF"])
 } else if (native) stop("--native needs tabix and bgzip") else cat("tabix/bgzip not found: indexed-source checks skipped\n")
 unlink(work, recursive = TRUE)
 cat("interpretation backend tests passed\n")

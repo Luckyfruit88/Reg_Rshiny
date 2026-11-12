@@ -112,3 +112,8 @@
 .regshiny-level-none { background: #eceff1; color: #37474f; border-color: #90a4ae; }
 .regshiny-level-context { background: #e3ecf7; color: #1f4e79; border-color: #1f4e79; }
 .regshiny-level-unknown { background: #fff; color: #5c6670; border-color: #90a4ae; border-style: dashed; }
+
+/* Interpretation tables keep one line per row; long text wraps inside a fixed-width block. */
+.regshiny-cell-wrap { display: inline-block; white-space: normal; min-width: 20rem; max-width: 32rem; vertical-align: top; }
+/* Splice-site list in the sidebar: long flags wrap instead of widening the panel. */
+.regshiny-site-list { padding-inline-start: 1.1rem; font-size: 0.875em; overflow-wrap: anywhere; }

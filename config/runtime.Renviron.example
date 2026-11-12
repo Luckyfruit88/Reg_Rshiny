@@ -20,3 +20,7 @@ REGSHINY_FULL_WALLTIME=12:00:00
 # REGSHINY_FHS_SQTL=/path/to/discovery.csv;/path/to/replication.csv
 # REGSHINY_FHS_EQTL=/path/to/position_sorted_gene_eqtl.csv
 # REGSHINY_SPLICEAI=/path/to/spliceai
+# REGSHINY_GWAS_CATALOG=/path/to/gwas_catalog_eNNN_rYYYY-MM-DD.b38.tsv.gz   (scripts/build_gwas_index.sh)
+# REGSHINY_CLINVAR_VCF=/path/to/clinvar.vcf.gz                              (bgzip + tabix -p vcf)
+# REGSHINY_REACTOME=/path/to/reactome_ensembl_all_levels.human.tsv          (scripts/build_pathway_index.sh)
+# REGSHINY_MSIGDB=/path/to/msigdb/release_directory
