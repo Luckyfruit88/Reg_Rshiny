@@ -1420,6 +1420,11 @@ variant_retry_waits <- function() {
   if (!is.numeric(x) || anyNA(x) || any(x < 0) || length(x) > 5L) stop("Invalid sample retry waits.")
   x
 }
+# Samples handed to the workers in one go. Within a chunk a worker takes the
+# next sample as soon as it finishes one, so no worker waits for the slowest
+# sample of a fixed batch; progress and the streamed aggregate advance once per
+# chunk. A single worker keeps one sample per step, as before.
+variant_dispatch_chunk <- function(workers) if (workers <= 1L) 1L else as.integer(workers) * 8L
 variant_transient_error <- function(e)
   inherits(e, c("regshiny_tool_failure", "rlib_error", "system_command_error"))
 
@@ -1560,7 +1565,10 @@ analyze_variant_all <- function(resources, variant, cfg, progress_file = NULL,
     }
     list(contribution = contribution, reused = reused, invalidated = invalidated, attempts = attempts)
   }
-  batches <- split(seq_len(nrow(selected)), ceiling(seq_len(nrow(selected)) / workers))
+  # Sample workers are forked from this process and inherit these answers.
+  warm_tool_facts()
+  chunk <- variant_dispatch_chunk(workers)
+  batches <- split(seq_len(nrow(selected)), ceiling(seq_len(nrow(selected)) / chunk))
   for (batch in batches) {
     completed <- if (workers == 1L) lapply(batch, compute_one) else
       parallel::mclapply(batch, compute_one, mc.cores = min(workers, length(batch)),
@@ -1594,7 +1602,7 @@ analyze_variant_all <- function(resources, variant, cfg, progress_file = NULL,
     progress$group_summary[[field]][[g]] <- progress$group_summary[[field]][[g]] + 1L
     }
     publish_progress()
-    # Only at most 'workers' compact contributions are held between batches.
+    # Only at most one chunk of compact contributions is held at a time.
     completed <- contribution <- entry <- NULL
   }
   if (!identical(info$state, variant_file_state(info$state$path)))
@@ -1611,6 +1619,7 @@ analyze_variant_all <- function(resources, variant, cfg, progress_file = NULL,
                      max_per_group = NULL, max_total = NULL, replacement_on_failure = FALSE),
     fingerprint = fingerprint, code_identity = binding$code,
     execution = list(workers = workers, allocated_slots = if (is.na(slots)) NULL else slots,
+                     dispatch_chunk = chunk,
                      sample_retry = list(max_attempts = length(variant_retry_waits()) + 1L,
                        retried_samples = progress$retried,
                        rule = "Only tool/I-O failures (non-zero exit, timeout) are retried; validation failures are not."),
