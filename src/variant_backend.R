@@ -265,7 +265,7 @@ variant_association_gates <- function(min_samples = 3L, min_denominator_reads = 
                                       perfect_fit_rel_tol = 1e-10, p_display_floor = 1e-300,
                                       conf_level = 0.95, n_permutations = 10000L,
                                       permutation_seed = 20261111L, caution_group_samples = 20L,
-                                      caution_nonzero_fraction = 0.05)
+                                      caution_nonzero_fraction = 0.05, caution_depth_drop = 0.1)
   list(min_samples = as.integer(min_samples), min_denominator_reads = min_denominator_reads,
        min_nonzero_samples = as.integer(min_nonzero_samples),
        min_total_exact_reads = min_total_exact_reads, min_mac = as.integer(min_mac),
@@ -276,7 +276,8 @@ variant_association_gates <- function(min_samples = 3L, min_denominator_reads = 
        conf_level = conf_level, n_permutations = as.integer(n_permutations),
        permutation_seed = as.integer(permutation_seed),
        caution_group_samples = as.integer(caution_group_samples),
-       caution_nonzero_fraction = caution_nonzero_fraction)
+       caution_nonzero_fraction = caution_nonzero_fraction,
+       caution_depth_drop = caution_depth_drop)
 
 # Display form of p- and q-values: values below the floor (including values
 # that underflow to 0) are shown as "< 1e-300", never as 0.
@@ -556,7 +557,7 @@ variant_bin_ratio_gates <- function(min_exon_reads = variant_bin_ratio_defaults(
   g$min_exon_reads <- as.integer(min_exon_reads)
   g[c("min_samples", "min_exon_reads", "min_mac", "min_group_samples", "min_groups",
       "perfect_fit_rel_tol", "p_display_floor", "conf_level", "n_permutations",
-      "permutation_seed", "caution_group_samples")]
+      "permutation_seed", "caution_group_samples", "caution_depth_drop")]
 }
 
 variant_empty_bin_sites <- function() data.frame(site_id = character(), chrom = character(),
@@ -728,10 +729,37 @@ variant_empty_bin_ratio_association <- function() data.frame(site_id = character
   n_below_min_exon = integer(), n = integer(), n_dosage0 = integer(), n_dosage1 = integer(),
   n_dosage2 = integer(), mac = integer(), mean_exon_count_dosage0 = numeric(),
   mean_exon_count_dosage1 = numeric(), mean_exon_count_dosage2 = numeric(), mean_ratio_dosage0 = numeric(),
-  mean_ratio_dosage1 = numeric(), mean_ratio_dosage2 = numeric(), beta = numeric(), se = numeric(),
+  mean_ratio_dosage1 = numeric(), mean_ratio_dosage2 = numeric(), depth_drop_dosage0 = numeric(),
+  depth_drop_dosage1 = numeric(), depth_drop_dosage2 = numeric(), beta = numeric(), se = numeric(),
   ci_low = numeric(), ci_high = numeric(), t_value = numeric(), p_value = numeric(),
   log10_p_value = numeric(), q_value_bh = numeric(), p_permutation = numeric(),
   p_genotype_3level = numeric(), caution = character(), status = character(), stringsAsFactors = FALSE)
+
+# Depth drop across each site itself, per ALT dosage: 1 - mean depth at the
+# first intronic base / mean depth at the last exonic base, from the saved
+# genotype-group mean depth (all strands; groups with the same dosage are
+# weighted by their analysed samples). The two bases are adjacent, so unlike
+# the bins this cannot pick up another splice site. NA without exon-base depth.
+variant_site_depth_drop <- function(result, sites) {
+  out <- matrix(NA_real_, nrow(sites), 3L, dimnames = list(NULL, paste0("depth_drop_dosage", 0:2)))
+  d <- result$depth
+  if (!nrow(sites) || !is.data.frame(d) || !all(c("genotype", "pos1", "mean_depth", "analyzed_n") %in% names(d))) return(out)
+  n_alt <- length(strsplit(as.character(result$variant$alt[[1L]]), ",", fixed = TRUE)[[1L]])
+  forward <- (sites$splice_site_type == "donor") == (sites$strand == "+")
+  intron_base <- sites$splice_site_position
+  exon_base <- intron_base + ifelse(forward, -1L, 1L)
+  d <- d[d$pos1 %in% c(intron_base, exon_base) & is.finite(d$mean_depth) & d$analyzed_n > 0, , drop = FALSE]
+  d$dosage <- variant_genotype_dosage(d$genotype, n_alt)
+  depth_at <- function(pos, dose) {
+    x <- d[d$pos1 == pos & d$dosage %in% dose, , drop = FALSE]
+    if (nrow(x)) sum(x$mean_depth * x$analyzed_n) / sum(x$analyzed_n) else NA_real_
+  }
+  for (i in seq_len(nrow(sites))) for (dose in 0:2) {
+    exon <- depth_at(exon_base[[i]], dose); intron <- depth_at(intron_base[[i]], dose)
+    if (is.finite(exon) && is.finite(intron) && exon > 0) out[i, dose + 1L] <- 1 - intron / exon
+  }
+  out
+}
 
 # Model 1 for the bin ratio, one row per site: OLS of ratio ~ additive ALT
 # dosage over successful samples with a biallelic diploid dosage and at least
@@ -754,6 +782,12 @@ variant_bin_ratio_association <- function(result, gates = NULL) {
   s$dosage <- variant_genotype_dosage(s$genotype, n_alt)
   s <- s[is.finite(s$dosage), , drop = FALSE]
   check <- variant_bin_check(sites, settings$intron_width, settings$exon_width)
+  # A site where depth does not fall in any dosage group is not used as a splice
+  # site in these samples: its bins then count reads of neighbouring sites.
+  drop <- variant_site_depth_drop(result, sites)
+  min_drop <- if (is.null(gates$caution_depth_drop)) variant_association_gates()$caution_depth_drop else gates$caution_depth_drop
+  flat <- apply(drop, 1L, function(v) any(is.finite(v)) && max(v, na.rm = TRUE) < min_drop)
+  check <- ifelse(!flat, check, ifelse(check == "OK", "NO_DEPTH_DROP_AT_SITE", paste(check, "NO_DEPTH_DROP_AT_SITE", sep = ";")))
   group_mean <- function(v, x, d) if (any(x == d)) mean(v[x == d]) else NA_real_
   n_perm <- 0L
   rows <- lapply(seq_len(nrow(sites)), function(i) {
@@ -804,6 +838,7 @@ variant_bin_ratio_association <- function(result, gates = NULL) {
       mean_exon_count_dosage2 = group_mean(exon[keep], x, 2),
       mean_ratio_dosage0 = group_mean(y, x, 0), mean_ratio_dosage1 = group_mean(y, x, 1),
       mean_ratio_dosage2 = group_mean(y, x, 2),
+      depth_drop_dosage0 = drop[i, 1L], depth_drop_dosage1 = drop[i, 2L], depth_drop_dosage2 = drop[i, 3L],
       beta = fit$beta, se = fit$se, ci_low = fit$ci_low, ci_high = fit$ci_high, t_value = fit$t_value,
       p_value = fit$p_value, log10_p_value = fit$log10_p_value, q_value_bh = NA_real_,
       p_permutation = p_perm, p_genotype_3level = p3, caution = caution,

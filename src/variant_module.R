@@ -155,6 +155,23 @@ plot_variant_depth <- function(r, cfg, cols, normalized = NULL) {
   invisible(d)
 }
 
+# Panel subtitle that stays inside its panel: the text is shrunk (down to
+# min_cex) when it is wider than the room around the plot centre, so
+# neighbouring panels of a multi-panel plot never overlap. mtext() centres on
+# the plot region and its sizes are absolute; strwidth() scales with
+# par("cex"), hence the division.
+variant_fit_mtext <- function(text, line, cex = .85, min_cex = .5, font = 1L) {
+  if (!length(text) || !nzchar(text)) return(invisible(NA_real_))
+  width <- graphics::strwidth(text, units = "inches", cex = cex / graphics::par("cex"), font = font)
+  room <- .97 * (graphics::par("pin")[[1L]] + 2 * min(graphics::par("mai")[c(2L, 4L)]))
+  if (width > room) cex <- max(min_cex, cex * room / width)
+  graphics::mtext(text, side = 3, line = line, cex = cex, font = font)
+  invisible(cex)
+}
+
+# Panels per row for the per-site and per-junction dosage plots.
+variant_panel_columns <- function(n) min(3L, max(1L, as.integer(n)))
+
 # Model 1 bin ratio, drawn from the same samples and values the model fits:
 # per-sample ratio of the analysed samples by ALT dosage, their mean per dosage
 # (mean_ratio_dosage*) and the fitted OLS line (beta). Points beyond the 1st-99th
@@ -163,19 +180,33 @@ plot_bin_ratio_by_dosage <- function(samples, association) {
   sites <- association$site_id
   n_perm <- attr(association, "permutation")$n_permutations
   if (!length(sites)) { graphics::plot.new(); graphics::text(.5, .5, "No splice-site bin ratio for this result"); return(invisible(NULL)) }
-  old <- graphics::par(mfrow = c(1L, length(sites)), mar = c(4.1, 4.1, 3.6, 1.1)); on.exit(graphics::par(old))
-  for (i in seq_along(sites)) {
+  # Per panel: the analysed samples, the dosage means and the y range.
+  panels <- lapply(seq_along(sites), function(i) {
     a <- association[i, , drop = FALSE]
     s <- samples[samples$site_id == sites[[i]] & samples$in_model, , drop = FALSE]
-    if (!nrow(s)) { graphics::plot.new(); graphics::title(sites[[i]], cex.main = .8)
-      graphics::text(.5, .5, "No sample passed the exon-read threshold"); next }
     means <- c(a$mean_ratio_dosage0, a$mean_ratio_dosage1, a$mean_ratio_dosage2)
-    lim <- range(c(stats::quantile(s$ratio, c(.01, .99), names = FALSE), means), na.rm = TRUE)
+    lim <- if (nrow(s)) range(c(stats::quantile(s$ratio, c(.01, .99), names = FALSE), means), na.rm = TRUE) else c(0, 1)
     if (diff(lim) == 0) lim <- lim + c(-.5, .5)
-    y <- pmin(pmax(s$ratio, lim[[1L]]), lim[[2L]]); clipped <- sum(y != s$ratio)
+    list(a = a, s = s, means = means, lim = lim, clipped = sum(s$ratio < lim[[1L]] | s$ratio > lim[[2L]]))
+  })
+  # Lines above each panel: site, model result, its caveats and, only when some
+  # panel needs it, a line for clipped points and the depth-drop flag.
+  no_drop <- if ("bin_check" %in% names(association)) grepl("NO_DEPTH_DROP_AT_SITE", association$bin_check, fixed = TRUE) else
+    rep(FALSE, length(sites))
+  extra <- vapply(seq_along(sites), function(i) paste(c(
+    if (panels[[i]]$clipped) paste(panels[[i]]$clipped, "beyond axis"),
+    if (no_drop[[i]]) "NO_DEPTH_DROP_AT_SITE"), collapse = " · "), character(1))
+  up <- if (any(nzchar(extra))) 1.05 else 0
+  cols <- variant_panel_columns(length(sites))
+  old <- graphics::par(mfrow = c(ceiling(length(sites) / cols), cols), mar = c(4.1, 4.1, 4.6 + up, 1.1)); on.exit(graphics::par(old))
+  for (i in seq_along(sites)) {
+    a <- panels[[i]]$a; s <- panels[[i]]$s; means <- panels[[i]]$means; lim <- panels[[i]]$lim
+    if (!nrow(s)) { graphics::plot.new(); variant_fit_mtext(sites[[i]], 2.6 + up, 1, font = 2L)
+      graphics::text(.5, .5, "No sample passed the exon-read threshold"); next }
+    y <- pmin(pmax(s$ratio, lim[[1L]]), lim[[2L]])
     graphics::plot(NA, xlim = c(-.5, 2.5), ylim = lim, xaxt = "n", xlab = "ALT dosage (analysed samples)",
       ylab = "1 - intron reads / exon reads")
-    graphics::title(main = sites[[i]], line = 1.9, cex.main = 1.2)
+    variant_fit_mtext(sites[[i]], 2.6 + up, 1, font = 2L)
     graphics::axis(1, at = 0:2, labels = paste0(0:2, "\nn=", c(a$n_dosage0, a$n_dosage1, a$n_dosage2)), padj = .5)
     graphics::points(s$dosage + ((seq_len(nrow(s)) * .618034) %% 1 - .5) / 2, y, pch = 16, cex = .45,
                      col = grDevices::adjustcolor("gray30", .25))
@@ -185,10 +216,10 @@ plot_bin_ratio_by_dosage <- function(samples, association) {
       ybar <- sum(c(a$n_dosage0, a$n_dosage1, a$n_dosage2) * ifelse(is.na(means), 0, means)) / a$n
       graphics::abline(a = ybar - a$beta * xbar, b = a$beta, col = "#7570b3", lwd = 2)
     }
-    graphics::mtext(paste0(a$status, if (is.finite(a$beta)) paste0(" · beta ", signif(a$beta, 3)) else "",
-      if (is.finite(a$p_value)) paste0(" · p ", variant_format_p_label(a$p_value)) else "",
-      variant_perm_label(a, n_perm),
-      if (clipped) paste0(" · ", clipped, " beyond axis") else ""), side = 3, line = .3, cex = .85)
+    variant_fit_mtext(paste0(a$status, if (is.finite(a$beta)) paste0(" · beta ", signif(a$beta, 3)) else "",
+      if (is.finite(a$p_value)) paste0(" · p ", variant_format_p_label(a$p_value)) else ""), 1.4 + up)
+    variant_fit_mtext(sub("^ · ", "", variant_perm_label(a, n_perm)), .3 + up)
+    variant_fit_mtext(extra[[i]], .3)
   }
 }
 
@@ -199,8 +230,8 @@ plot_junction_rate_by_dosage <- function(association, top = 6L) {
   a <- association[association$status == "OK", , drop = FALSE]
   a <- utils::head(a[order(a$log10_p_value), , drop = FALSE], top)
   if (!nrow(a)) { graphics::plot.new(); graphics::text(.5, .5, "No junction boundary pair was fitted (status OK)"); return(invisible(NULL)) }
-  cols <- min(3L, nrow(a))
-  old <- graphics::par(mfrow = c(ceiling(nrow(a) / cols), cols), mar = c(4.6, 4.6, 3.4, 1.1)); on.exit(graphics::par(old))
+  cols <- variant_panel_columns(nrow(a))
+  old <- graphics::par(mfrow = c(ceiling(nrow(a) / cols), cols), mar = c(4.6, 4.6, 4.6, 1.1)); on.exit(graphics::par(old))
   for (i in seq_len(nrow(a))) {
     r <- a[i, , drop = FALSE]
     n <- c(r$n_dosage0, r$n_dosage1, r$n_dosage2); m <- c(r$mean_rate_dosage0, r$mean_rate_dosage1, r$mean_rate_dosage2)
@@ -209,11 +240,11 @@ plot_junction_rate_by_dosage <- function(association, top = 6L) {
     lim <- range(c(m, fit), na.rm = TRUE); if (diff(lim) == 0) lim <- lim + c(-.5, .5)
     graphics::plot(0:2, m, xlim = c(-.5, 2.5), ylim = lim + c(-.08, .08) * diff(lim), pch = 23, bg = "#d95f02", cex = 1.6,
       xaxt = "n", xlab = "ALT dosage", ylab = "Exact reads per 100 denominator reads")
-    graphics::title(main = paste0(r$intron_start1, "-", r$intron_end1, " (", r$strands, ")"), line = 1.9, cex.main = 1.2)
+    variant_fit_mtext(paste0(r$intron_start1, "-", r$intron_end1, " (", r$strands, ")"), 2.6, 1, font = 2L)
     graphics::axis(1, at = 0:2, labels = paste0(0:2, "\nn=", n), padj = .5)
     graphics::abline(a = ybar - r$beta * xbar, b = r$beta, col = "#7570b3", lwd = 2)
-    graphics::mtext(paste0("beta ", signif(r$beta, 3), " · p ", variant_format_p_label(r$p_value), variant_perm_label(r, n_perm)),
-      side = 3, line = .3, cex = .85)
+    variant_fit_mtext(paste0("beta ", signif(r$beta, 3), " · p ", variant_format_p_label(r$p_value)), 1.4)
+    variant_fit_mtext(sub("^ · ", "", variant_perm_label(r, n_perm)), .3)
   }
 }
 
@@ -1181,7 +1212,9 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           tags$code(a$site_id[[i]]), ": ", tags$strong(a$status[[i]]), "; ", a$n[[i]], " of ", a$n_successful[[i]],
           " successful samples analysed; ", a$n_below_min_exon[[i]], " had fewer than ", g$min_exon_reads,
           " exon-bin reads (", a$n_both_zero[[i]], " with no reads in either bin).",
-          if (a$bin_check[[i]] != "OK") tags$span(class = "text-warning", " Bin check: ", a$bin_check[[i]], ".") else NULL)),
+          if (a$bin_check[[i]] != "OK") tags$span(class = "text-warning", " Bin check: ", a$bin_check[[i]], ".") else NULL,
+          if (grepl("NO_DEPTH_DROP_AT_SITE", a$bin_check[[i]], fixed = TRUE)) tags$span(class = "text-warning",
+            " Depth does not fall across this site in any dosage group, so its ratio reflects other splice sites inside its bins, not this site.") else NULL)),
         caution_note(a),
         if (!identical(result_mode(), "all")) " Exploratory preview subset: p-values describe only the capped samples." else "")
     })
@@ -1197,7 +1230,9 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           " bp of exon. Strands: ", x$strand_rule, ". ratio = 1 − intron reads / exon reads; negative values are kept."),
         p("ratio_mean_all_dosage0/1/2 average every successful sample with a usable dosage; samples with no reads in either bin are coded 0 and samples with intron reads only are NA. They include samples below the exon-read threshold, whose per-sample ratios are unstable (for example 1 − 12/1 = −11), so they can differ from mean_ratio_dosage0/1/2. They are descriptive only and are not plotted. ",
           "The model uses samples with at least ", g$min_exon_reads, " exon-bin reads; mean_ratio_dosage0/1/2 and mean_exon_count_dosage0/1/2 describe those samples."),
-        p("bin_check compares the bins with the release that listed the sites (", variant_sites_release(x), ") and lists every flag that applies (separated by ;). EXON_SHORTER_THAN_BIN or INTRON_SHORTER_THAN_BIN: the shortest bordering exon or intron in any transcript is shorter than the bin, so the bin reaches past it. EXON_NOT_ANNOTATED: no bordering exon was found. EXON_BIN_IN_OTHER_TRANSCRIPT_INTRON or INTRON_BIN_IN_OTHER_TRANSCRIPT_EXON: the exon bin overlaps an intron, or the intron bin an exon, of another same-strand transcript, so the ratio mixes isoforms. OTHER_TRANSCRIPTS_NOT_CHECKED: that overlap is unknown (result saved before the check; rerun to check)."),
+        p("bin_check compares the bins with the release that listed the sites (", variant_sites_release(x), ") and lists every flag that applies (separated by ;). EXON_SHORTER_THAN_BIN or INTRON_SHORTER_THAN_BIN: the shortest bordering exon or intron in any transcript is shorter than the bin, so the bin reaches past it. EXON_NOT_ANNOTATED: no bordering exon was found. EXON_BIN_IN_OTHER_TRANSCRIPT_INTRON or INTRON_BIN_IN_OTHER_TRANSCRIPT_EXON: the exon bin overlaps an intron, or the intron bin an exon, of another same-strand transcript, so the ratio mixes isoforms. OTHER_TRANSCRIPTS_NOT_CHECKED: that overlap is unknown (result saved before the check; rerun to check). NO_DEPTH_DROP_AT_SITE: depth_drop is below ",
+          g$caution_depth_drop, " in every dosage group, so the samples do not splice at this site and its bins count reads of neighbouring sites."),
+        p("depth_drop_dosage0/1/2 = 1 − mean depth at the first intronic base / mean depth at the last exonic base, from the genotype-group mean depth (all strands). The two bases are adjacent, so the value belongs to this site alone: near 1 when almost every read leaves at the site, near 0 when reads run through it. A bin is wider: a read counts when it overlaps the bin by 1 bp, so annotated sites closer together than the bin width share most of their reads and give similar ratios. Compare the ratio with depth_drop before reading it as evidence for one site; for a per-sample model of close sites, rerun with bins narrower than the distance between them."),
         p(tags$strong("Status rules, in order (no p-value unless OK):")),
         tags$ul(
           item("TOO_FEW_SAMPLES", paste0("fewer than ", g$min_samples, " analysed samples.")),
@@ -1220,7 +1255,8 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         options = list(dom = "t", scrollX = TRUE, paging = FALSE)),
         c("ratio_mean_all_dosage0", "ratio_mean_all_dosage1", "ratio_mean_all_dosage2",
           "mean_exon_count_dosage0", "mean_exon_count_dosage1", "mean_exon_count_dosage2",
-          "mean_ratio_dosage0", "mean_ratio_dosage1", "mean_ratio_dosage2", "beta", "se", "ci_low", "ci_high",
+          "mean_ratio_dosage0", "mean_ratio_dosage1", "mean_ratio_dosage2",
+          "depth_drop_dosage0", "depth_drop_dosage1", "depth_drop_dosage2", "beta", "se", "ci_low", "ci_high",
           "t_value", "log10_p_value") |> signif_columns(a = a), 4)
     })
     bin_ratio_samples <- reactive({
@@ -1231,11 +1267,14 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
     output$bin_ratio_plot_ui <- renderUI({
       a <- bin_ratio_association()
       req(!inherits(a, "error"), nrow(a) > 0L)
-      # About 480 px per site keeps one panel from stretching across the page.
+      # At most three panels per row, about 480 px each, so a panel neither
+      # stretches across the page nor gets too narrow for its labels.
+      cols <- variant_panel_columns(nrow(a))
       bslib::card(class = "regshiny-figure", full_screen = TRUE,
         bslib::card_header("Bin ratio by ALT dosage · samples analysed by Model 1"),
-        div(style = sprintf("max-width: %dpx;", 480L * nrow(a)), plotOutput(session$ns("bin_ratio_plot"), height = 360)),
-        bslib::card_footer("Points: per-sample ratio of the samples Model 1 analyses (exon-bin reads at or above the threshold), jittered by ALT dosage. Diamonds: mean_ratio_dosage0/1/2. Line: fitted OLS slope (beta). Points beyond the 1st–99th percentile are drawn at the axis edge and counted above the panel."))
+        div(style = sprintf("max-width: %dpx;", 480L * cols),
+            plotOutput(session$ns("bin_ratio_plot"), height = 360L * ceiling(nrow(a) / cols))),
+        bslib::card_footer("Points: per-sample ratio of the samples Model 1 analyses (exon-bin reads at or above the threshold), jittered by ALT dosage. Diamonds: mean_ratio_dosage0/1/2. Line: fitted OLS slope (beta). Points beyond the 1st–99th percentile are drawn at the axis edge and counted above the panel. NO_DEPTH_DROP_AT_SITE: depth does not fall across that site, so its ratio reflects neighbouring sites (see bin_check)."))
     })
     output$bin_ratio_plot <- renderPlot(plot_bin_ratio_by_dosage(bin_ratio_samples(), bin_ratio_association()))
     output$association_plot_ui <- renderUI({
