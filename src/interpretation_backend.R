@@ -847,6 +847,8 @@ interp_local_sources <- function() {
     clinvar_vcf = env("REGSHINY_CLINVAR_VCF", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/disease/clinvar_2025-07-21.GRCh38.vcf.gz")),
     reactome = env("REGSHINY_REACTOME", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/pathway/reactome_ensembl_all_levels_2026-09-22.human.tsv")),
     msigdb = env("REGSHINY_MSIGDB", "/restricted/projectnb/cbmhive/MSigDB/2026.1.Hs"),
+    tissue_model = c(eQTL = env("REGSHINY_TISSUE_MODEL_EQTL", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/topmed_qtl/tissue_model/tissue_sharing_eqtl.json")),
+      sQTL = env("REGSHINY_TISSUE_MODEL_SQTL", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/topmed_qtl/tissue_model/tissue_sharing_sqtl.json"))),
     spliceai = env("REGSHINY_SPLICEAI", "/share/pkg.8/spliceai/1.3.1/install/bin/spliceai"))
 }
 
@@ -862,6 +864,8 @@ interp_local_status <- function(sources = interp_local_sources()) {
       tabix && dir.exists(sources$vep_cache), sources$vep_cache),
     row("TOPMed multi-tissue cis-QTL", "cis-eQTL and cis-sQTL in lung, monocytes, nasal epithelium, PBMC, T cells and whole blood",
       tabix && dir.exists(file.path(sources$topmed_qtl, "cis-eqtl", "nominal")), sources$topmed_qtl),
+    row("Cross-context sharing model", "Model trained on TOPMed lead cis-QTLs: effect and its certainty in each context (scripts/train_tissue_model.R)",
+      length(sources$tissue_model) > 0L && any(vapply(sources$tissue_model, interp_readable, logical(1))), sources$tissue_model),
     row("FHS whole-blood isoform-ratio sQTL", "Discovery and replication sets, p < 1e-4",
       nzchar(sources$look) && all(vapply(sources$fhs_sqtl, interp_readable, logical(1))), sources$fhs_sqtl),
     row("FHS whole-blood gene eQTL", "Combined set, p < 1e-7 (position-sorted copy)",
@@ -1765,8 +1769,12 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     if (nrow(h)) {
       h <- head(h, 4L)
       what <- ifelse(h$qtl_type == "sQTL", sub("^[^:]+:([0-9]+):([0-9]+):.*$", " intron \\1-\\2", h$phenotype), "")
-      evidence <- c(evidence, sprintf("TOPMed %s %s%s: %s", h$qtl_type, ifelse(nzchar(h$gene), h$gene, h$gene_id), what, h$pattern))
-      sources <- c(sources, "TOPMed cis-QTL (6 contexts)")
+      # The trained cross-context model's reading of the same gene or intron, when a model is available.
+      tissue <- if (interp_ok(local) && interp_ok(local$tissue) && isTRUE(local$tissue$available)) local$tissue$phenotypes else NULL
+      modelled <- if (!is.null(tissue) && nrow(tissue)) tissue$summary[match(paste(h$qtl_type, h$phenotype), paste(tissue$qtl_type, tissue$phenotype))] else rep(NA_character_, nrow(h))
+      evidence <- c(evidence, sprintf("TOPMed %s %s%s: %s%s", h$qtl_type, ifelse(nzchar(h$gene), h$gene, h$gene_id), what, h$pattern,
+        ifelse(is.na(modelled), "", paste0("; model: ", modelled))))
+      sources <- c(sources, "TOPMed cis-QTL (6 contexts)", if (any(!is.na(modelled))) "cross-context model")
     }
   }
   if (!is.null(gtex) && nrow(gtex$qtl)) {
@@ -1792,4 +1800,295 @@ interp_name_genes <- function(pairs, names) {
   pairs$gene <- names$gene_name[match(interp_bare_gene(pairs$gene_id), interp_bare_gene(names$gene_id))]
   pairs$gene[is.na(pairs$gene)] <- ""
   pairs
+}
+# ---- Cross-context sharing model ---------------------------------------------
+# An empirical-Bayes model of how a cis-QTL effect is shared between contexts,
+# in the manner of multivariate adaptive shrinkage (Urbut et al. 2019). For one
+# variant-phenotype pair with estimates x_hat and standard errors s in the
+# contexts where it was tested,
+#   x_hat ~ N(x, S V S),   x ~ pi_0 * delta_0 + sum_kl pi_kl * N(0, w_l^2 * U_k)
+# S = diag(s). V is the correlation of the estimates between contexts when there
+# is no effect (shared donors); U_k are patterns of sharing (the same in all
+# contexts, one context only, patterns learned from the strongest signals);
+# w_l is a grid of effect sizes. A model works on one of two scales:
+#   "slope": x is the per-allele slope, so contexts share effect sizes;
+#   "z":     x is slope / s and S is the identity, so contexts share z-scores.
+# scripts/train_tissue_model.R learns V, the learned U_k and pi from the TOPMed
+# cis-QTL files and keeps the scale that predicts held-out pairs better; the
+# functions here are used both there and at view time. A context that was not
+# tested is left out of the likelihood.
+
+interp_mash_grid <- function(scale = "z") if (identical(scale, "slope")) 2^(seq(-10, 3) / 2) else 2^(seq(-2, 12) / 2)
+
+# Fixed sharing patterns for R contexts.
+interp_mash_canonical <- function(contexts) {
+  r <- length(contexts)
+  out <- list(identity = diag(r), equal_effects = matrix(1, r, r))
+  for (rho in c(.25, .5, .75)) { u <- matrix(rho, r, r); diag(u) <- 1; out[[paste0("simple_het_", rho)]] <- u }
+  for (i in seq_len(r)) { u <- matrix(0, r, r); u[i, i] <- 1; out[[paste0("only_", contexts[[i]])]] <- u }
+  lapply(out, function(u) { dimnames(u) <- list(contexts, contexts); u })
+}
+
+# Class of a pattern, for reporting which kind carries the posterior weight.
+interp_mash_class <- function(name) ifelse(name == "null", "no effect", ifelse(startsWith(name, "only_"), "one context",
+  ifelse(name %in% c("equal_effects") | startsWith(name, "simple_het_"), "shared", ifelse(name == "identity", "independent", "learned"))))
+
+interp_mash_model <- function(contexts, V, U, pi = NULL, grid = interp_mash_grid(scale), meta = list(), scale = "z") {
+  r <- length(contexts)
+  stopifnot(scale %in% c("z", "slope"), is.matrix(V), all(dim(V) == r), length(U) > 0L,
+    all(vapply(U, function(u) is.matrix(u) && all(dim(u) == r), logical(1))))
+  n <- length(U) * length(grid) + 1L
+  if (is.null(pi)) pi <- rep(1 / n, n)
+  stopifnot(length(pi) == n, all(pi >= 0), abs(sum(pi) - 1) < 1e-6)
+  structure(list(contexts = contexts, scale = scale, V = V, U = U, grid = grid, pi = pi, meta = meta), class = "regshiny_tissue_model")
+}
+
+# Component index: 1 is the null, then every pattern k at every scale l.
+interp_mash_components <- function(model) data.frame(index = seq_along(model$pi),
+  pattern = c("null", rep(names(model$U), each = length(model$grid))), scale = c(0, rep(model$grid, times = length(model$U))),
+  stringsAsFactors = FALSE)
+
+interp_mash_logdmvnorm <- function(X, S) {
+  # Rows of X ~ N(0, S); returns one log density per row.
+  ch <- chol(S)
+  y <- backsolve(ch, t(X), transpose = TRUE)
+  -0.5 * colSums(y^2) - sum(log(diag(ch))) - 0.5 * ncol(X) * log(2 * pi)
+}
+
+# Sampling covariance of the estimates in the tested contexts `o`.
+interp_mash_noise <- function(model, o, se = NULL) {
+  v <- model$V[o, o, drop = FALSE]
+  if (identical(model$scale, "slope")) v * outer(se[o], se[o]) else v
+}
+
+# n x components matrix of log-likelihoods. X is n x R with NA for untested
+# contexts; SE (same shape) is needed by a slope-scale model.
+interp_mash_loglik <- function(X, model, SE = NULL) {
+  X <- as.matrix(X); comps <- interp_mash_components(model); n <- nrow(comps)
+  out <- matrix(NA_real_, nrow(X), n)
+  prior <- lapply(seq_len(n)[-1L], function(j) comps$scale[[j]]^2 * model$U[[comps$pattern[[j]]]])
+  if (identical(model$scale, "slope")) {
+    stopifnot(!is.null(SE), all(dim(SE) == dim(X)))
+    for (i in seq_len(nrow(X))) {
+      o <- which(is.finite(X[i, ]) & is.finite(SE[i, ]))
+      if (!length(o)) { out[i, ] <- 0; next }
+      x <- matrix(X[i, o], 1L); noise <- interp_mash_noise(model, o, SE[i, ])
+      out[i, 1L] <- interp_mash_logdmvnorm(x, noise)
+      for (j in seq_len(n)[-1L]) out[i, j] <- interp_mash_logdmvnorm(x, noise + prior[[j - 1L]][o, o, drop = FALSE])
+    }
+    return(out)
+  }
+  # z scale: the covariance depends only on which contexts were tested.
+  pattern <- apply(is.finite(X), 1L, function(x) paste(which(x), collapse = ","))
+  for (p in unique(pattern)) {
+    rows <- which(pattern == p); o <- as.integer(strsplit(p, ",", fixed = TRUE)[[1L]])
+    if (!length(o)) { out[rows, ] <- 0; next }
+    x <- X[rows, o, drop = FALSE]; noise <- interp_mash_noise(model, o)
+    out[rows, 1L] <- interp_mash_logdmvnorm(x, noise)
+    for (j in seq_len(n)[-1L]) out[rows, j] <- interp_mash_logdmvnorm(x, noise + prior[[j - 1L]][o, o, drop = FALSE])
+  }
+  out
+}
+
+# Mixture weights by EM on a likelihood matrix. null_weight > 1 is a penalty
+# that favours "no effect" when the data do not decide, as in ashr.
+interp_mash_fit_pi <- function(loglik, null_weight = 10, iterations = 500L, tolerance = 1e-7) {
+  lik <- exp(loglik - apply(loglik, 1L, max))
+  k <- ncol(lik); pi <- rep(1 / k, k); prior <- c(null_weight, rep(1, k - 1L)) - 1
+  objective <- -Inf
+  for (i in seq_len(iterations)) {
+    w <- sweep(lik, 2L, pi, `*`); total <- rowSums(w)
+    new <- sum(log(total)) + sum(prior * log(pmax(pi, 1e-300)))
+    pi <- colSums(w / total) + prior; pi <- pi / sum(pi)
+    if (abs(new - objective) < tolerance * abs(new)) break
+    objective <- new
+  }
+  pi
+}
+
+# Posterior of the true effect in every context of the model for one pair, on
+# the model's scale. One row per context: for a tested context the re-estimated
+# effect, for an untested one what the tested contexts imply. lfsr is the local
+# false sign rate: the posterior probability that the effect is absent or has
+# the other sign.
+interp_mash_posterior <- function(x_hat, model, se = NULL) {
+  r <- length(model$contexts); comps <- interp_mash_components(model)
+  slope <- identical(model$scale, "slope")
+  o <- which(is.finite(x_hat) & (if (slope) is.finite(se) & se > 0 else TRUE))
+  out <- data.frame(context = model$contexts, tested = seq_len(r) %in% o, estimate = as.numeric(x_hat), posterior_mean = NA_real_,
+    posterior_sd = NA_real_, p_positive = NA_real_, p_negative = NA_real_, lfsr = NA_real_, stringsAsFactors = FALSE)
+  if (!length(o)) return(list(contexts = out, weights = data.frame(class = character(), weight = numeric(), stringsAsFactors = FALSE),
+    top_single = NULL, log_bf = NA_real_))
+  x <- x_hat[o]; noise <- interp_mash_noise(model, o, se)
+  n <- nrow(comps); ll <- numeric(n); mu <- matrix(0, n, r); va <- matrix(0, n, r)
+  ll[[1L]] <- interp_mash_logdmvnorm(matrix(x, 1L), noise)
+  for (j in seq_len(n)[-1L]) {
+    P <- comps$scale[[j]]^2 * model$U[[comps$pattern[[j]]]]
+    S <- noise + P[o, o, drop = FALSE]
+    ll[[j]] <- interp_mash_logdmvnorm(matrix(x, 1L), S)
+    A <- P[, o, drop = FALSE] %*% solve(S)
+    mu[j, ] <- A %*% x
+    va[j, ] <- pmax(0, diag(P) - rowSums(A * P[, o, drop = FALSE]))
+  }
+  lw <- log(pmax(model$pi, 1e-300)) + ll; w <- exp(lw - max(lw)); w <- w / sum(w)
+  mean <- colSums(w * mu); second <- colSums(w * (va + mu^2))
+  sd <- sqrt(va); positive <- ifelse(sd > 0, stats::pnorm(mu / ifelse(sd > 0, sd, 1)), 0)
+  negative <- ifelse(sd > 0, stats::pnorm(-mu / ifelse(sd > 0, sd, 1)), 0)
+  out$posterior_mean <- mean; out$posterior_sd <- sqrt(pmax(0, second - mean^2))
+  out$p_positive <- colSums(w * positive); out$p_negative <- colSums(w * negative)
+  out$lfsr <- pmin(1, pmax(0, 1 - pmax(out$p_positive, out$p_negative)))
+  class <- interp_mash_class(comps$pattern)
+  weights <- stats::aggregate(weight ~ class, data.frame(class = class, weight = w, stringsAsFactors = FALSE), sum)
+  # The single one-context pattern with the most weight, if any.
+  one <- tapply(w[class == "one context"], comps$pattern[class == "one context"], sum)
+  list(contexts = out, weights = weights[order(-weights$weight), , drop = FALSE],
+    top_single = if (length(one)) list(context = sub("^only_", "", names(one)[[which.max(one)]]), weight = max(one)) else NULL,
+    # Bayes factor of "some effect" against "no effect in any tested context".
+    log_bf = max(lw[-1L]) + log(sum(exp(lw[-1L] - max(lw[-1L])))) - log(max(sum(model$pi[-1L]), 1e-300)) - ll[[1L]])
+}
+
+# What the other contexts predict for the observed estimate of context `leave`
+# (which must be tested). Used to check the model on pairs it was not fitted on.
+interp_mash_predict_left_out <- function(x_hat, model, leave, se = NULL) {
+  slope <- identical(model$scale, "slope")
+  tested <- which(is.finite(x_hat) & (if (slope) is.finite(se) & se > 0 else TRUE))
+  o <- setdiff(tested, leave); comps <- interp_mash_components(model)
+  noise <- interp_mash_noise(model, seq_along(model$contexts), if (slope) ifelse(is.finite(se), se, 1) else NULL)
+  if (!length(o)) return(c(mean = 0, sd = sqrt(noise[leave, leave])))
+  x <- x_hat[o]; n <- nrow(comps); ll <- numeric(n); mu <- numeric(n); va <- numeric(n)
+  for (j in seq_len(n)) {
+    total <- noise + if (j == 1L) 0 else comps$scale[[j]]^2 * model$U[[comps$pattern[[j]]]]
+    S <- total[o, o, drop = FALSE]
+    ll[[j]] <- interp_mash_logdmvnorm(matrix(x, 1L), S)
+    a <- total[leave, o, drop = FALSE] %*% solve(S)
+    mu[[j]] <- a %*% x; va[[j]] <- max(0, total[leave, leave] - sum(a * total[leave, o]))
+  }
+  lw <- log(pmax(model$pi, 1e-300)) + ll; w <- exp(lw - max(lw)); w <- w / sum(w)
+  m <- sum(w * mu)
+  c(mean = m, sd = sqrt(max(0, sum(w * (va + mu^2)) - m^2)))
+}
+
+# Correlation of z between contexts among pairs with no sign of an effect
+# (|z| < 2 in both), from pairs chosen without looking at their p-values.
+interp_mash_null_correlation <- function(Z, threshold = 2, min_pairs = 50L) {
+  r <- ncol(Z); V <- diag(r)
+  for (i in seq_len(r - 1L)) for (j in (i + 1L):r) {
+    keep <- is.finite(Z[, i]) & is.finite(Z[, j]) & abs(Z[, i]) < threshold & abs(Z[, j]) < threshold
+    if (sum(keep) >= min_pairs) V[i, j] <- V[j, i] <- stats::cor(Z[keep, i], Z[keep, j])
+  }
+  interp_mash_nearest_pd(V, keep_diagonal = TRUE)
+}
+
+interp_mash_nearest_pd <- function(M, floor = 1e-6, keep_diagonal = FALSE) {
+  e <- eigen((M + t(M)) / 2, symmetric = TRUE)
+  out <- e$vectors %*% diag(pmax(e$values, floor), nrow(M)) %*% t(e$vectors)
+  if (keep_diagonal) { d <- sqrt(diag(out)); out <- out / outer(d, d) }
+  dimnames(out) <- dimnames(M); out
+}
+
+# Sharing patterns learned from the strongest signals: the second moment of
+# their estimates with the sampling noise removed, and its leading directions.
+# SE is given for slope-scale estimates and left out for z-scores.
+interp_mash_learned <- function(X, V, contexts, SE = NULL, n_directions = 3L) {
+  r <- ncol(X); M <- matrix(0, r, r)
+  for (i in seq_len(r)) for (j in i:r) {
+    keep <- is.finite(X[, i]) & is.finite(X[, j])
+    noise <- if (is.null(SE)) V[i, j] else V[i, j] * mean(SE[keep, i] * SE[keep, j])
+    M[i, j] <- M[j, i] <- if (sum(keep) > 1L) mean(X[keep, i] * X[keep, j]) - noise else 0
+  }
+  e <- eigen(M, symmetric = TRUE); e$values <- pmax(e$values, 0)
+  scale <- function(u) { u <- u / max(diag(u)); dimnames(u) <- list(contexts, contexts); u }
+  out <- list(learned_all = scale(e$vectors %*% diag(e$values, r) %*% t(e$vectors)))
+  k <- min(n_directions, sum(e$values > 0))
+  for (i in seq_len(k)) out[[paste0("learned_direction_", i)]] <- scale(tcrossprod(e$vectors[, i]))
+  if (k > 1L) out$learned_low_rank <- scale(e$vectors[, seq_len(k), drop = FALSE] %*% diag(e$values[seq_len(k)], k) %*% t(e$vectors[, seq_len(k), drop = FALSE]))
+  out
+}
+
+interp_tissue_model_write <- function(model, path) {
+  body <- list(format = "regshiny_tissue_model_v1", scale = model$scale, contexts = model$contexts, V = model$V, patterns = names(model$U),
+    U = unname(model$U), grid = model$grid, pi = model$pi, meta = model$meta)
+  tmp <- paste0(path, ".tmp")
+  writeLines(jsonlite::toJSON(body, digits = NA, auto_unbox = TRUE, pretty = TRUE, na = "null"), tmp)
+  invisible(file.rename(tmp, path))
+}
+
+interp_tissue_model_read <- function(path) {
+  x <- jsonlite::fromJSON(path, simplifyVector = TRUE, simplifyMatrix = TRUE, simplifyDataFrame = TRUE)
+  if (!identical(x$format, "regshiny_tissue_model_v1")) stop("Not a tissue sharing model file: ", path)
+  r <- length(x$contexts)
+  U <- if (is.array(x$U) && length(dim(x$U)) == 3L) lapply(seq_len(dim(x$U)[[1L]]), function(i) x$U[i, , ]) else lapply(x$U, function(u) matrix(unlist(u), r, r, byrow = TRUE))
+  names(U) <- x$patterns
+  interp_mash_model(x$contexts, matrix(unlist(x$V), r, r), U, as.numeric(x$pi), as.numeric(x$grid), x$meta,
+    scale = if (is.null(x$scale)) "z" else x$scale)
+}
+
+# -- The model applied to one variant ---------------------------------------------
+interp_tissue_empty <- function() list(
+  contexts = data.frame(qtl_type = character(), phenotype = character(), gene = character(), context = character(), tested = logical(),
+    slope_alt = numeric(), slope_se = numeric(), z = numeric(), posterior_slope = numeric(), posterior_sd = numeric(), posterior_z = numeric(),
+    lfsr = numeric(), call = character(), stringsAsFactors = FALSE),
+  phenotypes = data.frame(qtl_type = character(), phenotype = character(), gene = character(), contexts_tested = integer(),
+    effect_in = character(), no_clear_effect_in = character(), predicted_in = character(), similar_size_in = character(),
+    leading_pattern = character(), pattern_weight = numeric(), log10_bayes_factor = numeric(), summary = character(), stringsAsFactors = FALSE))
+
+interp_tissue_models <- function(sources = interp_local_sources()) {
+  files <- sources$tissue_model
+  if (!length(files)) return(list())
+  files <- files[vapply(files, interp_readable, logical(1))]
+  out <- lapply(files, function(f) tryCatch(interp_tissue_model_read(f), error = function(e) e))
+  out[!vapply(out, inherits, logical(1), "error")]
+}
+
+# Posterior effect of this variant in every context of the model, for each gene
+# (eQTL) or intron (sQTL) that is significant in at least one context. `lfsr`
+# below `cut` is called an effect. For a context where the pair was not tested
+# the model gives what the tested contexts imply (a slope from a slope-scale model, z units from a z-scale one).
+interp_tissue_sharing <- function(pairs, sources = interp_local_sources(), models = interp_tissue_models(sources), cut = 0.05) {
+  out <- c(list(available = length(models) > 0L, models = lapply(models, function(m) c(m$meta, list(scale = m$scale))), cut = cut), interp_tissue_empty())
+  if (!length(models) || is.null(pairs) || !nrow(pairs)) return(out)
+  pairs$key <- interp_phenotype_key(pairs$qtl_type, pairs$phenotype)
+  ctx_rows <- list(); ph_rows <- list()
+  groups <- split(pairs, paste(pairs$qtl_type, pairs$key))
+  groups <- groups[order(vapply(groups, function(x) min(x$p_nominal, na.rm = TRUE), numeric(1)))]
+  for (x in groups) {
+    model <- models[[x$qtl_type[[1L]]]]
+    x <- x[is.finite(x$slope_alt) & is.finite(x$slope_se) & x$slope_se > 0 & !duplicated(x$context), , drop = FALSE]
+    if (is.null(model) || !nrow(x) || !any(x$significant %in% TRUE)) next
+    k <- match(model$contexts, x$context)
+    if (all(is.na(k))) next
+    z <- x$slope_alt[k] / x$slope_se[k]
+    # A slope-scale model re-estimates the slope itself, also where the pair was not tested;
+    # a z-scale model re-estimates z, which converts to a slope only where a standard error exists.
+    on_slope <- identical(model$scale, "slope")
+    post <- if (on_slope) interp_mash_posterior(x$slope_alt[k], model, x$slope_se[k]) else interp_mash_posterior(z, model)
+    p <- post$contexts
+    effect <- is.finite(p$lfsr) & p$lfsr < cut
+    gene <- if (nzchar(x$gene[[1L]])) x$gene[[1L]] else interp_bare_gene(x$gene_id[[1L]])
+    slope <- if (on_slope) p$posterior_mean else p$posterior_mean * x$slope_se[k]
+    slope_sd <- if (on_slope) p$posterior_sd else p$posterior_sd * x$slope_se[k]
+    ctx_rows[[length(ctx_rows) + 1L]] <- data.frame(qtl_type = x$qtl_type[[1L]], phenotype = x$key[[1L]], gene = gene, context = p$context,
+      tested = p$tested, slope_alt = x$slope_alt[k], slope_se = x$slope_se[k], z = z, posterior_slope = slope, posterior_sd = slope_sd,
+      posterior_z = if (on_slope) slope / x$slope_se[k] else p$posterior_mean, lfsr = p$lfsr,
+      call = ifelse(p$tested, ifelse(effect, "effect", "no clear effect"), ifelse(effect, "predicted effect", "not predicted")), stringsAsFactors = FALSE)
+    # Similar size: tested contexts with an effect whose posterior slope has the sign of the largest and at least half its size.
+    lead <- if (any(effect & p$tested)) max(abs(slope[effect & p$tested])) else NA_real_
+    lead_sign <- if (is.finite(lead)) sign(slope[effect & p$tested][[which.max(abs(slope[effect & p$tested]))]]) else 0
+    similar <- effect & p$tested & is.finite(slope) & sign(slope) == lead_sign & abs(slope) >= lead / 2
+    w <- post$weights
+    leading <- if (nrow(w)) w$class[[1L]] else ""
+    if (identical(leading, "one context") && !is.null(post$top_single)) leading <- paste0("one context (", post$top_single$context, ")")
+    n_tested <- sum(p$tested); n_effect <- sum(effect & p$tested)
+    summary <- if (!n_effect) "no tested context has a confident effect" else if (n_effect == n_tested)
+      paste0("effect in all ", n_tested, " tested contexts", if (sum(similar) < n_effect) paste0(", similar size in ", sum(similar)) else ", similar size") else
+      paste0("effect in ", n_effect, " of ", n_tested, " tested contexts (", paste(p$context[effect & p$tested], collapse = ", "), ")")
+    if (any(effect & !p$tested)) summary <- paste0(summary, "; predicted in ", paste(p$context[effect & !p$tested], collapse = ", "))
+    ph_rows[[length(ph_rows) + 1L]] <- data.frame(qtl_type = x$qtl_type[[1L]], phenotype = x$key[[1L]], gene = gene, contexts_tested = n_tested,
+      effect_in = paste(p$context[effect & p$tested], collapse = ", "), no_clear_effect_in = paste(p$context[!effect & p$tested], collapse = ", "),
+      predicted_in = paste(p$context[effect & !p$tested], collapse = ", "), similar_size_in = paste(p$context[similar], collapse = ", "),
+      leading_pattern = leading, pattern_weight = if (nrow(w)) w$weight[[1L]] else NA_real_, log10_bayes_factor = post$log_bf / log(10),
+      summary = summary, stringsAsFactors = FALSE)
+  }
+  if (length(ph_rows)) { out$contexts <- do.call(rbind, ctx_rows); out$phenotypes <- do.call(rbind, ph_rows); rownames(out$contexts) <- rownames(out$phenotypes) <- NULL }
+  out
 }

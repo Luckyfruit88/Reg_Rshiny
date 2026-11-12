@@ -299,9 +299,9 @@ stopifnot(src$cadd_snv == "/tmp/custom_cadd.tsv.gz", identical(unname(src$fhs_sq
 for (n in names(old_env)) if (is.na(old_env[[n]])) Sys.unsetenv(n) else do.call(Sys.setenv, stats::setNames(list(old_env[[n]]), n))
 none <- list(tabix = "", look = "", cadd_snv = "/missing", cadd_indel = "/missing", vep_cache = "/missing", topmed_qtl = "/missing",
   fhs_sqtl = c(discovery = "/missing", replication = "/missing"), fhs_eqtl = "/missing", gwas_catalog = "/missing",
-  clinvar_vcf = "/missing", reactome = "/missing", msigdb = "/missing", spliceai = "/missing")
+  clinvar_vcf = "/missing", reactome = "/missing", msigdb = "/missing", tissue_model = c(eQTL = "/missing", sQTL = "/missing"), spliceai = "/missing")
 status <- interp_local_status(none)
-stopifnot(nrow(status) == 10L, !any(status$available))
+stopifnot(nrow(status) == 11L, !any(status$available))
 # A source list written before a source existed simply reports it as unavailable.
 stopifnot(!any(interp_local_status(none[c("tabix", "look", "cadd_snv", "cadd_indel", "vep_cache", "topmed_qtl", "fhs_sqtl", "fhs_eqtl", "spliceai")])$available))
 gone <- interp_local_evidence(v, none)
@@ -437,6 +437,114 @@ lg <- interp_linked_genes(missense, list(topmed = list(available = TRUE, pairs =
 stopifnot(nrow(lg) == 3L, identical(lg$gene, c("PARTIAL", "PLUS", "NINE")), lg$gene_id[[2L]] == "ENSGPLUS",
   lg$relation[[1L]] == "overlaps", lg$relation[[2L]] == "overlaps; sQTL target (TOPMed)", lg$relation[[3L]] == "eQTL target (TOPMed)",
   !"ENSG8" %in% lg$gene_id, nrow(interp_linked_genes(interp_empty_consequences())) == 0L, nrow(interp_linked_genes(missense)) == 2L)
+
+# ---- Cross-context sharing model -----------------------------------------------
+set.seed(11)
+mctx <- c("A", "B", "C"); mV <- matrix(.3, 3L, 3L); diag(mV) <- 1
+canon <- interp_mash_canonical(mctx)
+stopifnot(identical(names(canon), c("identity", "equal_effects", "simple_het_0.25", "simple_het_0.5", "simple_het_0.75", "only_A", "only_B", "only_C")),
+  canon$only_B["B", "B"] == 1, sum(canon$only_B) == 1, all(canon$equal_effects == 1), canon$simple_het_0.5["A", "C"] == .5,
+  identical(interp_mash_class(c("null", "only_B", "equal_effects", "simple_het_0.5", "identity", "learned_all")),
+    c("no effect", "one context", "shared", "shared", "independent", "learned")))
+expect_error(interp_mash_model(mctx, mV, canon, pi = c(.5, .6)), "length")
+# Simulated pairs: 70% no effect, 20% the same effect everywhere, 10% in B only; 15% of the z missing.
+simulate <- function(n) {
+  kind <- sample(c("null", "shared", "onlyB"), n, TRUE, c(.7, .2, .1)); z <- matrix(0, n, 3L)
+  z[kind == "shared", ] <- stats::rnorm(sum(kind == "shared"), 0, 4); z[kind == "onlyB", 2L] <- stats::rnorm(sum(kind == "onlyB"), 0, 5)
+  zh <- z + matrix(stats::rnorm(n * 3L), n, 3L) %*% chol(mV); zh[sample(length(zh), round(length(zh) * .15))] <- NA
+  list(z = z, zh = zh[rowSums(is.finite(zh)) > 0L, , drop = FALSE])
+}
+sim <- simulate(1500L)
+vh <- interp_mash_null_correlation(sim$zh)
+# Estimated among |z| < 2 only, so somewhat below the true 0.3.
+stopifnot(all(vh[upper.tri(vh)] > .12 & vh[upper.tri(vh)] < .4), all(abs(diag(vh) - 1) < 1e-12))
+learned <- interp_mash_learned(sim$zh[apply(abs(sim$zh), 1L, max, na.rm = TRUE) > 4, ], vh, mctx)
+stopifnot("learned_all" %in% names(learned), max(diag(learned$learned_all)) == 1, isSymmetric(unname(learned$learned_all)))
+mm <- interp_mash_model(mctx, vh, c(canon, learned))
+ll <- interp_mash_loglik(sim$zh, mm)
+# The null column is the plain multivariate normal density of the tested contexts.
+one_row <- which(rowSums(is.finite(sim$zh)) == 1L)[[1L]]
+stopifnot(dim(ll) == c(nrow(sim$zh), length(mm$pi)), all(is.finite(ll)),
+  abs(ll[one_row, 1L] - stats::dnorm(sim$zh[one_row, is.finite(sim$zh[one_row, ])], log = TRUE)) < 1e-10)
+mm$pi <- interp_mash_fit_pi(ll)
+by_class <- tapply(mm$pi, interp_mash_class(interp_mash_components(mm)$pattern), sum)
+stopifnot(abs(sum(mm$pi) - 1) < 1e-8, abs(by_class[["no effect"]] - .7) < .1, by_class[["shared"]] + by_class[["learned"]] > .12,
+  by_class[["one context"]] > .04, by_class[["independent"]] < .05)
+# Same effect in two contexts: confident there, and predicted in the untested third.
+shared <- interp_mash_posterior(c(5, NA, 5.5), mm)
+stopifnot(all(shared$contexts$lfsr < .01), !shared$contexts$tested[[2L]], shared$contexts$posterior_mean[[2L]] > 3, shared$weights$class[[1L]] %in% c("shared", "learned"),
+  shared$log_bf > 5, all(shared$contexts$posterior_mean[c(1L, 3L)] < c(5, 5.5) + .5), identical(shared$contexts$estimate, c(5, NA, 5.5)))
+# One context only: the others stay at zero.
+single <- interp_mash_posterior(c(.3, 6, -.5), mm)
+stopifnot(single$contexts$lfsr[[2L]] < .01, all(single$contexts$lfsr[c(1L, 3L)] > .5), single$weights$class[[1L]] == "one context", single$top_single$context == "B")
+# Nothing: no context is called, the Bayes factor favours no effect.
+quiet <- interp_mash_posterior(c(1.2, -.8, .5), mm)
+stopifnot(all(quiet$contexts$lfsr > .5), quiet$log_bf < 0, all(is.na(interp_mash_posterior(c(NA, NA, NA), mm)$contexts$lfsr)))
+# A left-out context is predicted from the others, with an interval that covers about 95% of fresh pairs.
+fresh <- simulate(600L)$zh; fresh <- fresh[is.finite(fresh[, 2L]) & rowSums(is.finite(fresh)) > 1L, ]
+pred <- t(vapply(seq_len(nrow(fresh)), function(i) interp_mash_predict_left_out(fresh[i, ], mm, 2L), numeric(2)))
+stopifnot(stats::cor(pred[, 1L], fresh[, 2L]) > .5, abs(mean(abs(fresh[, 2L] - pred[, 1L]) <= 1.96 * pred[, 2L]) - .95) < .04)
+model_file <- tempfile(fileext = ".json"); mm$meta <- list(qtl_type = "eQTL", trained_at = "then", strong_pairs_fitted = 5L)
+interp_tissue_model_write(mm, model_file); back <- interp_tissue_model_read(model_file)
+stopifnot(identical(back$contexts, mctx), back$scale == "z", all.equal(unname(back$V), unname(mm$V)), all.equal(back$pi, mm$pi), identical(names(back$U), names(mm$U)),
+  all.equal(unname(back$U$learned_all), unname(mm$U$learned_all)), back$meta$trained_at == "then",
+  all.equal(interp_mash_posterior(c(5, NA, 5.5), back)$contexts$lfsr, shared$contexts$lfsr))
+writeLines("{\"format\": \"other\"}", model_file); expect_error(interp_tissue_model_read(model_file), "Not a tissue sharing model")
+# Slope scale: contexts share the effect size, and each estimate counts by its own standard error.
+sim_slope <- function(n) {
+  se <- cbind(stats::runif(n, .03, .06), stats::runif(n, .1, .2), stats::runif(n, .05, .1))
+  kind <- sample(c("null", "shared", "onlyB"), n, TRUE, c(.6, .3, .1)); b <- matrix(0, n, 3L)
+  b[kind == "shared", ] <- stats::rnorm(sum(kind == "shared"), 0, .5); b[kind == "onlyB", 2L] <- stats::rnorm(sum(kind == "onlyB"), 0, .8)
+  bh <- b + (matrix(stats::rnorm(n * 3L), n, 3L) %*% chol(mV)) * se; bh[sample(length(bh), round(length(bh) * .15))] <- NA
+  keep <- rowSums(is.finite(bh)) > 0L
+  list(b = bh[keep, , drop = FALSE], se = se[keep, , drop = FALSE])
+}
+ss <- sim_slope(900L)
+big <- apply(abs(ss$b / ss$se), 1L, max, na.rm = TRUE) > 4
+sm <- interp_mash_model(mctx, vh, c(canon, interp_mash_learned(ss$b[big, ], vh, mctx, SE = ss$se[big, ])), scale = "slope")
+stopifnot(identical(sm$grid, interp_mash_grid("slope")), max(sm$grid) < 4, min(sm$grid) < .05)
+expect_error(interp_mash_loglik(ss$b, sm), "is.null")
+sl <- interp_mash_loglik(ss$b, sm, ss$se)
+# One tested context: the null density is a normal with that context's own standard error.
+one_row <- which(rowSums(is.finite(ss$b)) == 1L)[[1L]]; col <- which(is.finite(ss$b[one_row, ]))
+stopifnot(all(is.finite(sl)), abs(sl[one_row, 1L] - stats::dnorm(ss$b[one_row, col], 0, ss$se[one_row, col], log = TRUE)) < 1e-10)
+sm$pi <- interp_mash_fit_pi(sl)
+s_class <- tapply(sm$pi, interp_mash_class(interp_mash_components(sm)$pattern), sum)
+stopifnot(abs(s_class[["no effect"]] - .6) < .12, s_class[["one context"]] > .03)
+# A precise estimate in A and a noisy one in C: B, untested, is predicted on the slope scale with A's size.
+sp <- interp_mash_posterior(c(.5, NA, .7), sm, c(.04, NA, .3))
+stopifnot(abs(sp$contexts$posterior_mean[[2L]] - .5) < .1, sp$contexts$lfsr[[2L]] < .05, !sp$contexts$tested[[2L]],
+  abs(sp$contexts$posterior_mean[[3L]] - .5) < .1, sp$contexts$posterior_sd[[1L]] < .05,
+  # Without a standard error a context does not count as tested.
+  !interp_mash_posterior(c(.5, .4, .7), sm, c(.04, NA, .3))$contexts$tested[[2L]])
+fresh <- sim_slope(500L); ok <- is.finite(fresh$b[, 1L]) & rowSums(is.finite(fresh$b)) > 1L
+pred <- t(vapply(which(ok), function(i) interp_mash_predict_left_out(fresh$b[i, ], sm, 1L, fresh$se[i, ]), numeric(2)))
+stopifnot(stats::cor(pred[, 1L], fresh$b[ok, 1L]) > .5, abs(mean(abs(fresh$b[ok, 1L] - pred[, 1L]) <= 1.96 * pred[, 2L]) - .95) < .05)
+interp_tissue_model_write(sm, model_file); stopifnot(interp_tissue_model_read(model_file)$scale == "slope")
+slope_ts <- interp_tissue_sharing(rbind(pair("eQTL", "A", "ENSG1.1", .5, .04, 1e-30, TRUE), pair("eQTL", "C", "ENSG1.1", .7, .3, .02, FALSE)), models = list(eQTL = sm))
+stopifnot(identical(slope_ts$contexts$call, c("effect", "predicted effect", "effect")), abs(slope_ts$contexts$posterior_slope[[2L]] - .5) < .1,
+  is.na(slope_ts$contexts$posterior_z[[2L]]), slope_ts$models$eQTL$scale == "slope",
+  # C alone is not significant, but with A it is called: the small context borrows strength.
+  slope_ts$phenotypes$summary == "effect in all 2 tested contexts, similar size; predicted in B")
+# Applied to a variant's pairs: one row per context of the model, calls from the lfsr, slopes back on the slope scale.
+tp <- rbind(pair("eQTL", "A", "ENSG1.1", .5, .1, 1e-7, TRUE), pair("eQTL", "C", "ENSG1.1", .55, .1, 1e-8, TRUE),
+  pair("eQTL", "A", "ENSG2.1", .03, .1, .7, FALSE, "ENSG2.1"), pair("eQTL", "B", "ENSG2.1", .6, .1, 1e-9, TRUE, "ENSG2.1"), pair("eQTL", "C", "ENSG2.1", -.05, .1, .6, FALSE, "ENSG2.1"),
+  pair("eQTL", "A", "ENSG3.1", .1, .1, .3, FALSE, "ENSG3.1"), pair("sQTL", "A", "chr1:10:90:clu_1_+:ENSG1.1", 2, .1, 1e-50, TRUE))
+ts <- interp_tissue_sharing(tp, models = list(eQTL = mm))
+first <- ts$contexts[ts$contexts$phenotype == "ENSG1.1", ]
+stopifnot(ts$available, nrow(ts$phenotypes) == 2L, nrow(ts$contexts) == 6L, identical(first$context, mctx), identical(first$call, c("effect", "predicted effect", "effect")),
+  is.na(first$posterior_slope[[2L]]), abs(first$posterior_slope[[1L]] - first$posterior_z[[1L]] * .1) < 1e-12, first$z[[1L]] == 5,
+  ts$phenotypes$summary[ts$phenotypes$phenotype == "ENSG1.1"] == "effect in all 2 tested contexts, similar size; predicted in B",
+  ts$phenotypes$summary[ts$phenotypes$phenotype == "ENSG2.1"] == "effect in 1 of 3 tested contexts (B)",
+  ts$phenotypes$leading_pattern[ts$phenotypes$phenotype == "ENSG2.1"] == "one context (B)", ts$phenotypes$no_clear_effect_in[ts$phenotypes$phenotype == "ENSG2.1"] == "A, C",
+  # Not significant anywhere, or no model for that QTL type: left out.
+  !"ENSG3.1" %in% ts$phenotypes$phenotype, !"sQTL" %in% ts$phenotypes$qtl_type, ts$models$eQTL$trained_at == "then")
+none_model <- interp_tissue_sharing(tp, none)
+stopifnot(!none_model$available, !nrow(none_model$phenotypes), !nrow(interp_tissue_sharing(tp[0, ], models = list(eQTL = mm))$phenotypes))
+# The Tissue line carries the model's reading next to the comparison of the contexts.
+tissue_line <- interp_evidence_summary(missense, list(topmed = list(available = TRUE, pairs = tp, contexts = data.frame()), tissue = ts))
+stopifnot(grepl("model: effect in 1 of 3 tested contexts (B)", tissue_line$evidence[tissue_line$question == "Tissue"], fixed = TRUE),
+  grepl("cross-context model", tissue_line$sources[tissue_line$question == "Tissue"], fixed = TRUE))
 
 # ---- Sorted-file lookup and tabix-backed sources ----------------------------
 work <- tempfile("regshiny_interp_"); dir.create(work, mode = "0700")

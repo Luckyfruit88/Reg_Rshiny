@@ -10,7 +10,8 @@ future::plan(future::sequential)
 Sys.setenv(REGSHINY_CADD_SNV = "/nonexistent/cadd", REGSHINY_CADD_INDEL = "/nonexistent/cadd", REGSHINY_VEP_CACHE = "/nonexistent/vep",
   REGSHINY_TOPMED_QTL = "/nonexistent/topmed", REGSHINY_FHS_SQTL = "/nonexistent/a;/nonexistent/b", REGSHINY_FHS_EQTL = "/nonexistent/e",
   REGSHINY_SPLICEAI = "/nonexistent/spliceai", REGSHINY_GWAS_CATALOG = "/nonexistent/gwas", REGSHINY_CLINVAR_VCF = "/nonexistent/clinvar",
-  REGSHINY_REACTOME = "/nonexistent/reactome", REGSHINY_MSIGDB = "/nonexistent/msigdb")
+  REGSHINY_REACTOME = "/nonexistent/reactome", REGSHINY_MSIGDB = "/nonexistent/msigdb", REGSHINY_TISSUE_MODEL_EQTL = "/nonexistent/model",
+  REGSHINY_TISSUE_MODEL_SQTL = "/nonexistent/model")
 scratch <- tempfile("interpretation-ui-"); dir.create(scratch)
 backend_file <- normalizePath("src/interpretation_backend.R")
 fixture_backend <- file.path(scratch, "backend.R")
@@ -105,6 +106,11 @@ pairs <- rbind(pair("sQTL", "Lung", "chr1:10:90:clu_5_+:ENSG1.1", 2, TRUE), pair
 e <- new.env(); sys.source(backend_file, envir = e)
 png <- file.path(scratch, "contexts.png"); grDevices::png(png, width = 1400, height = 600, res = 130)
 shown <- interpretation_plot_contexts(pairs, e$interp_context_heterogeneity(pairs)); grDevices::dev.off()
+# With model estimates the same panels are drawn, the estimates as diamonds.
+grDevices::png(png, width = 1400, height = 600, res = 130)
+with_model <- interpretation_plot_contexts(pairs, e$interp_context_heterogeneity(pairs), model = data.frame(qtl_type = "sQTL", phenotype = "chr1:10:90:ENSG1.1",
+  context = c("Lung", "PBMC"), posterior_slope = c(1.9, 1.85), call = c("effect", "no clear effect"), stringsAsFactors = FALSE)); grDevices::dev.off()
+stopifnot(nrow(with_model) == 2L)
 stopifnot(nrow(shown) == 2L, file.info(png)$size > 1000)
 grDevices::png(png, width = 900, height = 500); stopifnot(is.null(interpretation_plot_contexts(pairs[0, ], NULL))); grDevices::dev.off()
 grDevices::png(png, width = 900, height = 700)

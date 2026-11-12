@@ -36,6 +36,7 @@ Every path can be overridden in `config/runtime.Renviron`; a source that is miss
 | CADD v1.7 (GRCh38) | `REGSHINY_CADD_SNV`, `REGSHINY_CADD_INDEL` | Raw and PHRED score of the exact allele | tabix |
 | Ensembl VEP 112 cache | `REGSHINY_VEP_CACHE` | rsID, ClinVar significance (2023-10), 1000 Genomes and gnomAD frequencies | tabix |
 | TOPMed multi-tissue cis-QTL | `REGSHINY_TOPMED_QTL` | cis-eQTL and cis-sQTL in lung, monocytes, nasal epithelium, PBMC, T cells and whole blood | tabix |
+| Cross-context sharing model | `REGSHINY_TISSUE_MODEL_EQTL`, `REGSHINY_TISSUE_MODEL_SQTL` | Effect and its certainty in each TOPMed context, from a model trained on those files | read |
 | FHS whole-blood isoform-ratio sQTL | `REGSHINY_FHS_SQTL` (`discovery;replication`) | Rows with p < 1e-4, N about 2,622 and 1,093 | `look` |
 | FHS whole-blood gene eQTL | `REGSHINY_FHS_EQTL` | Rows with p < 1e-7, N about 2,622 | `look` |
 | GWAS Catalog associations (e114, 2025-07-21) | `REGSHINY_GWAS_CATALOG` | Published trait associations reported at the variant's position | tabix |
@@ -49,6 +50,21 @@ Every path can be overridden in `config/runtime.Renviron`; a source that is miss
 **TOPMed cis-QTL.** For each of the six contexts the app reads every tested pair of the variant from the nominal all-pairs file. A pair is `significant` when its nominal p is at or below that gene's permutation threshold (tensorQTL, genes with q ≤ 0.05). `pip` is the SuSiE posterior inclusion probability when the variant sits in a credible set. `slope_alt` is per ALT allele on normalised phenotypes, so it compares across contexts but not with Model 1. `n_estimated` is derived from the minor-allele count and frequency. Whole blood also has a run down to MAF 0.1%, used when the 1% run has no row. The table keeps significant pairs, credible-set pairs, pairs with p < 0.001, the three smallest p per context, and every context's row of a phenotype that is significant somewhere.
 
 **Shared or tissue-specific.** For every gene (eQTL) or intron (sQTL, matched by intron coordinates and gene because cluster numbers differ between runs) that is significant in at least one context, the tab reports Cochran's Q and I² of the slopes across contexts and a one-line pattern: shared, consistent effect size but not significant everywhere, context-specific, heterogeneous, or opposite directions. The contexts share donors and differ several-fold in sample size, so Q is descriptive and a small context can miss a real effect.
+
+**Cross-context model.** The comparison above looks at each context's own significance. The model re-estimates the effect in every context from all of them together, in the manner of multivariate adaptive shrinkage (Urbut et al. 2019, *Nat Genet*). It is trained on the TOPMed files themselves by `scripts/train_tissue_model.R`, once for eQTL and once for sQTL:
+
+- *Strong pairs*: the lead variant of about 6,000 genes or introns with q ≤ 0.05, drawn evenly from the six contexts. *Random pairs*: about 5,000 variants 20–200 kb from a lead variant, chosen without looking at their p-values. Each pair's slope and standard error is read in all six contexts.
+- The correlation of estimates between contexts when there is no effect (the contexts share donors) comes from the random pairs. Sharing patterns are fixed ones (the same effect everywhere, one context only, partly correlated) plus patterns learned from the strong pairs. Their weights are fitted by EM on both sets, with a penalty that favours "no effect" when the data do not decide.
+- One fifth of the phenotypes is held out. For those pairs each context is predicted from the others and compared with what was measured, against two baselines (the precision-weighted mean slope and the mean z of the other contexts). The model is fitted on the slope scale and on the z scale and the one with the smaller held-out error is kept. The numbers are stored in the model file and shown above the table.
+
+At view time, for every gene or intron significant in at least one context, the tab shows per context the re-estimated slope (`posterior_slope`), its uncertainty and the local false sign rate `lfsr`: the probability that the effect is absent or has the other sign. `lfsr` < 0.05 is called an effect. `leading_pattern` is the kind of sharing pattern that carries most of the posterior weight and `log10_bayes_factor` compares "some effect" with "none". Two consequences: a small context can be called without passing its own threshold, because it borrows strength from the others; and a context where the pair was not tested gets a prediction, labelled as such.
+
+Limits: the model knows six contexts from blood, airway and lung and says nothing about other tissues. It describes the association signal at this variant, which a neighbour in linkage disequilibrium can carry. Lead variants are selected for significance, so intervals on such pairs are somewhat too narrow (see the stored coverage). Retrain when the TOPMed files change:
+
+```bash
+Rscript scripts/train_tissue_model.R --type eqtl --topmed DIR --out tissue_sharing_eqtl.json --work WORKDIR
+Rscript scripts/train_tissue_model.R --type sqtl --topmed DIR --out tissue_sharing_sqtl.json --work WORKDIR
+```
 
 **FHS whole-blood QTL.** Isoform-ratio sQTL (transcript / gene) and gene eQTL summary statistics, effects per ALT allele. A transcript "replicates" when it appears in both the discovery and the replication set with the same sign. The gene eQTL file must be a position-sorted copy; make it once with
 
@@ -110,7 +126,7 @@ Rules:
 - **Gene expression (eQTL).** Strong: a TOPMed or Open Targets eQTL credible set with posterior probability ≥ 0.5. Moderate: a significant eQTL in TOPMed, FHS, GTEx or Open Targets without that.
 - **Disease and traits.** Strong: ClinVar pathogenic or likely pathogenic with no benign assertion, or a GWAS credible set with posterior probability ≥ 0.5. Moderate: a GWAS Catalog association at p ≤ 5e-8 reported at the variant's position, a GWAS posterior probability of 0.1–0.5, ClinVar risk factor, drug response, association or conflicting assertions, or a pharmacogenomic annotation. Limited: other ClinVar records, GWAS Catalog associations above 5e-8 only, or GWAS credible sets with posterior probability below 0.1. A catalog association shows that the variant or a neighbour in linkage disequilibrium is associated, so on its own it stops at Moderate; fine-mapping needs the public query, and the card says when it was not run. None found needs both the local GWAS Catalog and a ClinVar source to have been read; otherwise an empty answer reads Not assessed.
 - **Pathway** is a Context line: for each linked gene, its Reactome top-level pathways, or its most specific gene sets when Reactome has none. It works without the public query; after one, Open Targets' counts for the overlapped genes are added.
-- **Tissue** is a Context line: where the QTL effect is seen and where the gene is expressed. This cohort's RNA is whole blood.
+- **Tissue** is a Context line: where the QTL effect is seen (each context's own significance, then the cross-context model's reading after "model:") and where the gene is expressed. This cohort's RNA is whole blood.
 
 What the levels are not: a clinical classification, a causal proof, or a replacement for reading the tables. A QTL association can be carried by a neighbour in linkage disequilibrium, which is why association alone stops at Moderate. Fine-mapping probabilities depend on the reference panel and the study. Model 1 is unadjusted for covariates and relatedness.
 

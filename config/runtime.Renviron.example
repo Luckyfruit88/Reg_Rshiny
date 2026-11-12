@@ -24,3 +24,5 @@ REGSHINY_FULL_WALLTIME=12:00:00
 # REGSHINY_CLINVAR_VCF=/path/to/clinvar.vcf.gz                              (bgzip + tabix -p vcf)
 # REGSHINY_REACTOME=/path/to/reactome_ensembl_all_levels.human.tsv          (scripts/build_pathway_index.sh)
 # REGSHINY_MSIGDB=/path/to/msigdb/release_directory
+# REGSHINY_TISSUE_MODEL_EQTL=/path/to/tissue_sharing_eqtl.json              (scripts/train_tissue_model.R)
+# REGSHINY_TISSUE_MODEL_SQTL=/path/to/tissue_sharing_sqtl.json

@@ -45,6 +45,11 @@ interpretation_ui <- function(id) {
         shiny::plotOutput(ns("context_plot"), height = 400),
         DT::DTOutput(ns("heterogeneity")),
         shiny::p("One row per gene (eQTL) or intron (sQTL) that is significant in at least one context. Slopes are per ALT allele on normalised phenotypes, so they compare across contexts but not with Model 1. A pair is significant when its nominal p is below that gene's permutation threshold (FDR 5%). q_p_value and i_squared describe how much the slopes differ between contexts (Cochran's Q); the contexts share donors, so read them as descriptive. A context with few samples can miss an effect that is there."),
+        shiny::h5("Cross-context model"),
+        shiny::uiOutput(ns("tissue_status")),
+        DT::DTOutput(ns("tissue_phenotypes")),
+        DT::DTOutput(ns("tissue_contexts")),
+        shiny::p("A model trained on TOPMed lead cis-QTLs across the six contexts (scripts/train_tissue_model.R) re-estimates this variant's effect in each context from all of them together. posterior_slope is the re-estimated per-ALT-allele effect; lfsr is the local false sign rate, the probability that the effect is absent or has the other sign, and below 0.05 is called an effect. A small context borrows strength from the others, so it can show an effect without passing its own significance threshold. For a context where the pair was not tested the row is a prediction from the tested contexts (call \"predicted effect\" or \"not predicted\"), not a measurement. Diamonds in the plot are the model's estimates: filled for an effect, pale for a predicted one, empty otherwise. The model describes sharing among these six blood, airway and lung contexts; it says nothing about other tissues."),
         shiny::h5("Tested pairs"),
         DT::DTOutput(ns("topmed_pairs")),
         shiny::p("Kept: every significant pair, every pair in a SuSiE credible set (pip), pairs with nominal p below 0.001, the three smallest p per context, and every context's row of a phenotype that is significant somewhere. n_estimated is derived from the minor-allele count and frequency."),
@@ -137,7 +142,7 @@ interpretation_datatable <- function(x, digits = 3L, page_length = 10L) {
 }
 
 # Slopes of the leading phenotypes in every context, with 95% intervals.
-interpretation_plot_contexts <- function(pairs, heterogeneity, max_panels = 4L) {
+interpretation_plot_contexts <- function(pairs, heterogeneity, max_panels = 4L, model = NULL) {
   if (is.null(pairs) || !nrow(pairs) || is.null(heterogeneity) || !nrow(heterogeneity)) {
     graphics::plot.new(); graphics::text(.5, .5, "No significant TOPMed cis-QTL for this variant"); return(invisible(NULL))
   }
@@ -162,13 +167,19 @@ interpretation_plot_contexts <- function(pairs, heterogeneity, max_panels = 4L) 
     graphics::segments(lo, y, hi, y, col = "#1F4E79", lwd = 2)
     significant <- x$significant %in% TRUE
     graphics::points(x$slope_alt, y, pch = ifelse(significant, 19, 21), col = "#1F4E79", bg = "white", cex = 1.5)
+    if (is.data.frame(model) && nrow(model)) {
+      m <- model[model$qtl_type == h$qtl_type[[i]] & model$phenotype == h$phenotype[[i]], , drop = FALSE]
+      m <- m[match(contexts, m$context), , drop = FALSE]
+      graphics::points(m$posterior_slope, y - .27, pch = 23, col = "#B7410E", bg = ifelse(m$call %in% "effect", "#B7410E", ifelse(m$call %in% "predicted effect", "#F2B48C", "white")), cex = 1.05)
+    }
     missing <- is.na(x$slope_alt)
     if (any(missing)) graphics::text(mean(lim), y[missing], "not tested", cex = .9, col = "#666666")
     gene <- if (nzchar(h$gene[[i]])) h$gene[[i]] else sub("\\..*$", "", h$gene_id[[i]])
     intron <- if (h$qtl_type[[i]] == "sQTL") sub("^[^:]+:([0-9]+):([0-9]+):.*$", "intron \\1-\\2", h$phenotype[[i]]) else "expression"
     graphics::title(main = paste0(h$qtl_type[[i]], " \u00b7 ", gene), cex.main = 1, line = 3)
     graphics::mtext(intron, side = 3, line = 1.7, cex = .85)
-    graphics::mtext("bar: 95% CI; filled: significant", side = 3, line = .5, cex = .78, col = "#555555")
+    graphics::mtext(if (is.data.frame(model) && nrow(model)) "filled: significant; diamond: model" else "bar: 95% CI; filled: significant",
+      side = 3, line = .5, cex = .76, col = "#555555")
   }
   invisible(h)
 }
@@ -243,6 +254,8 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
             names <- tryCatch(a$annotation_gene_names(annotation, out$local$topmed$pairs$gene_id), error = function(err) NULL)
             out$local$topmed$pairs <- e$interp_name_genes(out$local$topmed$pairs, names)
           }
+          if (!is.null(out$local) && !inherits(out$local$topmed, "error")) out$local$tissue <- tryCatch(
+            e$interp_tissue_sharing(out$local$topmed$pairs), error = function(err) err)
           if (!is.null(out$local)) out$local$pathways <- tryCatch(
             e$interp_local_pathways(e$interp_linked_genes(out$consequences, out$local)), error = function(err) err)
           out
@@ -434,7 +447,23 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
         " tested context-and-type combinations.", if (length(untested)) paste0(" Not tested (absent or below the frequency cut-off): ",
           paste(untested, collapse = ", "), ".") else ""))
     })
-    output$context_plot <- shiny::renderPlot(interpretation_plot_contexts(topmed_now()$pairs, heterogeneity_now()), res = 96)
+    tissue_now <- shiny::reactive({ t <- local_part("tissue"); if (is.null(t) || !isTRUE(t$available)) NULL else t })
+    output$context_plot <- shiny::renderPlot(interpretation_plot_contexts(topmed_now()$pairs, heterogeneity_now(),
+      model = if (is.null(tissue_now())) NULL else tissue_now()$contexts), res = 96)
+    output$tissue_status <- shiny::renderUI({
+      t <- tissue_now()
+      if (is.null(t)) return(shiny::p("No trained cross-context model is readable from this session; the comparison above still applies."))
+      shiny::tagList(lapply(names(t$models), function(type) {
+        m <- t$models[[type]]; ev <- m$evaluation
+        held <- if (is.data.frame(ev)) ev[ev$set == "strong, held out" & ev$context == "all", , drop = FALSE] else NULL
+        shiny::p(paste0(type, " model (", m$scale, " scale): trained ", m$trained_at, " on ", m$strong_pairs_fitted, " lead pairs and ", m$random_pairs_fitted,
+          " random pairs.", if (!is.null(held) && nrow(held)) sprintf(" Check on %d held-out lead pairs, predicting each context from the others (z units): error %.2f for the model, %.2f for the precision-weighted mean slope, %.2f for the mean of the other z; correlation %.2f; the 95%% interval covers %.0f%%.",
+            m$strong_pairs_held_out, held$rmse_model, held$rmse_pooled_slope, held$rmse_mean_other_z, held$r_model, 100 * held$coverage_95) else ""))
+      }))
+    })
+    output$tissue_phenotypes <- show_table(function() { t <- tissue_now(); if (is.null(t)) NULL else t$phenotypes },
+      empty = "No gene or intron of this variant is significant in a context the model covers.")
+    output$tissue_contexts <- show_table(function() { t <- tissue_now(); if (is.null(t)) NULL else t$contexts }, empty = "No model estimate.")
     output$heterogeneity <- show_table(heterogeneity_now, empty = "This variant is not a significant cis-QTL in any TOPMed context.")
     output$topmed_pairs <- show_table(function() topmed_now()$pairs, empty = "This variant was not tested in the TOPMed cis-QTL runs.")
     fhs_now <- shiny::reactive({
@@ -527,7 +556,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       x <- local_now(); p <- public_store()[[variant_key()]]; s <- spliceai_now()
       cat("Variant:", x$variant$id, "\nGENCODE release:", if (is.null(x$release)) "unavailable" else x$release, "\n")
       cat("Reference base(s) at the variant:", x$reference_base, "\n")
-      if (!is.null(x$local)) for (n in c("cadd", "known", "fhs", "topmed", "gwas_catalog", "clinvar", "pathways")) if (inherits(x$local[[n]], "error"))
+      if (!is.null(x$local)) for (n in c("cadd", "known", "fhs", "topmed", "tissue", "gwas_catalog", "clinvar", "pathways")) if (inherits(x$local[[n]], "error"))
         cat("Local source", n, "failed:", conditionMessage(x$local[[n]]), "\n")
       cat("Public query:", if (is.null(p)) "not run" else if (inherits(p, "error")) conditionMessage(p) else
         paste0("run at ", p$queried_at, "; sent variant ", p$variant, " and gene IDs ", paste(p$gene_ids, collapse = ", ")), "\n")
