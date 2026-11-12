@@ -30,17 +30,52 @@ variant_batch_bin_ratio <- function(api, variant, spec, resolver, cfg, widths) {
     "no GENCODE splice site within 50 bp")
 }
 
+# Batch variants that run at the same time (lanes); the others wait in the
+# scheduler queue. REGSHINY_BATCH_LANES sets the default shown in the form.
+variant_batch_lanes_default <- function() {
+  x <- suppressWarnings(as.integer(Sys.getenv("REGSHINY_BATCH_LANES", "8")))
+  if (length(x) != 1L || is.na(x) || x < 1L || x > 16L) 8L else x
+}
+variant_batch_id <- function() paste0("batch-", format(Sys.time(), "%Y%m%dT%H%M%S", tz = "UTC"), "-",
+  paste(sample(c(0:9, letters[1:6]), 6L, replace = TRUE), collapse = ""))
+
+# One row per batch found in the jobs dashboard, newest first: how many of its
+# jobs are finished, running, waiting for their lane, or need attention.
+variant_batch_progress <- function(rows) {
+  empty <- data.frame(batch = character(), jobs = integer(), complete = integer(), complete_with_failures = integer(),
+    running = integer(), waiting = integer(), failed = integer(), resumable = integer(), stringsAsFactors = FALSE)
+  if (!is.data.frame(rows) || !all(c("batch", "status") %in% names(rows))) return(empty)
+  rows <- rows[!is.na(rows$batch) & nzchar(rows$batch), , drop = FALSE]
+  if (!nrow(rows)) return(empty)
+  status <- as.character(rows$status)
+  group <- ifelse(status == "COMPLETE", "complete",
+    ifelse(status == "COMPLETE_WITH_FAILURES", "complete_with_failures",
+    ifelse(status %in% c("RUNNING", "ACCOUNTING_PENDING"), "running",
+    ifelse(status %in% c("QUEUED", "SUBMITTING", "PREPARED", "PREPARING"), "waiting", "failed"))))
+  ids <- sort(unique(rows$batch), decreasing = TRUE)
+  count <- function(id, g) sum(rows$batch == id & group == g)
+  out <- data.frame(batch = ids, jobs = vapply(ids, function(id) sum(rows$batch == id), integer(1)), stringsAsFactors = FALSE)
+  for (g in c("complete", "complete_with_failures", "running", "waiting", "failed"))
+    out[[g]] <- vapply(ids, count, integer(1), g = g)
+  out$resumable <- vapply(ids, function(id) sum(rows$batch == id & status %in% c("FAILED", "INTERRUPTED")), integer(1))
+  rownames(out) <- NULL
+  out
+}
+
 # Resolve each requested record independently, then issue a separate persistent
 # job submission. This orchestrates metadata work only, never a shared RNA job.
+# Each submitted job takes the next of `lanes` lanes and waits there for the
+# earlier jobs of that lane, so at most `lanes` batch variants run at once.
 variant_batch_submit <- function(api, resources, lines, settings, source_identity,
                                  backend_file, variant_file, job_source, job_root, controls,
-                                 site_resolver = NULL) {
+                                 site_resolver = NULL, lanes = variant_batch_lanes_default()) {
   widths <- settings$bin_ratio_settings; settings$bin_ratio_settings <- NULL
   outcomes <- list(); submitted_records <- character()
+  batch_id <- variant_batch_id()
   for (i in seq_len(nrow(lines))) {
     row <- list(input_line = lines$input_line[[i]], query = lines$query[[i]], record_id = NA_character_,
       outcome = "LOOKUP_FAILED", job_id = NA_character_, job_dir = NA_character_, requested_cores = NA_integer_,
-      candidates = "", bin_ratio = "", message = "")
+      batch = batch_id, lane = NA_integer_, candidates = "", bin_ratio = "", message = "")
     spec <- if ("site_spec" %in% names(lines)) lines$site_spec[[i]] else NA_character_
     records <- tryCatch(api$lookup_variants(resources, row$query), error = function(e) e)
     if (inherits(records, "error")) row$message <- conditionMessage(records) else if (!nrow(records)) {
@@ -77,7 +112,8 @@ variant_batch_submit <- function(api, resources, lines, settings, source_identit
           frozen$query <- row$query; frozen$record_id <- row$record_id; frozen$sampling_mode <- "all"
           frozen$sample_cap <- NULL; frozen$batch_input_line <- row$input_line
           api$submit_variant_job(resources, variant, cfg, backend_file = backend_file,
-            variant_file = variant_file, job_source = job_source, job_root = job_root, ui_controls = frozen)
+            variant_file = variant_file, job_source = job_source, job_root = job_root, ui_controls = frozen,
+            lanes = lanes, batch_id = batch_id)
         }, error = function(e) e)
         if (inherits(attempt, "error")) {
           row$outcome <- "SUBMISSION_FAILED"
@@ -88,7 +124,8 @@ variant_batch_submit <- function(api, resources, lines, settings, source_identit
         } else {
           row$outcome <- "SUBMITTED"; row$job_id <- as.character(attempt$job_id); row$bin_ratio <- ratio$label
           row$job_dir <- as.character(attempt$job_dir); row$requested_cores <- 16L
-          row$message <- "Independent full-cohort job submitted; inspect its own status and logs."
+          if (length(attempt$lane) == 1L && !is.na(attempt$lane)) row$lane <- as.integer(attempt$lane)
+          row$message <- "Independent full-cohort job submitted; it starts when its lane is free. Inspect its own status and logs."
         }
       }
     }
@@ -336,9 +373,10 @@ variant_ui <- function(id) {
           bslib::card(bslib::card_header("Batch submission"),
             textAreaInput(ns("batch_queries"), "Batch variants (one per line)", rows = 5,
               placeholder = "chr21:14288395:G:A\nchr17:3156517:T:C"),
+            numericInput(ns("batch_lanes"), "Variants running at the same time", variant_batch_lanes_default(), min = 1, max = 16, step = 1),
             bslib::input_task_button(ns("batch_submit"), "Review batch and resources"),
             uiOutput(ns("batch_review_status"), role = "status", `aria-live` = "polite"),
-            helpText("Batch jobs always use all matched BAMs, even when the single-variant form is set to preview. The current interval and filters apply to every batch entry. Review the maximum resource request before confirming; no jobs are submitted by the review button.")),
+            helpText("Batch jobs always use all matched BAMs, even when the single-variant form is set to preview. The current interval and filters apply to every batch entry. Every variant is submitted at once; the scheduler runs at most the number above at the same time and starts the next one when a lane is free, also after this browser is closed. Review the maximum resource request before confirming; no jobs are submitted by the review button.")),
           bslib::card(bslib::card_header("Saved full-comparison jobs"),
             selectInput(ns("saved_job"), "Your recent jobs", choices = character()),
             div(class = "regshiny-actions",
@@ -346,8 +384,11 @@ variant_ui <- function(id) {
               actionButton(ns("open_job"), "Open saved job"),
               bslib::input_task_button(ns("resume_job"), "Resume interrupted job")),
             helpText("Opening shows the job's frozen variant and parameters. Resume reuses verified checkpoints; editing the analysis form never changes a saved job."))),
+        h5("Batch progress"), uiOutput(ns("batch_progress"), role = "status", `aria-live` = "polite"),
+        div(class = "regshiny-actions", bslib::input_task_button(ns("resume_batch"), "Resume all failed batch jobs")),
+        uiOutput(ns("resume_batch_status"), role = "status", `aria-live` = "polite"),
         h5("Independent full-cohort jobs"),
-        p("Every new full job requests 16 cores. Several jobs may run concurrently when the scheduler allocates their separate resources. Select a row and open that job's frozen result."),
+        p("Every new full job requests 16 cores. A single submission starts as soon as the scheduler has resources; batch jobs take turns in their lane (column lane), so QUEUED also covers a job waiting for the one before it. Select a row and open that job's frozen result."),
         DT::DTOutput(ns("jobs_table")), actionButton(ns("open_dashboard_job"), "Open selected job"),
         h5("Latest batch outcomes"), uiOutput(ns("batch_status")), DT::DTOutput(ns("batch_outcomes")),
         downloadButton(ns("download_batch"), "Batch outcomes CSV"),
@@ -701,7 +742,8 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
     selected_logs <- reactiveVal(NULL)
     batch_snapshot <- reactiveVal(NULL)
     batch_task <- shiny::ExtendedTask$new(function(res, lines, settings, identity, frozen_controls,
-      source_file, variant_source, jobs_source, root, annotation_res = NULL, annotation_source = NULL) {
+      source_file, variant_source, jobs_source, root, annotation_res = NULL, annotation_source = NULL,
+      lanes = variant_batch_lanes_default()) {
       promises::future_promise({
         e <- new.env(parent = globalenv())
         sys.source(source_file, envir = e); sys.source(variant_source, envir = e); sys.source(jobs_source, envir = e)
@@ -715,7 +757,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           }, release = annotation_res$release)
         } else NULL
         variant_batch_submit(e, res, lines, settings, identity, source_file, variant_source, jobs_source, root, frozen_controls,
-                             site_resolver = resolver)
+                             site_resolver = resolver, lanes = lanes)
       }, seed = TRUE)
     }) |> bslib::bind_task_button("batch_submit")
     batch_review <- reactiveVal(NULL)
@@ -740,7 +782,9 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       settings <- backend$validate_config(settings); settings$flank <- flank
       settings$bin_ratio_settings <- if (ratio_supported) bin_widths() else NULL
       frozen <- controls(); frozen$sampling_mode <- "all"; frozen$sample_cap <- NULL
-      list(lines = rows, settings = settings, controls = frozen)
+      lanes <- backend$int_scalar(if (is.null(input$batch_lanes)) variant_batch_lanes_default() else input$batch_lanes,
+        "Variants running at the same time", 1, 16)
+      list(lines = rows, settings = settings, controls = frozen, lanes = lanes)
     }
     observeEvent(input$show_jobs, {
       req(is_active())
@@ -762,6 +806,8 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           p(nrow(snapshot$lines), " non-empty input lines; ", maximum_jobs, " unique query strings."),
           div(class = "alert alert-warning",
             strong(paste0("Up to ", maximum_jobs, " independent jobs × 16 cores = ", 16 * maximum_jobs, " requested cores.")),
+            p(paste0("At most ", snapshot$lanes, " of them run at the same time (", 16 * min(snapshot$lanes, maximum_jobs),
+              " cores in use); the others wait in the scheduler queue and start automatically when a lane is free. Lanes are shared with your earlier batches that are still running.")),
             p("This is an upper bound, not a validated variant count or a promise of simultaneous allocation. Exact VCF lookup, allele ambiguity, record-level deduplication and source checks run after confirmation; they can reduce the submitted job count.")),
           p("All matched BAMs with complete DNA calls. Analysis flank: ±", snapshot$settings$flank, " bp."),
           tags$details(tags$summary("Review query lines and frozen filters"),
@@ -800,7 +846,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
         batch_snapshot(snapshot)
         bslib::update_task_button("batch_submit", state = "busy", session = session)
         batch_task$invoke(resources, snapshot$lines, snapshot$settings, source_identity, snapshot$controls,
-          backend_file, variant_file, job_source, job_root, annotation_now(), annotation_file)
+          backend_file, variant_file, job_source, job_root, annotation_now(), annotation_file, snapshot$lanes)
         NULL
       }, error = function(e) conditionMessage(e))
       if (!is.null(problem)) {
@@ -811,7 +857,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
     output$batch_review_status <- renderUI({
       if (!is.null(batch_review_error())) return(div(class = "alert alert-warning", batch_review_error()))
       if (!is.null(batch_review())) return(p("Resource review is open. No new jobs have been submitted; confirm or go back."))
-      p("Review first, then confirm. Each resolved variant requests its own 16 cores.")
+      p("Review first, then confirm. Each resolved variant requests its own 16 cores and waits for a free lane.")
     })
     observeEvent(batch_task$status(), {
       req(is_active())
@@ -821,7 +867,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
     output$batch_status <- renderUI({
       s <- batch_task$status()
       if (s == "initial") return(p("Enter multiple coordinates in Batch variants to submit independent full jobs."))
-      if (s == "running") return(div(class = "alert alert-info", "Resolving and submitting the frozen batch. Each successful line becomes a separate 16-core job; jobs may start while later lines are being checked."))
+      if (s == "running") return(div(class = "alert alert-info", "Resolving and submitting the frozen batch. Each successful line becomes a separate 16-core job in the next lane; jobs may start while later lines are being checked. Keep this session open until every line is submitted."))
       if (s == "error") {
         message <- tryCatch(batch_task$result(), error = function(e) conditionMessage(e))
         return(div(class = "alert alert-warning", "Batch orchestration failed: ", as.character(message), ". Inspect Jobs for any submissions already accepted before retrying."))
@@ -830,12 +876,82 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       failed <- nrow(rows) - ok - duplicate
       div(class = if (failed) "alert alert-warning" else "alert alert-success",
         ok, " independent jobs submitted; ", duplicate, " duplicate records skipped; ", failed,
-        " lines unresolved or failed. Each submitted variant has its own 16-core request and saved result.")
+        " lines unresolved or failed. Each submitted variant has its own 16-core request and saved result; Batch progress shows how many are running and waiting.")
     })
     output$batch_outcomes <- DT::renderDT(batch_outcomes(), rownames = FALSE, selection = "none",
       options = list(pageLength = 10, scrollX = TRUE))
     output$download_batch <- downloadHandler("variant_batch_outcomes.csv", function(file)
       utils::write.csv(batch_outcomes(), file, row.names = FALSE, na = "NA"))
+    output$batch_progress <- renderUI({
+      req(is_active())
+      x <- variant_batch_progress(job_dashboard())
+      if (!nrow(x)) return(p("No batch jobs yet. Jobs submitted from Batch variants are grouped here."))
+      shown <- utils::head(x, 5L)
+      lines <- lapply(seq_len(nrow(shown)), function(i) {
+        r <- shown[i, ]
+        finished <- r$complete + r$complete_with_failures
+        tags$li(strong(r$batch), ": ", finished, " of ", r$jobs, " finished",
+          if (r$complete_with_failures) paste0(" (", r$complete_with_failures, " with failed samples)"),
+          " · ", r$running, " running · ", r$waiting, " waiting",
+          if (r$failed) tagList(" · ", strong(paste(r$failed, "failed or not submitted"))),
+          if (r$resumable) paste0(" (", r$resumable, " can be resumed)"))
+      })
+      attention <- sum(shown$failed) > 0
+      div(class = paste("alert", if (attention) "alert-warning" else if (sum(shown$running + shown$waiting)) "alert-info" else "alert-success"),
+        tags$ul(class = "mb-0", lines),
+        if (nrow(x) > nrow(shown)) p(class = "mb-0", nrow(x) - nrow(shown), " older batches are listed in the table below."))
+    })
+    resume_batch_result <- reactiveVal(NULL)
+    resume_batch_task <- shiny::ExtendedTask$new(function(paths, root, source_file, variant_source, jobs_source, identity) {
+      promises::future_promise({
+        e <- new.env(parent = globalenv())
+        sys.source(source_file, envir = e); sys.source(variant_source, envir = e); sys.source(jobs_source, envir = e)
+        do.call(rbind, lapply(paths, function(path) {
+          problem <- tryCatch({
+            state <- e$read_variant_job(path, job_root = root)
+            if (!is.null(identity) && !identical(state$request$cfg$data_source_id, identity$id))
+              stop("The saved job belongs to a different dataset.")
+            e$resume_variant_job(path, job_root = root); NA_character_
+          }, error = function(e) conditionMessage(e))
+          data.frame(job_dir = path, resumed = is.na(problem), message = if (is.na(problem)) "" else problem, stringsAsFactors = FALSE)
+        }))
+      }, seed = TRUE)
+    }) |> bslib::bind_task_button("resume_batch")
+    observeEvent(input$resume_batch, {
+      req(is_active())
+      rows <- tryCatch(job_dashboard(), error = function(e) NULL)
+      paths <- if (is.data.frame(rows) && all(c("batch", "status") %in% names(rows)))
+        rows$job_dir[!is.na(rows$batch) & nzchar(rows$batch) & rows$status %in% c("FAILED", "INTERRUPTED")] else character()
+      if (is.null(job_api) || !length(paths)) {
+        resume_batch_result(data.frame(job_dir = character(), resumed = logical(), message = character()))
+        bslib::update_task_button("resume_batch", state = "ready", session = session)
+        return()
+      }
+      resume_batch_result(NULL)
+      resume_batch_task$invoke(paths, job_root, backend_file, variant_file, job_source, source_identity)
+    })
+    observeEvent(resume_batch_task$status(), {
+      req(is_active())
+      if (resume_batch_task$status() != "success") return()
+      resume_batch_result(resume_batch_task$result())
+      refresh_job_list()
+    }, ignoreInit = TRUE)
+    output$resume_batch_status <- renderUI({
+      state <- resume_batch_task$status()
+      if (state == "running") return(div(class = "alert alert-info", "Resuming failed and interrupted batch jobs; each returns to its lane and reuses its verified checkpoints."))
+      if (state == "error") {
+        message <- tryCatch(resume_batch_task$result(), error = function(e) conditionMessage(e))
+        return(div(class = "alert alert-warning", "Batch resume failed: ", as.character(message)))
+      }
+      x <- resume_batch_result()
+      if (is.null(x)) return(NULL)
+      if (!nrow(x)) return(p("No failed or interrupted batch job to resume."))
+      bad <- x[!x$resumed, , drop = FALSE]
+      div(class = if (nrow(bad)) "alert alert-warning" else "alert alert-success",
+        sum(x$resumed), " batch jobs resumed.",
+        if (nrow(bad)) tagList(" ", nrow(bad), " could not be resumed: ",
+          tags$ul(class = "mb-0", lapply(seq_len(nrow(bad)), function(i) tags$li(basename(bad$job_dir[[i]]), ": ", bad$message[[i]])))))
+    })
     refresh_job_list <- function() {
       if (is.null(job_api) || !isTRUE(isolate(is_active()))) return(invisible(NULL))
       found <- tryCatch(job_api$list_variant_jobs(job_root), error = function(e) e)

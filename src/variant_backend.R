@@ -1413,10 +1413,20 @@ variant_compact_contribution <- function(result, source_state) {
        bin_counts = result$bin_counts)
 }
 
+# Seconds to wait before the 2nd, 3rd, ... attempt of a sample whose analysis
+# failed on a tool/I-O error; its length + 1 is the number of attempts.
+variant_retry_waits <- function() {
+  x <- getOption("regshiny.sample_retry_wait", c(2, 8))
+  if (!is.numeric(x) || anyNA(x) || any(x < 0) || length(x) > 5L) stop("Invalid sample retry waits.")
+  x
+}
+variant_transient_error <- function(e)
+  inherits(e, c("regshiny_tool_failure", "rlib_error", "system_command_error"))
+
 analyze_variant_all <- function(resources, variant, cfg, progress_file = NULL,
                                 checkpoint_dir = NULL, resume = TRUE, workers = 1L) {
   progress <- list(state = "RUNNING", total = 0L, completed = 0L, success = 0L, failed = 0L,
-                   resumed = 0L, invalidated = 0L, updated_at = format(Sys.time(), tz = "UTC", usetz = TRUE))
+                   resumed = 0L, invalidated = 0L, retried = 0L, updated_at = format(Sys.time(), tz = "UTC", usetz = TRUE))
   publish_progress <- function() {
     progress$updated_at <<- format(Sys.time(), tz = "UTC", usetz = TRUE)
     variant_write_progress(progress, progress_file)
@@ -1514,26 +1524,41 @@ analyze_variant_all <- function(resources, variant, cfg, progress_file = NULL,
           identical(saved$contribution$source_state, source_state) && saved$contribution$status %in% c("SUCCESS", "FAILED")) {
         contribution <- saved$contribution
         reused <- TRUE
+        # A sample that failed on a tool/I-O error gets a fresh set of attempts
+        # on resume; a validation failure is a result and is kept.
+        if (identical(contribution$status, "FAILED") && isTRUE(contribution$transient)) {
+          contribution <- NULL; reused <- FALSE
+        }
       } else invalidated <- TRUE
     }
+    attempts <- 0L
     if (is.null(contribution)) {
-      contribution <- tryCatch({
-        contigs <- read_bam_contigs(sample_cfg$bam)
-        m <- match(variant$chrom, contigs$chrom)
-        if (is.na(m)) stop("The BAM has no exact matching chromosome name.")
-        if (!is.na(info$contig_length) && contigs$length_bp[[m]] != info$contig_length)
-          stop("VCF and BAM contig lengths differ; reference assembly compatibility failed.")
-        full_result <- analyze_bam(sample_cfg)
-        variant_compact_contribution(full_result, source_state)
-      }, error = function(e) list(status = "FAILED", error = conditionMessage(e),
-                                  source_state = source_state, audit = NULL, depth = NULL, junctions = NULL))
+      waits <- variant_retry_waits()
+      repeat {
+        attempts <- attempts + 1L
+        contribution <- tryCatch({
+          contigs <- read_bam_contigs(sample_cfg$bam)
+          m <- match(variant$chrom, contigs$chrom)
+          if (is.na(m)) stop("The BAM has no exact matching chromosome name.")
+          if (!is.na(info$contig_length) && contigs$length_bp[[m]] != info$contig_length)
+            stop("VCF and BAM contig lengths differ; reference assembly compatibility failed.")
+          full_result <- analyze_bam(sample_cfg)
+          variant_compact_contribution(full_result, source_state)
+        }, error = function(e) list(status = "FAILED", error = conditionMessage(e),
+                                    source_state = source_state, audit = NULL, depth = NULL, junctions = NULL,
+                                    transient = variant_transient_error(e)))
+        if (!identical(contribution$status, "FAILED") || !isTRUE(contribution$transient) ||
+            attempts > length(waits)) break
+        Sys.sleep(waits[[attempts]])
+      }
+      contribution$attempts <- attempts
       if (!identical(source_state, variant_bam_state(sample_cfg$bam)))
         stop("The BAM or its index changed during analysis; no checkpoint was committed.")
       # Per-sample failure is itself a committed, explicitly missing result.
       if (!is.null(path)) variant_atomic_rds(list(fingerprint = fingerprint, sample_key = key,
         checksum = variant_hash_object(contribution), contribution = contribution), path)
     }
-    list(contribution = contribution, reused = reused, invalidated = invalidated)
+    list(contribution = contribution, reused = reused, invalidated = invalidated, attempts = attempts)
   }
   batches <- split(seq_len(nrow(selected)), ceiling(seq_len(nrow(selected)) / workers))
   for (batch in batches) {
@@ -1547,6 +1572,7 @@ analyze_variant_all <- function(resources, variant, cfg, progress_file = NULL,
     selected$checkpoint_reused[[i]] <- entry$reused
     progress$resumed <- progress$resumed + as.integer(entry$reused)
     progress$invalidated <- progress$invalidated + as.integer(entry$invalidated)
+    progress$retried <- progress$retried + as.integer(entry$attempts > 1L)
     variant_stream_add(stream, selected$genotype[[i]], contribution, selected$vcf_sample[[i]])
     selected$status[[i]] <- contribution$status; selected$error[[i]] <- contribution$error
     if (identical(contribution$status, "SUCCESS")) {
@@ -1585,10 +1611,13 @@ analyze_variant_all <- function(resources, variant, cfg, progress_file = NULL,
                      max_per_group = NULL, max_total = NULL, replacement_on_failure = FALSE),
     fingerprint = fingerprint, code_identity = binding$code,
     execution = list(workers = workers, allocated_slots = if (is.na(slots)) NULL else slots,
+                     sample_retry = list(max_attempts = length(variant_retry_waits()) + 1L,
+                       retried_samples = progress$retried,
+                       rule = "Only tool/I-O failures (non-zero exit, timeout) are retried; validation failures are not."),
                      source_consistency = "All selected BAM/index states frozen before analysis and checked at completion."),
     checkpoint = list(directory = checkpoint_dir, resume_requested = isTRUE(resume),
                       reused = progress$resumed, invalidated = progress$invalidated,
-                      policy = "Per-sample atomic contributions replayed exactly once; unchanged failed checkpoints are retained; resume=FALSE recomputes all samples."),
+                      policy = "Per-sample atomic contributions replayed exactly once; a checkpoint that failed validation is retained, one that failed on a tool/I-O error is recomputed on resume; resume=FALSE recomputes all samples."),
     sample_result_format = "Compact per-sample audit plus sparse per-sample junction scores (sample_junctions); detailed reads/events and depth are not retained in the final result.",
     rna_evidence_status = if (rna_supported) "SNV_BASE_COUNTS" else "UNSUPPORTED_NON_SNV",
     count_unit = "retained primary alignment record; paired ends separate",

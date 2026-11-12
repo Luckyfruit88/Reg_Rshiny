@@ -99,12 +99,19 @@ parse_bam_contigs <- function(header_lines) {
   data.frame(chrom = chrom, length_bp = length_bp, stringsAsFactors = FALSE)
 }
 
+# An external tool that exited abnormally or timed out. Unlike a validation
+# error this can be transient (shared storage, node load), so full-cohort jobs
+# retry it; see variant_transient_error().
+tool_failure <- function(message)
+  structure(class = c("regshiny_tool_failure", "error", "condition"), list(message = message, call = NULL))
+
 read_bam_contigs <- function(bam) {
   if (length(bam) != 1L || !file.exists(bam)) stop("Select an existing BAM file.")
   samtools <- unname(Sys.which("samtools"))
   if (!nzchar(samtools)) stop("samtools is not available in PATH.")
   p <- processx::run(samtools, c("view", "-H", bam), timeout = 20, error_on_status = FALSE)
-  if (p$status != 0L) stop("Cannot read the BAM header: ", p$stderr)
+  if (isTRUE(p$timeout) || is.na(p$status) || p$status != 0L)
+    stop(tool_failure(paste0("Cannot read the BAM header: ", p$stderr)))
   parse_bam_contigs(strsplit(p$stdout, "\n", fixed = TRUE)[[1L]])
 }
 
@@ -326,7 +333,7 @@ analyze_bam <- function(cfg) {
     logs <<- c(logs, paste(c(tool, vapply(as.character(args), shQuote, character(1))), collapse = " "),
                p$stderr)
     if (isTRUE(p$timeout) || is.na(p$status) || p$status != 0L)
-      stop(tool, " failed: ", p$stderr, call. = FALSE)
+      stop(tool_failure(paste0(tool, " failed: ", p$stderr)))
     p$stdout
   }
   help <- processx::run(unname(tools[["regtools"]]), c("junctions", "extract", "-h"),

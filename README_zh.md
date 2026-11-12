@@ -39,7 +39,7 @@ Reg_Shiny 用 DNA VCF 的 genotype 分组，对照匹配 RNA-seq BAM 的 depth�
 
 输入 `CHROM:POS` 或 `CHROM:POS:REF:ALT`，选择对应记录后运行 **All matched BAMs**。界面报告实际配置、选中、成功和失败样本数（FHS 对应唯一参与者）；不存在的 genotype 不会补造，缺失 genotype 不是 0/0。
 
-批量查询时，打开 **Jobs** 标签页（或点击侧栏的 **Batch submissions and saved jobs**），在 **Batch variants** 中每行输入一个坐标，然后点击 **Review batch and resources**。审核对话框会显示资源申请上限（每个不重复的查询行 16 核）；点击 **Confirm and submit full jobs** 之前不会提交任何任务。批量任务始终使用全部匹配的 BAM，当前窗口大小和过滤条件分别围绕每个 variant 冻结。查询与提交在后台处理，已提交的任务可在后续条目准备时开始计算。每条输入都有独立的提交结果或失败原因；同一坐标有多个 REF/ALT 时，需要改用明确的 `CHROM:POS:REF:ALT`。在任务列表中打开某个任务，即可查看它自己的结果和日志。
+批量查询时，打开 **Jobs** 标签页（或点击侧栏的 **Batch submissions and saved jobs**），在 **Batch variants** 中每行输入一个坐标，然后点击 **Review batch and resources**。审核对话框会显示资源申请上限（每个不重复的查询行 16 核）；点击 **Confirm and submit full jobs** 之前不会提交任何任务。批量任务始终使用全部匹配的 BAM，当前窗口大小和过滤条件分别围绕每个 variant 冻结。查询与提交在后台处理，已提交的任务可在后续条目准备时开始计算。所有解析成功的 variant 会一次提交，但同时运行的只有 **Variants running at the same time** 设定的个数（默认 8，可设 1–16）：每个批量任务进入下一条通道，同一通道里前一个任务结束后（无论成功或失败，也无论 app 是否开着）由调度器自动启动下一个。通道由你的所有批次共用。**Batch progress** 按批次显示已完成、运行中、等待和失败的任务数，**Resume all failed batch jobs** 会把失败或中断的批量任务送回各自的通道。每条输入都有独立的提交结果或失败原因；同一坐标有多个 REF/ALT 时，需要改用明确的 `CHROM:POS:REF:ALT`。在任务列表中打开某个任务，即可查看它自己的结果和日志。
 
 **RNA allele evidence** 保留 RNA 碱基计数表，并按 genotype 显示逐碱基平均覆盖度、参考序列、GT/AG 改变和实测 junction 支持。不同 genotype 共用刻度；测量为 0 与不可用 NA 分开。GENCODE 页显示参考 transcript/exon/CDS/UTR 和精确 junction 注释。上述结果用于检查剪接证据，不单独证明因果，也不是正式 PSI。
 
@@ -70,9 +70,9 @@ Reg_Shiny 用 DNA VCF 的 genotype 分组，对照匹配 RNA-seq BAM 的 depth�
 
 默认 FHS 源数据需要已有 `mtdna-alcohol` 和 `sequencing` 权限。clone 代码不会新增数据权限。不要使用他人的私有 `.git`、缓存、用户作业目录或 OnDemand rnode 链接。
 
-每个新全量任务独立申请 **16 核**（15 个 RNA worker 和 1 个协调进程）、4 GB/核，默认 12 小时上限。例如，3 个 variant 同时运行会占用 **48 核**，不会共享一份 16 核。实际并行启动时间取决于 SCC 排队和资源可用性；增加核数不保证耗时减半。
+每个新全量任务独立申请 **16 核**（15 个 RNA worker 和 1 个协调进程）、4 GB/核，默认 12 小时上限。例如，3 个 variant 同时运行会占用 **48 核**，不会共享一份 16 核；一个批次同时最多占用 通道数 × 16 核（默认 8 条通道即 128 核），单个提交的任务不进通道排队。实际并行启动时间取决于 SCC 排队和资源可用性；增加核数不保证耗时减半。
 
-计费项目与时限可在启动前设置 `REGSHINY_SGE_PROJECT`、`REGSHINY_FULL_WALLTIME`。旧的 `REGSHINY_FULL_CORES` 不再改变新任务的 16 核配置；历史任务恢复时保留其冻结的原资源配置。交互界面仍按 RStudio 核数使用 1–2 个后台 worker，不承担全量计算。
+计费项目与时限可在启动前设置 `REGSHINY_SGE_PROJECT`、`REGSHINY_FULL_WALLTIME`；`REGSHINY_BATCH_LANES`（1–16）设置批量任务同时运行个数的默认值。旧的 `REGSHINY_FULL_CORES` 不再改变新任务的 16 核配置；历史任务恢复时保留其冻结的原资源配置。交互界面仍按 RStudio 核数使用 1–2 个后台 worker，不承担全量计算。
 
 更新时先停止 app，在本 clone 的 Terminal 中执行 `git pull --ff-only`，然后重新启动。更新不会主动删除私有缓存和作业；重连时仍检查源文件身份。
 

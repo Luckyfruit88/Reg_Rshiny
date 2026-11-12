@@ -45,6 +45,7 @@ run_all_mock_tests <- function() {
     ploidy = 2L, phased = FALSE, linked = c(rep(TRUE, 41), FALSE), bam = bams)
   calls$bam[[42]] <- NA_character_
   ctx <- new.env(); ctx$attempts <- 0L; ctx$interrupt_at <- Inf; ctx$mutate_vcf <- FALSE
+  ctx$flaky_id <- NA_integer_; ctx$flaky_left <- 0L
   fixture <- function(cfg) {
     id <- as.integer(sub("S([0-9]+)\\.bam$", "\\1", basename(cfg$bam)))
     if (id == 3L || id %in% 27:39) stop("Synthetic unreadable BAM")
@@ -72,6 +73,10 @@ run_all_mock_tests <- function() {
     if (ctx$attempts == ctx$interrupt_at)
       stop(structure(list(message = "Synthetic abrupt interruption"), class = c("interrupt", "condition")))
     if (ctx$mutate_vcf) { cat("changed", file = vcf, append = TRUE); ctx$mutate_vcf <- FALSE }
+    if (identical(as.integer(sub("S([0-9]+)\\.bam$", "\\1", basename(cfg$bam))), ctx$flaky_id) && ctx$flaky_left > 0L) {
+      ctx$flaky_left <- ctx$flaky_left - 1L
+      stop(tool_failure("samtools failed: synthetic transient I/O error"))
+    }
     fixture(cfg)
   }, .GlobalEnv)
   cfg <- default_demo_config(); cfg$demo <- FALSE
@@ -150,6 +155,38 @@ run_all_mock_tests <- function() {
   before <- ctx$attempts
   retried <- analyze_variant(resources, variant, cfg, checkpoint_dir = interrupted_dir, resume = FALSE)
   stopifnot(ctx$attempts - before == 39L, retried$provenance$checkpoint$reused == 0L)
+  # A tool/I-O failure is retried inside the run (three attempts); a validation
+  # failure is not, so the 14 unreadable fixtures still cost one attempt each.
+  old_wait <- options(regshiny.sample_retry_wait = c(0, 0)); on.exit(options(old_wait), add = TRUE)
+  stopifnot(variant_transient_error(tool_failure("x")), !variant_transient_error(simpleError("x")))
+  status_of <- function(result, id) result$samples$status[result$samples$vcf_sample == id]
+  retry_dir <- file.path(work, "retry"); retry_progress <- file.path(work, "retry-progress.json")
+  ctx$flaky_id <- 1L; ctx$flaky_left <- 2L; before <- ctx$attempts
+  flaky <- analyze_variant(resources, variant, cfg, checkpoint_dir = retry_dir, progress_file = retry_progress)
+  stopifnot(ctx$attempts - before == 41L, status_of(flaky, "S01") == "SUCCESS",
+            sum(flaky$samples$status == "FAILED") == 14L,
+            flaky$provenance$execution$sample_retry$retried_samples == 1L,
+            flaky$provenance$execution$sample_retry$max_attempts == 3L,
+            jsonlite::read_json(retry_progress)$retried == 1L)
+  all_equal_table(full$depth, flaky$depth, names(full$depth))
+  # Three failed attempts leave an explicit FAILED sample. A resume gives that
+  # sample fresh attempts and still reuses every other checkpoint, including
+  # the validation failures.
+  down_dir <- file.path(work, "down")
+  ctx$flaky_left <- 3L; before <- ctx$attempts
+  down <- analyze_variant(resources, variant, cfg, checkpoint_dir = down_dir)
+  stopifnot(ctx$attempts - before == 41L, status_of(down, "S01") == "FAILED",
+            grepl("synthetic transient", down$samples$error[down$samples$vcf_sample == "S01"], fixed = TRUE),
+            sum(down$samples$status == "FAILED") == 15L)
+  before <- ctx$attempts
+  healed <- analyze_variant(resources, variant, cfg, checkpoint_dir = down_dir)
+  stopifnot(ctx$attempts - before == 1L, status_of(healed, "S01") == "SUCCESS",
+            healed$provenance$checkpoint$reused == 38L, healed$provenance$checkpoint$invalidated == 0L,
+            sum(healed$samples$status == "FAILED") == 14L)
+  all_equal_table(full$depth, healed$depth, names(full$depth))
+  ctx$flaky_id <- NA_integer_
+  options(regshiny.sample_retry_wait = c(1, 2, 3, 4, 5, 6)); all_expect_error(variant_retry_waits(), "Invalid sample retry")
+  options(regshiny.sample_retry_wait = c(0, 0))
   # Worker admission and parallel results are deterministic and equivalent.
   Sys.setenv(NSLOTS = "2")
   all_expect_error(analyze_variant(resources, variant, cfg, workers = 2L), "NSLOTS")
