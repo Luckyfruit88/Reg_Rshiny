@@ -8,7 +8,7 @@ source("src/variant_module.R")
 source("src/single_bam_module.R")
 for (file in c("app.R", "src/variant_module.R", "src/single_bam_module.R", "tests/test_variant_ui.R")) parse(file)
 ui_text <- as.character(variant_ui("contract"))
-for (id in c("query", "batch_queries", "batch_submit", "saved_job", "open_job", "resume_job", "view_context")) {
+for (id in c("query", "batch_queries", "batch_lanes", "batch_submit", "resume_batch", "saved_job", "open_job", "resume_job", "view_context")) {
   needle <- paste0('id="contract-', id, '"')
   matches <- gregexpr(needle, ui_text, fixed = TRUE)[[1L]]
   stopifnot(sum(matches > 0) == 1L)

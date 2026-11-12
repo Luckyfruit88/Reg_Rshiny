@@ -290,19 +290,27 @@ writeLines(c(
   '}'
 ), batch_variant_file)
 batch_memory <- new.env(parent = emptyenv()); batch_memory$counter <- 0L; batch_memory$jobs <- list(); batch_memory$resumes <- 0L
+batch_memory$lane <- 0L; batch_memory$lanes_seen <- integer()
 batch_mock <- new.env(parent = globalenv())
-batch_mock$submit_variant_job <- function(resources, variant, cfg, backend_file, variant_file, job_source, job_root, ui_controls) {
+batch_mock$submit_variant_job <- function(resources, variant, cfg, backend_file, variant_file, job_source, job_root, ui_controls,
+                                          lanes = NULL, batch_id = NULL) {
   batch_memory$counter <- batch_memory$counter + 1L
+  lane <- NA_integer_
+  if (!is.null(lanes)) {
+    batch_memory$lanes_seen <- c(batch_memory$lanes_seen, as.integer(lanes))
+    lane <- batch_memory$lane <- batch_memory$lane %% as.integer(lanes) + 1L
+  }
   path <- paste0("/synthetic/independent/job-", batch_memory$counter)
   failed <- variant$pos1[[1L]] == 210L
   state <- list(status = if (failed) "PREPARATION_FAILED" else "QUEUED", job_id = if (failed) NA_character_ else paste0("JOB-",batch_memory$counter),
     result_ready = FALSE, error = if(failed) "Synthetic matching failure" else NULL,
     progress = list(total=2L,completed=0L,success=0L,failed=0L,resumed=0L),
-    request = list(variant=variant,cfg=cfg,ui_controls=ui_controls,cores=16L,workers=15L))
+    request = list(variant=variant,cfg=cfg,ui_controls=ui_controls,cores=16L,workers=15L,
+      batch_id=if(is.null(batch_id))NA_character_ else batch_id,lane=lane))
   batch_memory$jobs[[path]] <- list(state=state,result=fixture$analyze_variant(resources,variant,cfg,sampling_mode="all"))
   if(failed)stop(structure(list(message="Synthetic matching failure",call=NULL,job_dir=path,record_id=variant$record_id,
     status="PREPARATION_FAILED"),class=c("regshiny_job_error","error","condition")))
-  list(job_dir=path,job_id=state$job_id,status="QUEUED",cores=16L,workers=15L)
+  list(job_dir=path,job_id=state$job_id,status="QUEUED",cores=16L,workers=15L,lane=if(is.na(lane))NULL else lane)
 }
 batch_mock$list_variant_jobs <- function(job_root) {
   paths <- names(batch_memory$jobs)
@@ -313,7 +321,7 @@ batch_mock$list_variant_job_statuses <- function(job_root) {
   if(!length(paths))return(data.frame(job_dir=character(),label=character(),job_id=character(),status=character(),cores=integer()))
   do.call(rbind,lapply(paths,function(path){s<-batch_memory$jobs[[path]]$state
     data.frame(job_dir=path,label=path,job_id=s$job_id,status=s$status,variant=s$request$variant$record_id,
-      cores=16L,workers=15L,total=2L,completed=s$progress$completed,success=s$progress$success,failed=s$progress$failed,
+      batch=s$request$batch_id,lane=s$request$lane,cores=16L,workers=15L,total=2L,completed=s$progress$completed,success=s$progress$success,failed=s$progress$failed,
       result_ready=s$result_ready,stringsAsFactors=FALSE)}))
 }
 batch_mock$read_variant_job <- function(job_dir,job_root) batch_memory$jobs[[job_dir]]$state
@@ -347,6 +355,51 @@ shiny::testServer(variant_server, args=batch_args, {
   stopifnot(configs[[1L]]$start1==150L,configs[[2L]]$start1==50L)
   stopifnot(all(vapply(dirs,function(path)batch_memory$jobs[[path]]$state$request$cores,integer(1))==16L))
   stopifnot(grepl("2 independent jobs submitted",html_text(output$batch_status),fixed=TRUE))
+  # Every attempted line of the batch asks for the default 8 lanes and carries
+  # one batch id; submitted jobs take consecutive lanes.
+  stopifnot(identical(batch_memory$lanes_seen,c(8L,8L,8L)),length(unique(out$batch))==1L,grepl("^batch-",out$batch[[1L]]),
+    identical(out$lane[out$outcome=="SUBMITTED"],c(1L,2L)),all(is.na(out$lane[out$outcome!="SUBMITTED"])))
+  ids <- vapply(dirs,function(path)batch_memory$jobs[[path]]$state$request$batch_id,character(1))
+  stopifnot(all(ids==out$batch[[1L]]))
+})
+# Batch progress groups the dashboard by batch; one click resumes every failed
+# or interrupted batch job and leaves the others alone.
+stopifnot(nrow(variant_batch_progress(data.frame(job_dir="a",status="QUEUED")))==0L,
+  nrow(variant_batch_progress(data.frame(batch=NA_character_,status="QUEUED")))==0L)
+progress_rows <- data.frame(batch=c("batch-2","batch-2","batch-2","batch-2","batch-1","batch-1",NA),
+  status=c("COMPLETE","COMPLETE_WITH_FAILURES","RUNNING","QUEUED","FAILED","SUBMISSION_UNKNOWN","FAILED"),stringsAsFactors=FALSE)
+progress <- variant_batch_progress(progress_rows)
+stopifnot(identical(progress$batch,c("batch-2","batch-1")),identical(progress$jobs,c(4L,2L)),
+  identical(progress$complete,c(1L,0L)),identical(progress$complete_with_failures,c(1L,0L)),
+  identical(progress$running,c(1L,0L)),identical(progress$waiting,c(1L,0L)),
+  identical(progress$failed,c(0L,2L)),identical(progress$resumable,c(0L,1L)))
+stopifnot(variant_batch_lanes_default()==8L)
+Sys.setenv(REGSHINY_BATCH_LANES="4"); stopifnot(variant_batch_lanes_default()==4L)
+Sys.setenv(REGSHINY_BATCH_LANES="40"); stopifnot(variant_batch_lanes_default()==8L)
+Sys.unsetenv("REGSHINY_BATCH_LANES")
+batch_paths <- names(batch_memory$jobs)[vapply(batch_memory$jobs,function(x)!is.na(x$state$request$batch_id),logical(1))]
+stopifnot(length(batch_paths)==3L)
+batch_states <- lapply(batch_paths,function(path)batch_memory$jobs[[path]]$state$status)
+batch_memory$jobs[[batch_paths[[1L]]]]$state$status <- "FAILED"
+batch_memory$jobs[[batch_paths[[2L]]]]$state$status <- "COMPLETE"
+shiny::testServer(variant_server,args=batch_args,{
+  text <- html_text(output$batch_progress)
+  stopifnot(grepl("1 of 3 finished",text,fixed=TRUE),grepl("2 failed or not submitted",text,fixed=TRUE),
+    grepl("(1 can be resumed)",text,fixed=TRUE),grepl("alert-warning",text,fixed=TRUE))
+  before <- batch_memory$resumes
+  session$setInputs(resume_batch=1)
+  await_task(resume_batch_task,session)
+  stopifnot(batch_memory$resumes==before+1L,batch_memory$jobs[[batch_paths[[1L]]]]$state$status=="QUEUED",
+    batch_memory$jobs[[batch_paths[[2L]]]]$state$status=="COMPLETE",
+    grepl("1 batch jobs resumed",html_text(output$resume_batch_status),fixed=TRUE))
+})
+for(i in seq_along(batch_paths))batch_memory$jobs[[batch_paths[[i]]]]$state$status <- batch_states[[i]]
+# With nothing to resume the button reports that and submits nothing.
+shiny::testServer(variant_server,args=batch_args,{
+  before <- batch_memory$resumes
+  session$setInputs(resume_batch=1)
+  session$flushReact()
+  stopifnot(batch_memory$resumes==before,grepl("No failed or interrupted batch job",html_text(output$resume_batch_status),fixed=TRUE))
 })
 # The receipt for A must not adopt B's controls or force the view back to A.
 shiny::testServer(variant_server,args=batch_args,{

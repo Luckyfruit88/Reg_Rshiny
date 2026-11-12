@@ -181,6 +181,40 @@ local({
   old_resumed <- resume_variant_job(legacy_dir, root)
   stopifnot(old_resumed$cores == 8L, old_resumed$workers == 7L,
     identical(old_request, unname(tools::md5sum(file.path(legacy_dir, "request.rds")))))
+  # Batch lanes: a lane job is named after its lane and held on the earlier jobs
+  # of that name; lanes rotate across submissions and batches; a single
+  # submission is not held.
+  submit_lane <- function(i, lanes, batch) submit_variant_job(resources, variants[i, , drop = FALSE], cfg,
+    normalizePath("src/backend.R"), normalizePath("src/variant_backend.R"), normalizePath("src/variant_jobs.R"), root,
+    ui_controls = list(sampling_mode = "all"), lanes = lanes, batch_id = batch)
+  qsub_args <- function(job) readLines(paste0(counter, "-", job$job_id, ".args"))
+  after <- function(args, flag) args[[match(flag, args) + 1L]]
+  stopifnot(!"-hold_jid" %in% args, after(args, "-N") == "RegShiny_all", is.null(first$lane))
+  l1 <- submit_lane(1L, 2L, "batch-A"); l2 <- submit_lane(2L, 2L, "batch-A"); l3 <- submit_lane(3L, 2L, "batch-A")
+  stopifnot(identical(c(l1$lane, l2$lane, l3$lane), c(1L, 2L, 1L)),
+    after(qsub_args(l1), "-N") == "RegShiny_lane01", after(qsub_args(l1), "-hold_jid") == "RegShiny_lane01",
+    after(qsub_args(l2), "-N") == "RegShiny_lane02", after(qsub_args(l2), "-hold_jid") == "RegShiny_lane02",
+    after(qsub_args(l3), "-hold_jid") == "RegShiny_lane01",
+    job_request(l3$job_dir)$batch_id == "batch-A", job_request(l3$job_dir)$lane == 1L,
+    job_read_json(file.path(l3$job_dir, "state.json"))$lane == 1L)
+  l4 <- submit_lane(1L, 2L, "batch-B"); single <- submit(1L)
+  stopifnot(l4$lane == 2L, is.null(single$lane), !"-hold_jid" %in% qsub_args(single))
+  wide <- submit_lane(2L, 16L, "batch-B")
+  stopifnot(wide$lane == 3L, after(qsub_args(wide), "-N") == "RegShiny_lane03")
+  board <- list_variant_job_statuses(root)
+  stopifnot(sum(board$batch %in% "batch-A") == 3L, board$lane[board$job_dir == l4$job_dir] == 2L,
+    is.na(board$batch[board$job_dir == single$job_dir]), is.na(board$lane[board$job_dir == single$job_dir]))
+  before <- as.integer(readLines(counter))
+  expect_error(submit_lane(1L, 17L, "batch-C"), "integer from 1 to 16")
+  expect_error(submit_lane(1L, 2L, "bad id"), "Invalid batch identifier")
+  stopifnot(as.integer(readLines(counter)) == before, job_valid_lane(16), !job_valid_lane(17), !job_valid_lane(NULL),
+    !job_valid_lane(1.5), !job_valid_lane(NA_integer_))
+  # A resumed lane job returns to its own lane.
+  state <- job_read_json(file.path(l1$job_dir, "state.json"))
+  state$status <- "FAILED"; state$accounting <- list(job_id = l1$job_id, failed = 0L, exit_status = 1L)
+  job_atomic_json(state, file.path(l1$job_dir, "state.json"))
+  again <- resume_variant_job(l1$job_dir, root)
+  stopifnot(again$lane == 1L, again$attempt == 2L, after(qsub_args(again), "-hold_jid") == "RegShiny_lane01")
   for (key in ls(.variant_job_probes)) {
     p <- get(key, .variant_job_probes)
     if (!is.null(p$process) && p$process$is_alive()) p$process$kill()

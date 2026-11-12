@@ -69,9 +69,30 @@ job_request_metadata <- function(job_dir) {
   request <- job_request(job_dir)
   value <- list(variant = request$variant, cfg = request$cfg, ui_controls = request$ui_controls,
     created_at = request$created_at, selected_n = if (identical(request$prepared, FALSE)) NA_integer_ else nrow(request$selected_plan),
-    cores = request$cores, workers = request$workers, worker_contract = request$worker_contract)
+    cores = request$cores, workers = request$workers, worker_contract = request$worker_contract,
+    batch_id = request$batch_id, lane = request$lane)
   assign(job_dir, list(stat = stat, value = value), .variant_job_metadata)
   value
+}
+# Batch lanes. A batch job is named after its lane and held (-hold_jid) on every
+# earlier job of this user with the same name, so one lane runs one variant at a
+# time and the number of lanes is the number of batch variants running at once.
+# The scheduler resolves the name at submission and releases the job when its
+# predecessors end, whether they succeeded or not; nothing depends on the app.
+job_max_lanes <- function() 16L
+job_lane_name <- function(lane) sprintf("RegShiny_lane%02d", as.integer(lane))
+job_valid_lane <- function(lane)
+  length(lane) == 1L && is.numeric(lane) && is.finite(lane) && lane == round(lane) && lane >= 1 && lane <= job_max_lanes()
+# Round-robin over the lanes, continued across batches of this user so that
+# consecutive small batches do not queue behind each other in lane 1.
+job_claim_lane <- function(root, lanes) {
+  lanes <- int_scalar(as.numeric(lanes), "Variants running at the same time", 1, job_max_lanes())
+  path <- file.path(root, "batch-lane.json")
+  last <- job_read_json(path)$last
+  last <- if (job_valid_lane(last)) as.integer(last) else 0L
+  lane <- last %% lanes + 1L
+  job_atomic_json(list(last = lane, at = job_now()), path)
+  lane
 }
 job_same_attempt <- function(a, b) {
   !is.null(a) && !is.null(b) &&
@@ -200,7 +221,10 @@ job_scheduler_probe <- function(job_dir, state) {
   }
   if (isTRUE(state$result_ready) || !is.null(state$accounting)) return(state)
   if (is.null(probe)) probe <- list(kind = "qstat", last_checked = 0, process = NULL)
-  interval <- if (probe$kind == "qacct") 60 else 30
+  # A job that has not started changes state by itself when its worker starts,
+  # so a long batch queue is probed rarely; this only delays noticing a queued
+  # job that was deleted or rejected.
+  interval <- if (probe$kind == "qacct") 60 else if (identical(state$status, "QUEUED")) 300 else 30
   if (now - probe$last_checked < interval) return(state)
   executable <- unname(Sys.which(probe$kind))
   if (!nzchar(executable)) return(state)
@@ -249,12 +273,15 @@ list_variant_job_statuses <- function(job_root = Sys.getenv("REGSHINY_JOB_ROOT")
     x <- tryCatch(read_variant_job(jobs$job_dir[[i]], job_root), error = function(e) e)
     if (inherits(x, "error")) return(data.frame(job_dir = jobs$job_dir[[i]], label = jobs$label[[i]],
       job_id = NA_character_, status = "STATUS_UNAVAILABLE", variant = NA_character_, source_id = NA_character_,
+      batch = NA_character_, lane = NA_integer_,
       cores = NA_integer_, workers = NA_integer_, total = NA_integer_, completed = NA_integer_,
       success = NA_integer_, failed = NA_integer_, result_ready = FALSE, error = conditionMessage(x)))
     v <- x$request$variant; p <- x$progress
     data.frame(job_dir = x$job_dir, label = jobs$label[[i]], job_id = scalar(x$job_id), status = x$status,
       variant = paste(v$chrom, v$pos1, v$ref, v$alt, sep = ":"),
-      source_id = scalar(x$request$cfg$data_source_id), cores = scalar(x$request$cores, NA_integer_),
+      source_id = scalar(x$request$cfg$data_source_id), batch = scalar(x$request$batch_id),
+      lane = if (job_valid_lane(x$request$lane)) as.integer(x$request$lane) else NA_integer_,
+      cores = scalar(x$request$cores, NA_integer_),
       workers = scalar(x$request$workers, NA_integer_), total = scalar(p$total, NA_integer_),
       completed = scalar(p$completed, NA_integer_), success = scalar(p$success, NA_integer_),
       failed = scalar(p$failed, NA_integer_), result_ready = x$result_ready, error = scalar(x$error),
@@ -262,7 +289,7 @@ list_variant_job_statuses <- function(job_root = Sys.getenv("REGSHINY_JOB_ROOT")
   })
   if (length(rows)) do.call(rbind, rows) else data.frame(job_dir = character(), label = character(),
     job_id = character(), status = character(), variant = character(), source_id = character(),
-    cores = integer(), workers = integer(), total = integer(), completed = integer(), success = integer(),
+    batch = character(), lane = integer(), cores = integer(), workers = integer(), total = integer(), completed = integer(), success = integer(),
     failed = integer(), result_ready = logical(), error = character(), stringsAsFactors = FALSE)
 }
 read_variant_job_logs <- function(job_dir, job_root = Sys.getenv("REGSHINY_JOB_ROOT"), max_lines = 100L) {
@@ -297,14 +324,18 @@ job_submit_saved_locked <- function(job_dir, job_root) {
   number <- if (is.null(previous$attempt)) 1L else as.integer(previous$attempt) + 1L
   token <- paste0("a", number, "-", basename(tempfile("t", tmpdir = job_dir)))
   token_required <- identical(request$worker_contract, "regshiny-parallel-attempt-v1")
+  laned <- job_valid_lane(request$lane)
+  name <- if (laned) job_lane_name(request$lane) else "RegShiny_all"
   state <- list(status = "SUBMITTING", result_ready = FALSE, attempt = number, attempt_token = token,
     attempt_token_required = token_required,
     progress_file = if (token_required) paste0("progress-", token, ".json") else "progress.json",
     submitted_at = job_now())
+  if (laned) state$lane <- as.integer(request$lane)
   job_atomic_json(state, file.path(job_dir, "state.json"))
   job_atomic_json(state, file.path(job_dir, paste0("submission-", number, ".json")))
   p <- tryCatch(processx::run(qsub, c("-terse", "-P", request$project, "-pe", "omp", request$cores,
-      "-l", paste0("h_rt=", request$walltime), "-l", "mem_per_core=4G", "-N", "RegShiny_all",
+      "-l", paste0("h_rt=", request$walltime), "-l", "mem_per_core=4G", "-N", name,
+      if (laned) c("-hold_jid", name),
       "-v", paste0("REGSHINY_ATTEMPT_TOKEN=", token),
       "-o", file.path(job_dir, paste0("attempt-", number, ".out")),
       "-e", file.path(job_dir, paste0("attempt-", number, ".err")), file.path(job_dir, "run.sh")),
@@ -332,7 +363,7 @@ job_submit_saved_locked <- function(job_dir, job_root) {
   job_atomic_json(state, file.path(job_dir, paste0("submission-", number, ".json")))
   job_atomic_json(state, file.path(job_dir, "state.json"))
   list(job_dir = job_dir, job_id = id, status = "QUEUED", attempt = number, attempt_token = token,
-       cores = request$cores, workers = request$workers)
+       cores = request$cores, workers = request$workers, lane = state$lane)
 }
 job_submit_saved <- function(job_dir, job_root) {
   job_dir <- validate_variant_job_dir(job_dir, job_root)
@@ -342,16 +373,23 @@ job_submit_saved <- function(job_dir, job_root) {
     stop("This same job is already submitted, running, finished, or has an unknown submission outcome. Use verified resume where applicable.")
   job_submit_saved_locked(job_dir, job_root)
 }
+# lanes = NULL submits an unheld job (single variant). A batch passes its lane
+# count and batch id; the job then takes the next lane and waits its turn there.
 submit_variant_job <- function(resources, variant, cfg, backend_file, variant_file, job_source,
-                              job_root = Sys.getenv("REGSHINY_JOB_ROOT"), ui_controls = NULL) {
+                              job_root = Sys.getenv("REGSHINY_JOB_ROOT"), ui_controls = NULL,
+                              lanes = NULL, batch_id = NULL) {
   root <- variant_user_job_root(job_root)
   cfg <- validate_config(cfg)
+  if (!is.null(batch_id) && (length(batch_id) != 1L || !grepl("^[A-Za-z0-9_-]{1,64}$", batch_id)))
+    stop("Invalid batch identifier.")
+  if (!is.null(lanes)) lanes <- int_scalar(as.numeric(lanes), "Variants running at the same time", 1, job_max_lanes())
   if (cfg$demo || nrow(variant) != 1L || cfg$chrom != variant$chrom ||
       variant$pos1 < cfg$start1 || variant$pos1 > cfg$end1) stop("Select one real variant inside the requested interval.")
   job_dir <- tempfile(paste0("run-", format(Sys.time(), "%Y%m%dT%H%M%S", tz = "UTC"), "-"), tmpdir = root)
   job_private_dir(job_dir, create = TRUE)
   partial <- list(schema = "regshiny-full-job-v1", prepared = FALSE, created_at = job_now(), owner_uid = job_uid(),
-    variant = variant, cfg = cfg, ui_controls = ui_controls, selected_plan = data.frame(), cores = 16L, workers = 15L)
+    variant = variant, cfg = cfg, ui_controls = ui_controls, selected_plan = data.frame(), cores = 16L, workers = 15L,
+    batch_id = batch_id)
   job_write_request(partial, job_dir)
   job_atomic_json(list(status = "PREPARING", result_ready = FALSE, started_at = job_now()), file.path(job_dir, "state.json"))
   log <- file.path(job_dir, "preparation.log")
@@ -384,7 +422,8 @@ submit_variant_job <- function(resources, variant, cfg, backend_file, variant_fi
     created_at = partial$created_at, owner_uid = job_uid(),
     resources = resources, variant = current, cfg = cfg, ui_controls = ui_controls,
     selected_plan = plan, vcf_state = info$state, bam_states = lapply(plan$bam, variant_bam_state), source_hashes = hashes,
-    cores = cores, workers = 15L, walltime = walltime, project = project)
+    cores = cores, workers = 15L, walltime = walltime, project = project,
+    batch_id = batch_id, lane = if (is.null(lanes)) NULL else job_claim_lane(root, lanes))
   job_write_request(request, job_dir)
   entry <- c('args <- commandArgs(trailingOnly=TRUE)', 'job_dir <- args[[1L]]',
     'for (f in c("backend.R","variant_backend.R","variant_jobs.R")) source(file.path(job_dir,"source",f))',
@@ -396,7 +435,8 @@ submit_variant_job <- function(resources, variant, cfg, backend_file, variant_fi
     paste0("export REGSHINY_JOB_ROOT=", shQuote(normalizePath(job_root))),
     paste("exec Rscript --vanilla", shQuote(file.path(job_dir, "worker.R")), shQuote(job_dir)))
   writeLines(script, file.path(job_dir, "run.sh")); Sys.chmod(file.path(job_dir, "run.sh"), "0500")
-  cat(job_now(), "Matching complete; selected samples:", nrow(plan), "; cores: 16; workers: 15\n", file = log, append = TRUE)
+  cat(job_now(), "Matching complete; selected samples:", nrow(plan), "; cores: 16; workers: 15",
+      if (job_valid_lane(request$lane)) paste("; batch lane:", request$lane), "\n", file = log, append = TRUE)
   job_atomic_json(list(status = "PREPARED", result_ready = FALSE, prepared_at = job_now()), file.path(job_dir, "state.json"))
   submitting <- TRUE
   job_submit_saved(job_dir, job_root)
