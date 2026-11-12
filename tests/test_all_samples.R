@@ -192,7 +192,11 @@ run_all_mock_tests <- function() {
   all_expect_error(analyze_variant(resources, variant, cfg, workers = 2L), "NSLOTS")
   Sys.setenv(NSLOTS = "3")
   parallel_result <- analyze_variant(resources, variant, cfg, workers = 2L)
-  stopifnot(parallel_result$provenance$execution$workers == 2L)
+  # Parallel runs hand out a chunk of samples at a time; one worker keeps one.
+  stopifnot(parallel_result$provenance$execution$workers == 2L, parallel_result$provenance$execution$dispatch_chunk == 16L,
+            full$provenance$execution$dispatch_chunk == 1L, variant_dispatch_chunk(15L) == 120L, variant_dispatch_chunk(1L) == 1L,
+            identical(parallel_result$samples$status, full$samples$status),
+            identical(parallel_result$sample_junctions, full$sample_junctions))
   for (field in c("depth", "junctions", "rna_bases")) all_equal_table(full[[field]], parallel_result[[field]], names(full[[field]]))
   # The final validation may fail even after all samples were processed. It
   # must never publish COMPLETE for a source-changing run.

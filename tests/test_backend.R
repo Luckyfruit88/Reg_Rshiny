@@ -90,6 +90,13 @@ if (unit_only) {
   stopifnot(summarize_target(r, 201L, 300L, 1L)$junction_near_count == 0L)
   stopifnot(summarize_target(r, 201L, 300L, 2L)$junction_near_count == 1L)
   stopifnot(inherits(try(summarize_target(r, 101L, 300L, 5L), silent = TRUE), "try-error"))
+  # Tool versions and help are asked once per process and executable, and a
+  # repeated analysis returns the same versions, help text and command log.
+  facts <- length(ls(.tool_facts)); stopifnot(facts == 3L)
+  again <- analyze_bam(cfg)
+  stopifnot(length(ls(.tool_facts)) == facts, identical(again$versions, r$versions),
+            identical(gsub("regtools_shiny_[A-Za-z0-9]+", "W", again$log), gsub("regtools_shiny_[A-Za-z0-9]+", "W", r$log)),
+            any(again$log == "samtools '--version'"), isTRUE(warm_tool_facts()), length(ls(.tool_facts)) == facts)
   # No retained reads: no-junction is zero, but a zero-denominator rate is NA.
   cfg$mapq <- 61L
   z <- analyze_bam(cfg); mz <- summarize_target(z, 201L, 300L, 5L)
@@ -118,5 +125,20 @@ if (unit_only) {
             identical(sj$intron_start1, c(121L, 271L, 431L)), identical(sj$intron_end1, c(220L, 370L, 730L)),
             identical(sj$score, c(1L, 1L, 2L)), nrow(sr$events) == 4L)
   unlink(scope_dir, recursive = TRUE)
+  fake_dir <- tempfile("fact_"); dir.create(fake_dir); fake <- file.path(fake_dir, "tool"); calls <- file.path(fake_dir, "calls")
+  write_fake <- function(answer, status) { writeLines(c("#!/bin/sh", paste0("echo x >> ", shQuote(calls)),
+    paste("echo", answer), paste("exit", status)), fake); Sys.chmod(fake, "0700") }
+  n_calls <- function() if (file.exists(calls)) length(readLines(calls)) else 0L
+  write_fake("version-one", 0L)
+  stopifnot(trimws(tool_fact(fake, "--version")$stdout) == "version-one", trimws(tool_fact(fake, "--version")$stdout) == "version-one",
+            n_calls() == 1L, trimws(tool_fact(fake, "-h")$stdout) == "version-one", n_calls() == 2L)
+  # A replaced executable is asked again; a failing answer is never kept.
+  write_fake("version-two-longer", 0L)
+  stopifnot(trimws(tool_fact(fake, "--version")$stdout) == "version-two-longer", n_calls() == 3L)
+  write_fake("broken-tool-answer-x", 1L)
+  stopifnot(tool_fact(fake, "--version")$status == 1L, tool_fact(fake, "--version")$status == 1L, n_calls() == 5L)
+  unlink(fake_dir, recursive = TRUE)
+  # Per-sample tool calls must not scan the node's process table (cleanup_tree).
+  stopifnot(!any(grepl("cleanup_tree = TRUE", deparse(analyze_bam), fixed = TRUE)))
   cat("Native integration tests: PASS\n")
 }

@@ -318,6 +318,32 @@ count_rna_bases <- function(records, position1, min_baseq = 0L) {
   answer
 }
 
+# Version and help text of an external tool. They are the same for every sample
+# of a run, so each is asked once per R process and executable file; forked
+# sample workers inherit the answers (see warm_tool_facts()). Only a normal,
+# successful answer is kept: a failed or timed-out query is asked again.
+.tool_facts <- new.env(parent = emptyenv())
+tool_fact <- function(path, args, timeout = 20) {
+  stat <- file.info(path, extra_cols = FALSE)
+  key <- paste(c(path, as.numeric(stat$size[[1L]]), as.numeric(stat$mtime[[1L]]), as.character(args)), collapse = "\t")
+  if (exists(key, .tool_facts, inherits = FALSE)) return(get(key, .tool_facts))
+  p <- processx::run(path, as.character(args), error_on_status = FALSE, timeout = timeout)
+  if (!isTRUE(p$timeout) && identical(p$status, 0L)) assign(key, p, .tool_facts)
+  p
+}
+# Ask the per-run tool questions in the calling process, before it forks one
+# worker per sample. Does nothing when a tool is missing; analyze_bam() reports that.
+warm_tool_facts <- function() {
+  tools <- Sys.which(c("samtools", "regtools"))
+  if (any(!nzchar(tools))) return(invisible(FALSE))
+  try({
+    tool_fact(unname(tools[["regtools"]]), c("junctions", "extract", "-h"))
+    tool_fact(unname(tools[["samtools"]]), "--version", timeout = 600)
+    tool_fact(unname(tools[["regtools"]]), "--version")
+  }, silent = TRUE)
+  invisible(TRUE)
+}
+
 analyze_bam <- function(cfg) {
   cfg <- validate_config(cfg)
   tools <- Sys.which(c("samtools", "regtools"))
@@ -327,23 +353,28 @@ analyze_bam <- function(cfg) {
   logs <- character(); warnings <- character()
   run <- function(tool, args, stdout = "|") {
     # Argument-vector invocation; never interpolate inputs into a shell command.
+    # No cleanup_tree: samtools and RegTools start no child processes, and
+    # finding a process tree scans every process on the node after each call,
+    # which took about half of a sample's time. A timed-out tool is still killed.
     p <- processx::run(unname(tools[[tool]]), as.character(args), stdout = stdout,
                       stderr = "|", timeout = 600, error_on_status = FALSE,
-                      cleanup_tree = TRUE)
+                      cleanup_tree = FALSE)
     logs <<- c(logs, paste(c(tool, vapply(as.character(args), shQuote, character(1))), collapse = " "),
                p$stderr)
     if (isTRUE(p$timeout) || is.na(p$status) || p$status != 0L)
       stop(tool_failure(paste0(tool, " failed: ", p$stderr)))
     p$stdout
   }
-  help <- processx::run(unname(tools[["regtools"]]), c("junctions", "extract", "-h"),
-                       error_on_status = FALSE, timeout = 20)
+  help <- tool_fact(unname(tools[["regtools"]]), c("junctions", "extract", "-h"))
   help_text <- paste(help$stdout, help$stderr)
   strand_arg <- if (grepl("XS,|XS tags|XS.*RF", help_text)) cfg$strand_mode else
     c(XS = "0", RF = "1", FR = "2")[[cfg$strand_mode]]
-  ver_sam <- run("samtools", "--version")
-  ver_reg <- processx::run(unname(tools[["regtools"]]), "--version",
-                          error_on_status = FALSE, timeout = 20)
+  version <- tool_fact(unname(tools[["samtools"]]), "--version", timeout = 600)
+  logs <- c(logs, "samtools '--version'", version$stderr)
+  if (isTRUE(version$timeout) || is.na(version$status) || version$status != 0L)
+    stop(tool_failure(paste0("samtools failed: ", version$stderr)))
+  ver_sam <- version$stdout
+  ver_reg <- tool_fact(unname(tools[["regtools"]]), "--version")
   reg_version <- paste(ver_reg$stdout, ver_reg$stderr)
   if (cfg$demo) {
     sam <- file.path(work, "demo.sam"); make_demo_sam(sam)
