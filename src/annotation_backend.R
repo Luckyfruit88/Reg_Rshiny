@@ -133,7 +133,9 @@ annotation_gene_names <- function(resources, gene_ids) {
     stop("The GENCODE index changed; reload its resource before querying.")
   rows <- list()
   for (batch in split(ids, ceiling(seq_along(ids) / 500))) {
-    answer <- annotation_command(c("genes", "--db", resources$db, "--ids", paste(batch, collapse = ",")), resources$query_script)
+    # A separate script: the index is keyed by the builder's checksum, which this lookup must not change.
+    answer <- annotation_command(c("--db", resources$db, "--ids", paste(batch, collapse = ",")),
+                                 file.path(dirname(resources$query_script), "annotation_genes.py"))
     if (is.data.frame(answer$genes) && nrow(answer$genes)) rows[[length(rows) + 1L]] <- answer$genes[, names(empty), drop = FALSE]
   }
   if (length(rows)) do.call(rbind, rows) else empty
