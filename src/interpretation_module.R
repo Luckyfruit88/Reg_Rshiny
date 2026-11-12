@@ -24,18 +24,18 @@ interpretation_ui <- function(id) {
         shiny::tags$li(shiny::strong("None found"), ": the sources were consulted and report nothing. ", shiny::strong("Not assessed"), ": the sources needed were unavailable or not queried."),
         shiny::tags$li(shiny::strong("Context"), ": describes the gene or tissue, not evidence about the variant.")),
       shiny::p("The levels rank evidence for follow-up. They are not a clinical classification, and a QTL p-value is not a causal claim. Full rules: docs/METRICS.md.")),
-    bslib::navset_card_tab(id = ns("detail"),
+    shiny::div(class = "regshiny-interp-detail", bslib::navset_card_tab(id = ns("detail"),
       bslib::nav_panel("Transcripts and protein",
         shiny::h5("Most severe consequence per gene"),
-        DT::DTOutput(ns("gene_summary")),
+        interpretation_table_output(ns("gene_summary")),
         shiny::h5("Every transcript"),
-        DT::DTOutput(ns("consequences")),
+        interpretation_table_output(ns("consequences")),
         shiny::downloadButton(ns("download_consequences"), "Consequences CSV"),
         shiny::p("Consequences are computed here from the selected GENCODE release and the reference sequence, with Sequence Ontology terms and Ensembl VEP's severity order. donor_distance and acceptor_distance count into the intron from its 5' and 3' ends (1 = first or last intronic base); negative values are exonic bases counted from the exon edge. Insertions, deletions and multi-base changes are classified by what they overlap and get no protein change."),
         shiny::uiOutput(ns("predictors"))),
       bslib::nav_panel("Splicing",
         shiny::uiOutput(ns("spliceai_status"), role = "status", `aria-live` = "polite"),
-        DT::DTOutput(ns("spliceai_table")),
+        interpretation_table_output(ns("spliceai_table")),
         shiny::p("SpliceAI gives the change in predicted splice-site probability (0 to 1) caused by the ALT allele, for the strongest acceptor gain, acceptor loss, donor gain and donor loss within 500 bp. Common reading: 0.2 permissive, 0.5 recommended, 0.8 high precision. site_position is the first or last intronic base next to that site, the coordinate used for sites in Genotype association; observed_in_cohort joins the bin-ratio row of that site when this result has one."),
         shiny::h5("RNA evidence in this result"),
         shiny::uiOutput(ns("rna_evidence"))),
@@ -43,64 +43,64 @@ interpretation_ui <- function(id) {
         shiny::h5("TOPMed cis-QTL in six tissues and cell types"),
         shiny::uiOutput(ns("topmed_status")),
         shiny::plotOutput(ns("context_plot"), height = 400),
-        DT::DTOutput(ns("heterogeneity")),
+        interpretation_table_output(ns("heterogeneity")),
         shiny::p("One row per gene (eQTL) or intron (sQTL) that is significant in at least one context. Slopes are per ALT allele on normalised phenotypes, so they compare across contexts but not with Model 1. A pair is significant when its nominal p is below that gene's permutation threshold (FDR 5%). q_p_value and i_squared describe how much the slopes differ between contexts (Cochran's Q); the contexts share donors, so read them as descriptive. A context with few samples can miss an effect that is there."),
         shiny::h5("Cross-context model"),
         shiny::uiOutput(ns("tissue_status")),
-        DT::DTOutput(ns("tissue_phenotypes")),
-        DT::DTOutput(ns("tissue_contexts")),
+        interpretation_table_output(ns("tissue_phenotypes")),
+        interpretation_table_output(ns("tissue_contexts")),
         shiny::p("A model trained on TOPMed lead cis-QTLs across the six contexts (scripts/train_tissue_model.R) re-estimates this variant's effect in each context from all of them together. posterior_slope is the re-estimated per-ALT-allele effect; lfsr is the local false sign rate, the probability that the effect is absent or has the other sign, and below 0.05 is called an effect. A small context borrows strength from the others, so it can show an effect without passing its own significance threshold. For a context where the pair was not tested the row is a prediction from the tested contexts (call \"predicted effect\" or \"not predicted\"), not a measurement. Diamonds in the plot are the model's estimates: filled for an effect, pale for a predicted one, empty otherwise. The model describes sharing among these six blood, airway and lung contexts; it says nothing about other tissues."),
         shiny::h5("Tested pairs"),
-        DT::DTOutput(ns("topmed_pairs")),
+        interpretation_table_output(ns("topmed_pairs")),
         shiny::p("Kept: every significant pair, every pair in a SuSiE credible set (pip), pairs with nominal p below 0.001, the three smallest p per context, and every context's row of a phenotype that is significant somewhere. n_estimated is derived from the minor-allele count and frequency."),
         shiny::h5("FHS whole blood"),
         shiny::uiOutput(ns("fhs_status")),
-        DT::DTOutput(ns("fhs_table")),
+        interpretation_table_output(ns("fhs_table")),
         shiny::h5("GTEx v10 (public query)"),
-        DT::DTOutput(ns("gtex_qtl")),
+        interpretation_table_output(ns("gtex_qtl")),
         shiny::plotOutput(ns("expression_plot"), height = 900)),
       bslib::nav_panel("Disease and traits",
         shiny::h5("ClinVar"),
         shiny::uiOutput(ns("clinvar_source")),
-        DT::DTOutput(ns("clinvar")),
+        interpretation_table_output(ns("clinvar")),
         shiny::h5("GWAS Catalog associations reported at this position"),
         shiny::uiOutput(ns("catalog_status")),
-        DT::DTOutput(ns("catalog")),
+        interpretation_table_output(ns("catalog")),
         shiny::p("Read from the local copy of the GWAS Catalog; nothing is sent. The catalog lists the variant each study reported, by rsID and position. risk_allele_is says whether the reported risk allele is this variant's ALT or REF. A reported association shows that the variant, or one in linkage disequilibrium with it, is associated with the trait; fine-mapping (below) is what singles a variant out."),
         shiny::h5("GWAS credible sets containing this variant (Open Targets)"),
         shiny::uiOutput(ns("gwas_status")),
-        DT::DTOutput(ns("gwas")),
+        interpretation_table_output(ns("gwas")),
         shiny::p("posterior_probability is this variant's probability of being the causal one within that credible set; a variant can sit in a credible set with a small probability. l2g_gene is Open Targets' top locus-to-gene prediction for the signal."),
         shiny::h5("Other clinical and curated evidence"),
-        DT::DTOutput(ns("clinical")),
+        interpretation_table_output(ns("clinical")),
         shiny::h5("Pharmacogenomics"),
-        DT::DTOutput(ns("pgx"))),
+        interpretation_table_output(ns("pgx"))),
       bslib::nav_panel("Protein, genes and pathways",
         shiny::h5("Genes linked to this variant"),
-        DT::DTOutput(ns("linked_genes")),
+        interpretation_table_output(ns("linked_genes")),
         shiny::p("overlaps: the variant lies in the gene. sQTL / eQTL target: the gene's splicing or expression is significantly associated with the variant in a TOPMed context. Pathways below are listed for each of these genes."),
         shiny::h5("Reactome pathways of the linked genes (local)"),
-        DT::DTOutput(ns("local_reactome")),
+        interpretation_table_output(ns("local_reactome")),
         shiny::h5("Gene sets of the linked genes (MSigDB, local)"),
-        DT::DTOutput(ns("local_gene_sets")),
+        interpretation_table_output(ns("local_gene_sets")),
         shiny::p("top_level marks Reactome's top-level pathways. Gene sets are Hallmark, canonical pathways (KEGG, WikiPathways, PID, BioCarta) and GO biological process; genes_in_set is the size of the set, smaller sets being more specific."),
         shiny::h5("Protein and molecular QTL credible sets (Open Targets)"),
-        DT::DTOutput(ns("ot_qtl")),
+        interpretation_table_output(ns("ot_qtl")),
         shiny::h5("Genes the variant falls in (Open Targets)"),
-        DT::DTOutput(ns("genes")),
+        interpretation_table_output(ns("genes")),
         shiny::h5("Reactome pathways (Open Targets)"),
-        DT::DTOutput(ns("pathways")),
+        interpretation_table_output(ns("pathways")),
         shiny::h5("Gene Ontology"),
-        DT::DTOutput(ns("go")),
+        interpretation_table_output(ns("go")),
         shiny::h5("Diseases most associated with these genes"),
-        DT::DTOutput(ns("gene_diseases")),
+        interpretation_table_output(ns("gene_diseases")),
         shiny::p("Pathways, GO terms and gene-level disease associations describe the gene. They do not show that this variant changes them.")),
       bslib::nav_panel("Sources",
         shiny::h5("Local sources"),
-        DT::DTOutput(ns("local_sources")),
+        interpretation_table_output(ns("local_sources")),
         shiny::h5("Population frequency of the ALT allele"),
-        DT::DTOutput(ns("frequencies")),
-        shiny::verbatimTextOutput(ns("provenance")))))
+        interpretation_table_output(ns("frequencies")),
+        shiny::verbatimTextOutput(ns("provenance"))))))
 }
 
 interpretation_level_class <- function(level) switch(level, Strong = "regshiny-level-strong", Moderate = "regshiny-level-moderate",
@@ -119,8 +119,13 @@ interpretation_summary_cards <- function(summary) {
   }))
 }
 
+# Table placeholder of the tab. The class lets the stylesheet keep the "no rows"
+# message visible: as a fill item an empty table otherwise collapses to nothing.
+interpretation_table_output <- function(id) shiny::div(class = "regshiny-interp-table", DT::DTOutput(id))
+
 # One table style for the tab: cells stay on one line (the table scrolls
-# sideways), long text gets a fixed-width wrapping block, p-values are shown in
+# sideways), long text gets a fixed-width wrapping block (cut at 160 characters,
+# the rest in the tooltip; downloads keep everything), p-values are shown in
 # scientific notation with "< 1e-300" for a stored zero, other numbers are
 # rounded to `digits` significant figures. Sorting uses the stored numbers.
 interpretation_p_columns <- function(names) grepl("^(p|q)_|^p$|_p$|_p_value$|^p_value$", names) & !grepl("log10", names)
@@ -135,8 +140,9 @@ interpretation_datatable <- function(x, digits = 3L, page_length = 10L) {
     "function(d, type) { if (type !== 'display' || d === null || d === '') return d; var v = Number(d); if (!isFinite(v)) return d;",
     "  if (v === 0) return '&lt; 1e-300'; return (v < 1e-3) ? v.toExponential(2) : String(Number(v.toPrecision(3))); }"))
   if (any(text)) defs[[length(defs) + 1L]] <- list(targets = unname(which(text)) - 1L, render = DT::JS(
-    "function(d, type) { return (type === 'display' && typeof d === 'string' && d.length > 48) ?",
-    "  '<span class=\"regshiny-cell-wrap\">' + d + '</span>' : d; }"))
+    "function(d, type) { if (type !== 'display' || typeof d !== 'string' || d.length <= 48) return d;",
+    "  if (d.length <= 160) return '<span class=\"regshiny-cell-wrap\">' + d + '</span>';",
+    "  return '<span class=\"regshiny-cell-wrap\" title=\"' + d.replace(/\"/g, '&quot;') + '\">' + d.slice(0, 157) + '...</span>'; }"))
   DT::datatable(x, rownames = FALSE, selection = "none", class = "display nowrap",
     options = list(pageLength = page_length, scrollX = TRUE, dom = if (nrow(x) > page_length) "ftip" else "t", columnDefs = defs))
 }

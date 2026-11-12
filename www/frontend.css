@@ -114,6 +114,14 @@
 .regshiny-level-unknown { background: #fff; color: #5c6670; border-color: #90a4ae; border-style: dashed; }
 
 /* Interpretation tables keep one line per row; long text wraps inside a fixed-width block. */
-.regshiny-cell-wrap { display: inline-block; white-space: normal; min-width: 20rem; max-width: 32rem; vertical-align: top; }
+.regshiny-cell-wrap { display: inline-block; white-space: normal; min-width: 20rem; max-width: 38rem; vertical-align: top; }
+/* A truncated cell (full text in its tooltip) gets the full width, so it stays within two or three lines. */
+.regshiny-cell-wrap[title] { width: 38rem; }
 /* Splice-site list in the sidebar: long flags wrap instead of widening the panel. */
 .regshiny-site-list { padding-inline-start: 1.1rem; font-size: 0.875em; overflow-wrap: anywhere; }
+/* An interpretation table with nothing to show keeps its message visible and apart from the next heading. */
+.regshiny-interp-table { flex: 0 0 auto; }
+/* The detail card grows with its tables instead of scrolling inside the page. */
+.regshiny-interp-detail > .card { overflow: visible; height: auto; }
+.regshiny-interp-detail > .card > .card-body, .regshiny-interp-detail .tab-content { overflow: visible; }
+.regshiny-interp-table .shiny-output-error-validation { position: static !important; min-height: 1.6rem; margin-bottom: 1rem; overflow: visible; }
