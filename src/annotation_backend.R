@@ -121,6 +121,24 @@ query_annotation <- function(resources, chrom, start1, end1, build = "GRCh38",
   answer
 }
 
+# Gene names for Ensembl gene IDs (version ignored). Returns one row per ID that
+# this release knows; unknown IDs are simply absent.
+annotation_gene_names <- function(resources, gene_ids) {
+  empty <- data.frame(gene_id = character(), gene_name = character(), gene_type = character(), stringsAsFactors = FALSE)
+  if (!inherits(resources, "regshiny_annotation_resources")) stop("Load the GENCODE annotation resource first.")
+  ids <- unique(sub("\\..*$", "", as.character(gene_ids)))
+  ids <- ids[!is.na(ids) & grepl("^[A-Za-z0-9_]+$", ids)]
+  if (!length(ids)) return(empty)
+  if (!identical(resources$source_state, annotation_file_state(resources$db)))
+    stop("The GENCODE index changed; reload its resource before querying.")
+  rows <- list()
+  for (batch in split(ids, ceiling(seq_along(ids) / 500))) {
+    answer <- annotation_command(c("genes", "--db", resources$db, "--ids", paste(batch, collapse = ",")), resources$query_script)
+    if (is.data.frame(answer$genes) && nrow(answer$genes)) rows[[length(rows) + 1L]] <- answer$genes[, names(empty), drop = FALSE]
+  }
+  if (length(rows)) do.call(rbind, rows) else empty
+}
+
 annotate_junctions <- function(junctions, annotation) {
   required <- c("chrom", "intron_start1", "intron_end1", "strand")
   if (!is.data.frame(junctions) || !all(required %in% names(junctions)))

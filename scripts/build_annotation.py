@@ -354,6 +354,26 @@ def query(args):
     return answer
 
 
+def genes_by_id(args):
+    """Gene records for stable Ensembl gene IDs; the version suffix is ignored."""
+    ids = sorted({part.split(".")[0] for part in args.ids.split(",") if part})
+    if len(ids) > 2000 or any(not re.match(r"^[A-Za-z0-9_]+$", gene) for gene in ids):
+        raise ValueError("Give at most 2,000 plain gene identifiers.")
+    before = source_state(args.db)
+    con, metadata = open_readonly(args.db)
+    try:
+        rows = []
+        for gene in ids:
+            # "." sorts just below "/": this range is every version of one stable ID.
+            rows.extend(dict(row) for row in con.execute(
+                "SELECT * FROM genes WHERE gene_id>=? AND gene_id<? ORDER BY gene_id", (gene + ".", gene + "/")))
+    finally:
+        con.close()
+    if source_state(args.db) != before:
+        raise ValueError("Annotation index changed while being read.")
+    return {"genes": rows, "release": metadata["release"]}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest="command")
@@ -375,11 +395,14 @@ def main():
     q.add_argument("--build", default="GRCh38")
     q.add_argument("--max-transcripts", type=int, default=5000)
     q.add_argument("--max-records", type=int, default=200000)
+    g = subs.add_parser("genes")
+    g.add_argument("--db", required=True)
+    g.add_argument("--ids", required=True, help="Comma-separated Ensembl gene IDs, with or without version.")
     args = parser.parse_args()
     if not args.command:
-        parser.error("Choose build, metadata or query.")
+        parser.error("Choose build, metadata, query or genes.")
     try:
-        value = {"build": build, "metadata": metadata_only, "query": query}[args.command](args)
+        value = {"build": build, "metadata": metadata_only, "query": query, "genes": genes_by_id}[args.command](args)
         print(json.dumps(value, sort_keys=True, separators=(",", ":")))
     except Exception as error:
         print("Annotation error: " + str(error), file=sys.stderr)

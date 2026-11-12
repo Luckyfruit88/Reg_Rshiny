@@ -32,6 +32,10 @@ For Single BAM exploration, omit both DNA fields and the sample mapping, and spe
 
 An optional FASTA needs an existing `.fai`. An optional GENCODE input is either a complete v48 GTF/GTF.gz to index or a compatible SQLite index produced by `scripts/build_annotation.py`. GENCODE v48 and the current splice-sequence overlay require GRCh38; other explicitly declared assemblies retain compatible DNA/RNA count views and do not receive a false GRCh38 annotation.
 
+## Reference sources for Variant interpretation
+
+The Variant interpretation tab reads shared reference files on SCC (CADD, the Ensembl VEP cache, TOPMed and FHS QTL summary statistics, SpliceAI). They are not part of a dataset profile: defaults point at the lab's copies and each can be redirected with a `REGSHINY_*` variable in `config/runtime.Renviron`. A source that is not readable is skipped and listed as unavailable. See [Variant interpretation](INTERPRETATION.md#local-sources).
+
 ## Reuse and switch
 
 **Prepare and connect** publishes validated manifests atomically. A failed attempt leaves the current connected dataset unchanged. A successful switch uses a fresh viewer, and results from the prior source are not reused under new labels. Each profile's saved jobs retain their own data identity.

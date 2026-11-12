@@ -42,6 +42,8 @@ splice_file <- normalizePath("src/splice_evidence_backend.R", mustWork = TRUE)
 splice_backend <- new.env(parent = globalenv())
 sys.source(splice_file, envir = splice_backend)
 source("src/splice_evidence_module.R", local = TRUE)
+interpretation_file <- normalizePath("src/interpretation_backend.R", mustWork = TRUE)
+source("src/interpretation_module.R", local = TRUE)
 source("src/variant_module.R", local = TRUE)
 source("src/data_sources_module.R", local = TRUE)
 source("src/single_bam_module.R", local = TRUE)
@@ -104,6 +106,7 @@ server <- function(input, output, session) {
         job_api = job_api, job_source = job_source, job_root = frozen_bundle$job_root,
         annotation_resources = reactive(bundle_annotation(frozen_bundle, release())), annotation_file = annotation_file,
         splice_reference = frozen_bundle$splice_reference, splice_file = splice_file,
+        interpretation_file = interpretation_file,
         source_identity = list(id = frozen_bundle$id, label = frozen_bundle$label), is_active = enabled)
       single_bam_server(single_id, frozen_bundle, is_active = enabled,
         annotation = reactive(bundle_annotation(frozen_bundle, release())))
