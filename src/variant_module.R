@@ -374,6 +374,7 @@ variant_ui <- function(id) {
       bslib::nav_panel("Junctions", DT::DTOutput(ns("junctions")),
         p("Intron boundaries are 1-based and inclusive. count_sum is total retained alignment support; count_mean is support per successful RNA sample under the submitted sample scope."),
         uiOutput(ns("junction_scope_note"))),
+      bslib::nav_panel("Variant interpretation", interpretation_ui(ns("interpretation"))),
       bslib::nav_panel("GENCODE", annotation_detail_ui(ns("annotation"))),
       bslib::nav_panel("RNA allele evidence",
         uiOutput(ns("rna_status")),
@@ -412,7 +413,7 @@ variant_ui <- function(id) {
 variant_server <- function(id, backend, resources, backend_file, variant_file,
                            job_api = NULL, job_source = NULL, job_root = NULL,
                            annotation_resources = NULL, annotation_file = NULL,
-                           splice_reference = NULL, splice_file = NULL,
+                           splice_reference = NULL, splice_file = NULL, interpretation_file = NULL,
                            source_identity = NULL, is_active = reactive(TRUE)) {
   force(resources); force(source_identity)
   shiny::moduleServer(id, function(input, output, session) {
@@ -1459,6 +1460,16 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
     splice_evidence_server("splice", result = result, reference = splice_reference,
       model_source = splice_file, annotation_resources = annotation_now,
       annotation_source = annotation_file, depth_scale = depth_scale, normalized_depth = depth_display)
+    # Interpretation follows the open result; before one exists, the looked-up record.
+    interpretation_variant <- reactive({
+      r <- tryCatch(result(), error = function(e) NULL)
+      if (!is.null(r)) return(r$variant)
+      tryCatch(selected_record(), error = function(e) NULL)
+    })
+    if (!is.null(interpretation_file)) interpretation_server("interpretation", variant = interpretation_variant,
+      annotation_resources = annotation_now, annotation_file = annotation_file, reference = splice_reference,
+      splice_file = splice_file, interpretation_file = interpretation_file,
+      bin_ratio = bin_ratio_association, junctions = association, is_active = is_active)
     output$audit <- renderPrint({
       r <- result()
       cat(if (identical(result_mode(), "all")) "All matched BAMs with complete DNA calls\n" else "Exploratory deterministic sample subset\n")

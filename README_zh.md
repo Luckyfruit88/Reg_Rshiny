@@ -56,6 +56,14 @@ Reg_Shiny 用 DNA VCF 的 genotype 分组，对照匹配 RNA-seq BAM 的 depth�
 
 全量比较作为独立 SCC 作业运行，关闭浏览器不会停止。回到相同的 prepared dataset，可在保存的作业列表中打开或恢复。原始 BAM/VCF 只读，不自动重建源索引。
 
+**Variant interpretation（变异解读）** 标签页回答“这个变异做了什么、已知什么”：
+
+- **本地自动完成（无需联网，几秒）**：按所选 GENCODE 版本和参考序列逐转录本计算后果（错义、同义、终止、剪接位点等，含 c./p. 记号）；CADD v1.7；SCC 上 TOPMed 六种组织/细胞（肺、单核细胞、鼻上皮、PBMC、T 细胞、全血）的 cis-eQTL / cis-sQTL，并比较效应是各组织共享还是特异；FHS 全血 sQTL / eQTL。
+- **按需运行**：点 **Run SpliceAI** 在本地预测剪接位点的获得/丢失（约 1–2 分钟）；点 **Query public databases** 查询 Open Targets、GTEx、ClinVar，得到疾病/GWAS 可信集、pQTL、通路和各组织表达。公共查询只发送变异的染色体、位置、等位基因和基因 ID，不发送任何样本、基因型或队列信息。
+- **Evidence summary**：按固定规则对蛋白序列、蛋白丰度、剪接、表达、疾病、通路、组织七个问题给出证据等级（Strong / Moderate / Limited / None found / Not assessed）。等级用于排序和后续验证，不是临床分级；只有关联而没有预测或精细定位时最高为 Moderate。
+
+选中 REF/ALT 记录后即可使用，不必先跑 RNA 比较。规则和数据来源见 [docs/INTERPRETATION.md](docs/INTERPRETATION.md)。
+
 ## 每位成员的文件与权限
 
 代码目录下 `.reg_shiny/uid-<uid>/` 保存本用户的私有配置、清单、GENCODE 索引与作业结果，均被 Git 排除。每个数据集有自己的作业存储，同一数据集可同时运行多个 variant 任务。每个任务独立保存准确的 VCF 记录、genotype/BAM 匹配、参数、代码快照、检查点、进度、日志与结果；某个任务失败不会停止其他任务。

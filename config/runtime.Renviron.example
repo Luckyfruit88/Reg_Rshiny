@@ -10,3 +10,13 @@ REGSHINY_FULL_WALLTIME=12:00:00
 # REGSHINY_PROFILE_CONFIG=/absolute/path/to/my-profile.json
 # Optional worker reduction within the RStudio NSLOTS budget:
 # REGSHINY_UI_WORKERS=1
+# Optional reference sources for the Variant interpretation tab (defaults are the
+# lab copies on SCC; an unreadable source is skipped). See docs/INTERPRETATION.md.
+# REGSHINY_TABIX=/path/to/tabix
+# REGSHINY_CADD_SNV=/path/to/whole_genome_SNVs.tsv.gz
+# REGSHINY_CADD_INDEL=/path/to/gnomad.genomes.r4.0.indel.tsv.gz
+# REGSHINY_VEP_CACHE=/path/to/homo_sapiens/112_GRCh38
+# REGSHINY_TOPMED_QTL=/path/to/TOPMed_cis-sQTL
+# REGSHINY_FHS_SQTL=/path/to/discovery.csv;/path/to/replication.csv
+# REGSHINY_FHS_EQTL=/path/to/position_sorted_gene_eqtl.csv
+# REGSHINY_SPLICEAI=/path/to/spliceai

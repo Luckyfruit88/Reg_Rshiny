@@ -161,6 +161,13 @@ run_annotation_tests <- function() {
     m50$annotation_label[[1]] == "Exact GENCODE v50 junction boundaries and strand",
     m50$annotation_label[[3]] == "Not in GENCODE v50 at these exact boundaries and strand",
     identical(m50$annotation_status, matches$junctions$annotation_status))
+  # Gene names by stable ID: the version is ignored and unknown IDs are absent.
+  named <- annotation_gene_names(v50, c("G1.99", "G1", "NOPE.1", "bad id", NA))
+  # The PAR copy on chrY carries the same stable ID and is returned with it.
+  stopifnot(identical(named$gene_id, c("G1.1", "G1.1_PAR_Y")), identical(named$gene_name, c("Gene;One", "PARgene")),
+    all(named$gene_type == "protein_coding"), !nrow(annotation_gene_names(v50, character())))
+  # A stable ID that is a prefix of another never matches it.
+  stopifnot(!nrow(annotation_gene_names(v50, "G")))
   # A v48 GTF cannot be indexed as v50, and unsupported releases are refused.
   p <- build(gtf, file.path(work, "wrong50.sqlite"), c("--release", "50"), should_fail = TRUE)
   stopifnot(p$status != 0L, grepl("version 50", p$stderr), !file.exists(file.path(work, "wrong50.sqlite")))

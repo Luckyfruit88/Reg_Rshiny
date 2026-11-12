@@ -5,6 +5,7 @@ suppressPackageStartupMessages(library(shiny))
 suppressPackageStartupMessages(library(bslib))
 source("src/annotation_module.R")
 source("src/splice_evidence_module.R")
+source("src/interpretation_module.R")
 source("src/variant_module.R")
 
 n <- 75L

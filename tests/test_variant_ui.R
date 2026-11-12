@@ -7,6 +7,7 @@ suppressPackageStartupMessages(library(shiny))
 suppressPackageStartupMessages(library(bslib))
 source("src/annotation_module.R")
 source("src/splice_evidence_module.R")
+source("src/interpretation_module.R")
 source("src/variant_module.R")
 backend_file <- normalizePath("src/backend.R", mustWork = TRUE)
 splice_file <- normalizePath("src/splice_evidence_backend.R", mustWork = TRUE)
@@ -72,7 +73,8 @@ grDevices::dev.off()
 stopifnot(identical(drawn$mean_depth, nd_table$normalized_depth), identical(raw_drawn$mean_depth, nd_fixture$depth$mean_depth))
 shiny::testServer(variant_server,
   args = list(backend = backend, resources = list(build = "SYNTHETIC", vcf_registry = data.frame(chrom = "chr1"), samples = data.frame(vcf_sample = "s1")),
-    backend_file = backend_file, variant_file = fixture_file, splice_file = splice_file), {
+    backend_file = backend_file, variant_file = fixture_file, splice_file = splice_file,
+    interpretation_file = normalizePath("src/interpretation_backend.R", mustWork = TRUE)), {
     session$setInputs(query = "chr1:100", record = "", sampling_mode = "preview", flank = 50, sample_cap = 3,
       mapq = 20, baseq = 0, anchor = 8, min_intron = 70, max_intron = 500000,
       strand_mode = "XS", exclude_dup = FALSE, nh1 = FALSE)
@@ -83,10 +85,23 @@ shiny::testServer(variant_server,
     # A position with two records cannot launch before an explicit allele choice.
     session$setInputs(run = 1)
     stopifnot(isolate(analysis_task$status()) == "initial")
-    session$setInputs(record = "2", run = 2)
+    # Variant interpretation: nothing before a record is chosen, the chosen record
+    # before a comparison exists, then the variant of the open result.
+    stopifnot(is.null(isolate(interpretation_variant())))
+    session$setInputs(record = "2")
+    stopifnot(isolate(interpretation_variant())$alt == "T", isolate(interpretation_variant())$pos1 == 100L)
+    session$setInputs(run = 2)
     await_task(analysis_task, session)
     stopifnot(isolate(analysis_task$status()) == "success")
     stopifnot(isolate(result())$variant$alt == "T", !isolate(results_stale()))
+    stopifnot(identical(isolate(interpretation_variant()), isolate(result())$variant))
+    for (i in seq_len(100L)) { later::run_now(.05); session$flushReact()
+      if (grepl("chr1:100:A:T", tryCatch(html_text(output[["interpretation-header"]]), error = function(e) ""), fixed = TRUE)) break }
+    # No GENCODE or GRCh38 here: the tab says so instead of failing.
+    stopifnot(grepl("chr1:100:A:T", html_text(output[["interpretation-header"]]), fixed = TRUE),
+      grepl("Transcript consequences unavailable", html_text(output[["interpretation-header"]]), fixed = TRUE),
+      grepl("GRCh38 only", html_text(output[["interpretation-header"]]), fixed = TRUE),
+      grepl("Not assessed", html_text(output[["interpretation-summary"]]), fixed = TRUE))
     stopifnot(grepl("Some selected samples failed", html_text(output$status), fixed = TRUE))
     stopifnot(isolate(result())$group_summary$failed_n[[1L]] == 1L)
     stopifnot(isolate(result())$genotypes$raw_gt[[3L]] == "./.")

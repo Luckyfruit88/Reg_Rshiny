@@ -123,6 +123,10 @@ For each annotated splice site near the variant, the bin ratio compares reads in
 
 **Frozen settings.** Bin widths, the exon-read threshold, the site list and the strand rule are stored in the job configuration (and therefore its fingerprint) and in the result provenance. Results saved before this feature must be rerun to show the bin ratio.
 
+## Variant interpretation
+
+Consequence terms, local and public sources and the rules behind the evidence levels are defined in [INTERPRETATION.md](INTERPRETATION.md). The tab only reads: the Model 1 rows it cites are the ones shown in Genotype association, selected by permutation p below 0.05 divided by the number of fitted rows of that table.
+
 ## GENCODE overlay semantics
 
 **Release.** The selector in the page's top bar chooses GENCODE v48 (default) or v50 for every annotation view: the GENCODE tab (tracks, tables, junction labels, downloads), exon shading in RNA allele evidence, the default reference exon of the relative depth view, and the splice sites listed for new comparisons. Both releases are GRCh38 and share one index format; each index records its release and is refused under the other's name. RNA depth, junction counts, Model 1 and saved jobs do not depend on the selection. v50 adds transcript models absent from v48, for example CNIH4 exons ending at chr1:224357043 and a TMBIM1 exon starting at chr2:218278118 (minus strand). A junction can therefore be `NOT_IN_ANNOTATION` in v48 and `ANNOTATED` in v50 (chr2:218278119–218278514 matches ENST00000976644.1), and new comparisons list the splice sites these models add (donor chr1:224357044, acceptor chr2:218278119). Many of the added models are nonsense-mediated-decay transcripts without the `basic` tag: they appear in the GENCODE tab, junction labels and bin-ratio sites, but not in the exon shading or default reference exon, which use `basic` transcripts only.
