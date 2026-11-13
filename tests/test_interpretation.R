@@ -1108,7 +1108,8 @@ if (nzchar(tabix) && file.exists(bgzip)) {
       sc$evidence[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
     grepl("colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant", sc$evidence[sc$question == "Protein abundance (pQTL)"], fixed = TRUE),
     grepl("colocalisation (computed here)", sc$sources[sc$question == "Protein abundance (pQTL)"], fixed = TRUE),
-    grepl("Colocalisation gives eQTL ENSGB a different causal variant from pQTL PA, which this variant leads", sc$finding[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
+    grepl("Colocalisation gives the expression of ENSGB a different causal variant from the plasma level of PA, which this variant leads", sc$finding[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
+    interp_trait_words("sQTL CNIH4 intron 10-90 (Whole blood)") == "the splicing of CNIH4 (intron 10-90)",
     !grepl("colocalisation", sc$evidence[sc$question == "Splicing"], fixed = TRUE),
     !grepl("Colocalisation", interp_evidence_summary(intronic, co_local)$finding[4L], fixed = TRUE))
   # The GTEx build script, when pyarrow is installed.

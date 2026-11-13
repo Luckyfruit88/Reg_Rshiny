@@ -2678,8 +2678,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     if (nrow(led)) {
       other <- ifelse(startsWith(led$trait_1, "eQTL "), led$trait_2, led$trait_1); mine <- ifelse(startsWith(led$trait_1, "eQTL "), led$trait_1, led$trait_2)
       keep <- share(other) >= 0.5 & share(mine) < 0.1; keep[is.na(keep)] <- FALSE
-      if (any(keep) && level == "Moderate") finding <- paste0(finding, " Colocalisation gives ", interp_join(sub(" \\(.*$", "", mine[keep]), ", ", max = 3),
-        " a different causal variant from ", sub(" \\(.*$", "", other[keep][[1L]]),
+      if (any(keep) && level == "Moderate") finding <- paste0(finding, " Colocalisation gives ", interp_join(interp_trait_words(mine[keep]), ", ", max = 3),
+        " a different causal variant from ", interp_trait_words(other[keep][[1L]]),
         ", which this variant leads: that expression signal is probably carried by a neighbour in linkage disequilibrium.")
     }
   }
@@ -2890,6 +2890,13 @@ interp_overall_reading <- function(summary, done = list(public = FALSE, spliceai
   lines
 }
 
+# A colocalisation trait label in words: "eQTL DEGS1 (Lung)" -> "the expression of DEGS1"; an intron keeps its coordinates.
+interp_trait_words <- function(label) {
+  x <- sub(" \\([^()]*\\)$", "", label)
+  x <- sub("^sQTL (\\S+) (intron [0-9]+-[0-9]+)$", "the splicing of \\1 (\\2)", x)
+  x <- sub("^eQTL ", "the expression of ", x); sub("^pQTL ", "the plasma level of ", x)
+}
+
 # What the fine-mapping, the splice outcome and the colocalisation add up to, in at most four sentences:
 # which signals this variant itself is the likely cause of, what the splice change would do to the protein,
 # which signals share that cause and which have another one. Built only from numbers already in the tables
@@ -2930,12 +2937,7 @@ interp_mechanism <- function(local = NULL, splice_protein = NULL, coloc = NULL, 
         gsub("_", " ", sub("^.*\\((.*)\\).*$", "\\1", strsplit(best$annotated_in, ", ", fixed = TRUE)[[1L]][[1L]]))) else "", "."))
   }
   pairs <- if (interp_ok(coloc) && is.data.frame(coloc$pairs) && nrow(coloc$pairs)) coloc$pairs else NULL
-  # "eQTL DEGS1 (Lung)" -> "the expression of DEGS1"; an intron keeps its coordinates.
-  bare <- function(label) {
-    x <- sub(" \\([^()]*\\)$", "", label)
-    x <- sub("^sQTL (\\S+) (intron [0-9]+-[0-9]+)$", "the splicing of \\1 (\\2)", x)
-    x <- sub("^eQTL ", "the expression of ", x); sub("^pQTL ", "the plasma level of ", x)
-  }
+  bare <- interp_trait_words
   if (!is.null(pairs)) {
     same <- pairs[pairs$reading == "one shared causal variant", , drop = FALSE]
     if (nrow(same)) lines <- c(lines, paste0("One causal variant is shared by ", interp_join(sprintf("%s and %s (posterior %.2f)", bare(same$trait_1), bare(same$trait_2),
