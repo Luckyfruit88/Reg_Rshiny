@@ -233,7 +233,12 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
     grepl("1 with one shared causal variant, 0 with different ones", html_text(output$coloc_status), fixed = TRUE),
     grepl("colocalisation, eQTL PLUS (Lung) and pQTL PLUS (UKB-PPP): one shared causal variant (posterior 0.93; this variant's share of the shared signal 0.81)",
       s$evidence[s$question == "Protein abundance (pQTL)"], fixed = TRUE),
-    grepl("colocalisation, eQTL PLUS (Lung)", s$evidence[s$question == "Gene expression (eQTL)"], fixed = TRUE))
+    grepl("colocalisation, eQTL PLUS (Lung)", s$evidence[s$question == "Gene expression (eQTL)"], fixed = TRUE),
+    # The reading box ends with what fine-mapping and colocalisation add; the assumed splice outcome is left out of it.
+    grepl("What fine-mapping, the splice prediction and colocalisation add", html_text(output$reading), fixed = TRUE),
+    grepl("likely cause of the plasma level of PLUS (posterior 0.90); the expression of PLUS (posterior 0.70).", html_text(output$reading), fixed = TRUE),
+    grepl("One causal variant is shared by eQTL PLUS and pQTL PLUS (posterior 0.93).", html_text(output$reading), fixed = TRUE),
+    !grepl("The splice change it is tied to", html_text(output$reading), fixed = TRUE), length(isolate(mechanism_now())) == 2L)
   stopifnot(grepl("regshiny-level-strong", html_text(output$summary), fixed = TRUE), !length(readLines(request_log)))
   # The reading names the best-supported effect and the steps that have not been run.
   stopifnot(grepl("Best-supported molecular effect: a change to the protein sequence and protein abundance and splicing (Strong)", html_text(output$reading), fixed = TRUE),
@@ -274,7 +279,8 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
     level(s, "Protein abundance (pQTL)") == "Not assessed", level(s, "Gene expression (eQTL)") == "None found",
     grepl("this variant is not in the scan", html_text(output$pqtl_status), fixed = TRUE), grepl("not a significant cis-eQTL of any gene", html_text(output$gtex_local_status), fixed = TRUE),
     # With fewer than two traits nothing is compared.
-    is.null(isolate(coloc_now())), grepl("Not applicable: the variant is associated with 0 molecular trait(s)", html_text(output$coloc_status), fixed = TRUE))
+    is.null(isolate(coloc_now())), grepl("Not applicable: the variant is associated with 0 molecular trait(s)", html_text(output$coloc_status), fixed = TRUE),
+    !length(isolate(mechanism_now())), !grepl("What fine-mapping", html_text(output$reading), fixed = TRUE))
   # Going back shows the answers already fetched for that variant.
   current(record()); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 161L))
   stopifnot(!is.null(isolate(public_now())), !is.null(isolate(spliceai_now())), !is.null(isolate(ld_now())))

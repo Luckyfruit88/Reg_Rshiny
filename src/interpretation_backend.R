@@ -2890,6 +2890,63 @@ interp_overall_reading <- function(summary, done = list(public = FALSE, spliceai
   lines
 }
 
+# What the fine-mapping, the splice outcome and the colocalisation add up to, in at most four sentences:
+# which signals this variant itself is the likely cause of, what the splice change would do to the protein,
+# which signals share that cause and which have another one. Built only from numbers already in the tables
+# (posterior probabilities of at least `lead`, decided colocalisation pairs); it adds no evidence of its own.
+interp_mechanism <- function(local = NULL, splice_protein = NULL, coloc = NULL, lead = 0.5) {
+  phrase <- function(kind, gene, detail = "") paste0(switch(kind, sQTL = "the splicing of ", eQTL = "the expression of ", pQTL = "the plasma level of ", ""), gene, detail)
+  led <- data.frame(kind = character(), gene = character(), text = character(), posterior = numeric(), stringsAsFactors = FALSE)
+  add <- function(kind, gene, text, posterior) led <<- rbind(led, data.frame(kind = kind, gene = gene, text = text, posterior = posterior, stringsAsFactors = FALSE))
+  traits <- if (interp_ok(coloc) && is.data.frame(coloc$traits) && nrow(coloc$traits) && !is.null(coloc$traits$this_variant_posterior)) coloc$traits else NULL
+  if (!is.null(traits)) for (i in which(is.finite(traits$this_variant_posterior) & traits$this_variant_posterior >= lead))
+    add(traits$kind[[i]], traits$gene[[i]], phrase(traits$kind[[i]], traits$gene[[i]], if (traits$kind[[i]] == "sQTL")
+      sub("^.* (intron [0-9]+-[0-9]+).*$", " (\\1)", traits$label[[i]]) else ""), traits$this_variant_posterior[[i]])
+  topmed <- if (interp_ok(local) && interp_ok(local$topmed) && isTRUE(local$topmed$available)) local$topmed$pairs else NULL
+  if (!is.null(topmed) && nrow(topmed)) {
+    x <- topmed[topmed$significant %in% TRUE & is.finite(topmed$pip) & topmed$pip >= lead, , drop = FALSE]
+    x <- x[order(-x$pip), , drop = FALSE]; x <- x[!duplicated(paste(x$qtl_type, interp_bare_gene(x$gene_id))), , drop = FALSE]
+    for (i in seq_len(nrow(x))) add(x$qtl_type[[i]], if (nzchar(x$gene[[i]])) x$gene[[i]] else interp_bare_gene(x$gene_id[[i]]),
+      phrase(x$qtl_type[[i]], if (nzchar(x$gene[[i]])) x$gene[[i]] else interp_bare_gene(x$gene_id[[i]])), x$pip[[i]])
+  }
+  pqtl <- if (interp_ok(local) && interp_ok(local$pqtl) && isTRUE(local$pqtl$found)) local$pqtl$associations else NULL
+  if (!is.null(pqtl)) {
+    x <- pqtl[is.finite(pqtl$posterior_probability) & pqtl$posterior_probability >= lead, , drop = FALSE]
+    for (i in seq_len(nrow(x))) add("pQTL", x$protein[[i]], phrase("pQTL", x$protein[[i]]), x$posterior_probability[[i]])
+  }
+  led <- led[order(-led$posterior), , drop = FALSE]; led <- led[!duplicated(paste(led$kind, led$gene)), , drop = FALSE]
+  lines <- character()
+  associated <- (!is.null(topmed) && any(topmed$significant %in% TRUE)) || (!is.null(pqtl) && any(pqtl$significance %in% c("experiment-wide", "genome-wide")))
+  if (nrow(led)) lines <- c(lines, paste0("Fine-mapping places this variant itself as the likely cause of ",
+    interp_join(sprintf("%s (posterior %.2f)", led$text, led$posterior), "; ", max = 4), ".")) else if (associated)
+    lines <- c(lines, "Fine-mapping does not single this variant out for any of its molecular associations; a neighbour in linkage disequilibrium may carry them.")
+  sp <- if (is.data.frame(splice_protein) && nrow(splice_protein)) splice_protein[splice_protein$basis != "assumed outcome" &
+    !grepl("^(none|no annotated)", splice_protein$coding_effect) & nzchar(splice_protein$coding_effect), , drop = FALSE] else NULL
+  if (!is.null(sp) && nrow(sp)) {
+    best <- sp[1L, ]
+    lines <- c(lines, paste0("The splice change it is tied to (", best$basis, ") would give ", best$gene, " transcripts a ", best$coding_effect,
+      if (grepl("^predicted", best$nmd)) ", on an mRNA expected to be degraded" else if (nzchar(best$nmd)) ", with a changed or shortened protein possible" else "",
+      if (nzchar(best$annotated_in)) paste0("; the intron it favours belongs to ", sub(" \\(.*$", "", best$annotated_in), ", annotated as ",
+        gsub("_", " ", sub("^.*\\((.*)\\).*$", "\\1", strsplit(best$annotated_in, ", ", fixed = TRUE)[[1L]][[1L]]))) else "", "."))
+  }
+  pairs <- if (interp_ok(coloc) && is.data.frame(coloc$pairs) && nrow(coloc$pairs)) coloc$pairs else NULL
+  bare <- function(label) sub(" \\([^()]*\\)$", "", label)
+  if (!is.null(pairs)) {
+    same <- pairs[pairs$reading == "one shared causal variant", , drop = FALSE]
+    if (nrow(same)) lines <- c(lines, paste0("One causal variant is shared by ", interp_join(sprintf("%s and %s (posterior %.2f)", bare(same$trait_1), bare(same$trait_2),
+      same$shared_cause), "; ", max = 3), "."))
+    if (!is.null(traits) && nrow(led)) {
+      weak <- traits$label[is.finite(traits$this_variant_posterior) & traits$this_variant_posterior < 0.1]
+      strong <- traits$label[is.finite(traits$this_variant_posterior) & traits$this_variant_posterior >= lead]
+      apart <- pairs[pairs$reading == "two different causal variants" & ((pairs$trait_1 %in% weak & pairs$trait_2 %in% strong) | (pairs$trait_2 %in% weak & pairs$trait_1 %in% strong)), , drop = FALSE]
+      other <- unique(c(apart$trait_1[apart$trait_1 %in% weak], apart$trait_2[apart$trait_2 %in% weak]))
+      if (length(other)) lines <- c(lines, paste0("Another causal variant is behind ", interp_join(bare(other), ", ", max = 4),
+        ": this variant is associated with ", if (length(other) > 1L) "them" else "it", " through linkage disequilibrium."))
+    }
+  }
+  lines
+}
+
 # Fill gene names into TOPMed pairs from a gene_id -> gene_name table.
 interp_name_genes <- function(pairs, names) {
   if (is.null(pairs) || !nrow(pairs) || is.null(names) || !nrow(names)) return(pairs)

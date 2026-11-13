@@ -286,6 +286,7 @@ annotation_S2 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC"
 named <- interp_splice_protein(far_variant, annotation_S2, fetch, transform(ev[1L, ], start1 = 151L, end1 = 300L))
 stopifnot(nrow(named) == 1L, named$annotated_in == "SNC (retained_intron)", named$event == "alternative donor: intron chrS:151-300 in place of intron 2, 1 exon(s) left out",
   named$mrna_change == "70 exonic nt removed")
+splice_outcomes <- sp; splice_named <- named; splice_assumed <- donor_hit   # kept for the mechanism lines further down
 # In the summary the splice outcome speaks for the protein when the variant itself changes nothing.
 intron_only <- csq(annotation_S, "chrS", 180L, "A", "G")
 ps <- interp_evidence_summary(intron_only, splice_protein = sp)
@@ -1087,6 +1088,21 @@ if (nzchar(tabix) && file.exists(bgzip)) {
     !nrow(interp_colocalise(v, co_local, none, min_variants = 3L)$pairs), !interp_colocalise(v, co_local, none)$available)
   # In the summary: the shared cause is named under both traits, and an expression signal with another cause than
   # a signal this variant leads is said to be reached through LD.
+  # The mechanism lines: what the variant leads, what is shared, what has another cause; with the splice outcome when there is one.
+  mech <- interp_mechanism(co_local, splice_outcomes, co)
+  stopifnot(length(mech) == 4L,
+    mech[[1L]] == "Fine-mapping places this variant itself as the likely cause of the expression of GA (posterior 1.00); the plasma level of PA (posterior 1.00).",
+    mech[[2L]] == "The splice change it is tied to (observed and predicted) would give SPL transcripts a premature stop, on an mRNA expected to be degraded.",
+    mech[[3L]] == "One causal variant is shared by eQTL GA and pQTL PA (posterior 1.00).",
+    mech[[4L]] == "Another causal variant is behind eQTL ENSGB: this variant is associated with it through linkage disequilibrium.",
+    # An annotated intron is named with its transcript type; an assumed outcome is not turned into a mechanism.
+    grepl("; the intron it favours belongs to SNC, annotated as retained intron.", interp_mechanism(NULL, splice_named, NULL), fixed = TRUE),
+    !length(interp_mechanism(NULL, splice_assumed, NULL)), !length(interp_mechanism()),
+    # Associations without any posterior of at least 0.5 are said to be unresolved; a SuSiE or pQTL posterior counts as a lead.
+    interp_mechanism(list(topmed = list(available = TRUE, pairs = co_pairs)))[[1L]] ==
+      "Fine-mapping does not single this variant out for any of its molecular associations; a neighbour in linkage disequilibrium may carry them.",
+    grepl("likely cause of the expression of GA (posterior 0.90)", interp_mechanism(list(topmed = list(available = TRUE, pairs = transform(co_pairs, pip = c(.9, NA, .6, NA)))))[[1L]], fixed = TRUE),
+    grepl(paste0("the plasma level of ", acting, " (posterior 0.83)"), interp_mechanism(list(pqtl = led))[[1L]], fixed = TRUE))
   sc <- interp_evidence_summary(intronic, co_local, coloc = co)
   stopifnot(grepl("colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant (posterior 1.00; this variant's share of the shared signal 1.00)",
       sc$evidence[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
