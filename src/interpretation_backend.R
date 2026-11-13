@@ -438,6 +438,371 @@ interp_gene_summary <- function(consequences) {
   out
 }
 
+# ---- Protein consequence of a changed splice -------------------------------
+# What a transcript encodes when one of its introns is replaced by another one
+# (an alternative donor or acceptor, a skipped exon) or is retained. The spliced
+# mRNA is rebuilt from the reference sequence, translated from the annotated
+# start codon, and compared with the annotated protein. The result says what the
+# changed splice would do to the protein; how much of the gene's RNA is spliced
+# that way is a separate question, answered by the RNA evidence.
+interp_revcomp <- function(x) paste(rev(strsplit(interp_complement(x), "", fixed = TRUE)[[1L]]), collapse = "")
+
+# Sorted, merged intervals (touching ones are joined).
+interp_merge_intervals <- function(x) {
+  x <- x[order(x$start1, x$end1), c("start1", "end1"), drop = FALSE]
+  if (nrow(x) < 2L) { rownames(x) <- NULL; return(x) }
+  s <- x$start1[[1L]]; e <- x$end1[[1L]]; out_s <- integer(); out_e <- integer()
+  for (i in seq_len(nrow(x))[-1L]) {
+    if (x$start1[[i]] <= e + 1L) e <- max(e, x$end1[[i]]) else { out_s <- c(out_s, s); out_e <- c(out_e, e); s <- x$start1[[i]]; e <- x$end1[[i]] }
+  }
+  data.frame(start1 = c(out_s, s), end1 = c(out_e, e))
+}
+
+interp_subtract_interval <- function(x, from, to) {
+  rows <- lapply(seq_len(nrow(x)), function(i) {
+    s <- x$start1[[i]]; e <- x$end1[[i]]
+    if (to < s || from > e) return(data.frame(start1 = s, end1 = e))
+    rbind(if (from > s) data.frame(start1 = s, end1 = from - 1L), if (to < e) data.frame(start1 = to + 1L, end1 = e))
+  })
+  out <- do.call(rbind, rows)
+  if (is.null(out)) data.frame(start1 = integer(), end1 = integer()) else { rownames(out) <- NULL; out }
+}
+
+interp_interval_bases <- function(x) if (is.null(x) || !nrow(x)) 0L else sum(x$end1 - x$start1 + 1L)
+
+# Bases of `x` that lie outside every interval of `y`.
+interp_outside <- function(x, y) { for (i in seq_len(nrow(y))) x <- interp_subtract_interval(x, y$start1[[i]], y$end1[[i]]); x }
+
+# Exons and introns of a transcript as genomic intervals in ascending order;
+# an intron runs from its first to its last intronic base.
+interp_exon_set <- function(model) interp_merge_intervals(model$exons[, c("start1", "end1"), drop = FALSE])
+interp_intron_set <- function(model) {
+  ex <- interp_exon_set(model)
+  if (nrow(ex) < 2L) return(data.frame(start1 = integer(), end1 = integer()))
+  data.frame(start1 = ex$end1[-nrow(ex)] + 1L, end1 = ex$start1[-1L] - 1L)
+}
+
+# Exons of the transcript when the intron `use` is spliced out in place of the
+# annotated introns it overlaps, or when the annotated intron `retain` stays in.
+interp_respliced <- function(model, use = NULL, retain = NULL) {
+  ex <- interp_exon_set(model); introns <- interp_intron_set(model)
+  if (!is.null(retain)) ex <- interp_merge_intervals(rbind(ex, data.frame(start1 = retain[[1L]], end1 = retain[[2L]])))
+  if (!is.null(use)) {
+    over <- introns[introns$end1 >= use[[1L]] & introns$start1 <= use[[2L]], , drop = FALSE]
+    ex <- interp_subtract_interval(interp_merge_intervals(rbind(ex, over)), use[[1L]], use[[2L]])
+  }
+  ex
+}
+
+# mRNA of a set of exons (5' to 3'), with the variant's ALT allele where it falls inside one exon.
+interp_spliced_mrna <- function(segments, strand, chrom, fetch, variant = NULL) {
+  parts <- vapply(seq_len(nrow(segments)), function(i) {
+    s <- segments$start1[[i]]; e <- segments$end1[[i]]; x <- fetch(chrom, s, e)
+    if (!is.null(variant) && variant$chrom == chrom) {
+      from <- variant$start1; to <- variant$end1
+      inside <- if (to >= from) from >= s && to <= e else from > s && from <= e
+      if (inside) x <- paste0(substr(x, 1L, from - s), variant$alt_changed, substr(x, to - s + 2L, nchar(x)))
+    }
+    x
+  }, character(1))
+  mrna <- toupper(paste(parts, collapse = ""))
+  if (identical(strand, "-")) interp_revcomp(mrna) else mrna
+}
+
+# 1-based mRNA index of a genomic position in a set of exons (NA when it is not exonic).
+# Indexes refer to the reference sequence: an indel of the variant inside an exon is not counted.
+interp_mrna_index <- function(segments, strand, pos1) {
+  i <- which(pos1 >= segments$start1 & pos1 <= segments$end1)
+  if (!length(i)) return(NA_integer_)
+  i <- i[[1L]]; len <- segments$end1 - segments$start1 + 1L
+  if (identical(strand, "-")) as.integer(sum(len[seq_along(len) > i]) + segments$end1[[i]] - pos1 + 1L) else
+    as.integer(sum(len[seq_len(i - 1L)]) + pos1 - segments$start1[[i]] + 1L)
+}
+
+# Genomic position of a 1-based mRNA index in a set of exons.
+interp_mrna_to_genome <- function(segments, strand, index) {
+  minus <- identical(strand, "-"); order <- if (minus) rev(seq_len(nrow(segments))) else seq_len(nrow(segments))
+  len <- (segments$end1 - segments$start1 + 1L)[order]; cum <- cumsum(len)
+  i <- which(index <= cum)
+  if (is.na(index) || index < 1L || !length(i)) return(NA_integer_)
+  i <- i[[1L]]; offset <- index - (cum[[i]] - len[[i]]) - 1L; seg <- order[[i]]
+  as.integer(if (minus) segments$end1[[seg]] - offset else segments$start1[[seg]] + offset)
+}
+
+# Translation from one mRNA index to the first stop codon.
+interp_translate_from <- function(mrna, start, table) {
+  n <- nchar(mrna)
+  if (is.na(start) || start < 1L || start + 2L > n) return(list(protein = "", stop_index = NA_integer_))
+  first <- seq.int(start, n - 2L, by = 3L)
+  aa <- unname(table[substring(mrna, first, first + 2L)]); aa[is.na(aa)] <- "X"
+  stop <- match("*", aa)
+  list(protein = paste(aa[seq_len(if (is.na(stop)) length(aa) else stop - 1L)], collapse = ""),
+    stop_index = if (is.na(stop)) NA_integer_ else as.integer(first[[stop]]))
+}
+
+# What one re-spliced exon set encodes, compared with the annotated transcript.
+interp_spliced_outcome <- function(model, segments, chrom, fetch, variant = NULL, nmd_distance = 50L) {
+  out <- list(coding_effect = "", protein_change = "", protein_length_ref = NA_integer_, protein_length_new = NA_integer_,
+    nmd = "", nmd_predicted = NA, changes_protein = FALSE)
+  if (is.null(model$coding)) { out$coding_effect <- "no annotated coding sequence"; return(out) }
+  strand <- model$strand; minus <- identical(strand, "-")
+  table <- interp_codon_table(interp_is_mito(chrom))
+  five <- if (minus) model$coding$end1[[1L]] else model$coding$start1[[1L]]
+  reference <- interp_exon_set(model)
+  ref_mrna <- interp_spliced_mrna(reference, strand, chrom, fetch)
+  ref <- interp_translate_from(ref_mrna, interp_mrna_index(reference, strand, five) + model$phase, table)
+  out$protein_length_ref <- nchar(ref$protein)
+  start <- interp_mrna_index(segments, strand, five)
+  if (is.na(start)) {
+    out$coding_effect <- "start codon removed"; out$changes_protein <- TRUE
+    out$protein_change <- "The annotated start codon is spliced out; the product cannot be predicted."
+    return(out)
+  }
+  mrna <- interp_spliced_mrna(segments, strand, chrom, fetch, variant)
+  # An indel of the variant upstream of the start, inside the same exon, moves the start by its length.
+  if (!is.null(variant) && nchar(variant$alt_changed) != nchar(variant$ref_changed)) {
+    hit <- which(variant$start1 >= segments$start1 & variant$start1 <= segments$end1)
+    before <- length(hit) && ((!minus && variant$start1 < five) || (minus && variant$start1 > five))
+    if (before && !is.na(interp_mrna_index(segments, strand, variant$start1))) start <- start + nchar(variant$alt_changed) - nchar(variant$ref_changed)
+  }
+  new <- interp_translate_from(mrna, start + model$phase, table)
+  out$protein_length_new <- nchar(new$protein)
+  if (identical(new$protein, ref$protein) && !is.na(new$stop_index)) {
+    out$coding_effect <- "none: the coding sequence is unchanged"; out$protein_change <- "Same protein; only untranslated sequence differs."
+    out$nmd <- ""; return(out)
+  }
+  out$changes_protein <- TRUE
+  r <- strsplit(ref$protein, "", fixed = TRUE)[[1L]]; q <- strsplit(new$protein, "", fixed = TRUE)[[1L]]
+  shared <- min(length(r), length(q)); pre <- 0L
+  while (pre < shared && r[[pre + 1L]] == q[[pre + 1L]]) pre <- pre + 1L
+  suf <- 0L
+  while (suf < shared - pre && r[[length(r) - suf]] == q[[length(q) - suf]]) suf <- suf + 1L
+  # Where the annotated stop codon sits in the new mRNA: read at the same place, the change is in frame.
+  stop_base <- interp_mrna_to_genome(reference, strand, ref$stop_index)
+  stop_now <- if (is.na(stop_base)) NA_integer_ else interp_mrna_index(segments, strand, stop_base)
+  same_stop <- !is.na(new$stop_index) && !is.na(stop_now) && identical(stop_now, new$stop_index)
+  frame_kept <- !is.na(stop_now) && (stop_now - (start + model$phase)) %% 3L == 0L
+  residues <- function(n) paste0(n, if (n == 1L) " residue" else " residues")
+  if (is.na(new$stop_index)) {
+    out$coding_effect <- "no stop codon"
+    out$protein_change <- paste0("After residue ", pre, " the sequence differs from the annotated protein and no stop codon follows before the end of the transcript (",
+      residues(length(q) - pre), " read).")
+  } else if (same_stop) {
+    gone <- length(r) - pre - suf; added <- length(q) - pre - suf
+    out$coding_effect <- if (added == 0L) "in-frame deletion" else if (gone == 0L) "in-frame insertion" else "in-frame substitution"
+    out$protein_change <- if (added == 0L) sprintf("Residues %d to %d (%s) are removed; the rest of the protein is unchanged (%d instead of %d residues).",
+        pre + 1L, pre + gone, residues(gone), length(q), length(r)) else if (gone == 0L)
+      sprintf("%s inserted after residue %d; the rest of the protein is unchanged (%d instead of %d residues).", residues(added), pre, length(q), length(r)) else
+      sprintf("Residues %d to %d (%s) are replaced by %s; the rest of the protein is unchanged (%d instead of %d residues).",
+        pre + 1L, pre + gone, residues(gone), residues(added), length(q), length(r))
+  } else {
+    fresh <- length(q) - pre
+    extension <- pre == length(r) && fresh > 0L
+    out$coding_effect <- if (extension) "extension" else if (fresh == 0L || frame_kept) "premature stop" else "frameshift"
+    out$protein_change <- if (extension) sprintf("The annotated stop codon is not read; %s are added to the end (%d instead of %d residues).", residues(fresh), length(q), length(r)) else
+      if (fresh == 0L) sprintf("A stop codon follows residue %d: the protein ends there (%d instead of %d residues).", pre, length(q), length(r)) else
+      sprintf("After residue %d the sequence differs from the annotated protein: %s, then a stop codon (%d instead of %d residues).", pre, residues(fresh), length(q), length(r))
+    # Nonsense-mediated decay: a stop codon more than about 50 nt before the last exon-exon junction.
+    len <- segments$end1 - segments$start1 + 1L; if (minus) len <- rev(len)
+    if (!extension && length(len) > 1L) {
+      gap <- sum(len[-length(len)]) - (new$stop_index + 2L)
+      out$nmd_predicted <- gap >= nmd_distance
+      out$nmd <- if (out$nmd_predicted) sprintf("predicted: the new stop codon ends %d nt before the last exon junction, so the mRNA is expected to be degraded", gap) else
+        if (gap >= 0L) sprintf("not predicted: the new stop codon ends %d nt before the last exon junction (under %d), so a shortened protein may be made", gap, nmd_distance) else
+        "not predicted: the new stop codon is in the last exon, so a changed protein may be made"
+    } else if (!extension) { out$nmd_predicted <- FALSE; out$nmd <- "not predicted: the transcript has no exon junction after the stop codon" }
+  }
+  out
+}
+
+interp_splice_events_empty <- function() data.frame(source = character(), effect = character(), site_type = character(), start1 = integer(),
+  end1 = integer(), position = integer(), score = numeric(), observed = logical(), detail = character(), stringsAsFactors = FALSE)
+
+# Splice changes reported or predicted for the variant, in one table:
+#   effect "gain" / "loss" with start1/end1: an intron (first to last intronic base) used more / less with ALT
+#     (a significant TOPMed sQTL intron by the sign of its slope, or a junction of the open result by the sign of its Model 1 slope);
+#   effect "gain" / "loss" with position: a splice site SpliceAI predicts to appear or weaken
+#     (position is the intronic base next to the site, as in interp_spliceai_sites()).
+interp_splice_events <- function(topmed_pairs = NULL, spliceai_sites = NULL, junctions = NULL, min_delta = 0.2) {
+  rows <- list(interp_splice_events_empty())
+  add <- function(...) rows[[length(rows) + 1L]] <<- data.frame(..., stringsAsFactors = FALSE)
+  if (is.data.frame(topmed_pairs) && nrow(topmed_pairs)) {
+    x <- topmed_pairs[topmed_pairs$qtl_type == "sQTL" & topmed_pairs$significant %in% TRUE & is.finite(topmed_pairs$slope_alt) & topmed_pairs$slope_alt != 0 &
+      grepl("^[^:]+:[0-9]+:[0-9]+:", topmed_pairs$phenotype), , drop = FALSE]
+    if (nrow(x)) {
+      # Leafcutter names an intron by the exonic bases on either side of it. One row per intron and direction.
+      key <- paste(sub("^[^:]+:([0-9]+):([0-9]+):.*$", "\\1:\\2", x$phenotype), ifelse(x$slope_alt > 0, "gain", "loss"), sep = ":")
+      for (k in unique(key)) {
+        y <- x[key == k, , drop = FALSE]; best <- y[which.min(y$p_nominal), ]
+        f <- strsplit(k, ":", fixed = TRUE)[[1L]]; ends <- as.integer(f[1:2])
+        add(source = "TOPMed sQTL", effect = f[[3L]], site_type = "", start1 = ends[[1L]] + 1L, end1 = ends[[2L]] - 1L, position = NA_integer_,
+          score = best$slope_alt, observed = TRUE, detail = sprintf("TOPMed sQTL: intron used %s with ALT in %d context(s), strongest %s (slope %+.2f, p %s)",
+            if (f[[3L]] == "gain") "more" else "less", length(unique(y$context)), best$context, best$slope_alt, interp_fmt_p(best$p_nominal)))
+      }
+    }
+  }
+  if (is.data.frame(junctions) && nrow(junctions) && all(c("status", "p_permutation", "beta", "intron_start1", "intron_end1") %in% names(junctions))) {
+    x <- junctions[junctions$status == "OK" & is.finite(junctions$p_permutation), , drop = FALSE]
+    x <- x[x$p_permutation <= 0.05 / max(1L, nrow(x)) & is.finite(x$beta) & x$beta != 0, , drop = FALSE]
+    for (i in seq_len(nrow(x))) add(source = "this cohort", effect = if (x$beta[[i]] > 0) "gain" else "loss", site_type = "", start1 = as.integer(x$intron_start1[[i]]),
+      end1 = as.integer(x$intron_end1[[i]]), position = NA_integer_, score = x$beta[[i]], observed = TRUE,
+      detail = sprintf("this cohort: junction used %s with ALT (%+.2f reads per 100 per ALT allele, permutation p %s)", if (x$beta[[i]] > 0) "more" else "less",
+        x$beta[[i]], interp_fmt_p(x$p_permutation[[i]])))
+  }
+  if (is.data.frame(spliceai_sites) && nrow(spliceai_sites)) {
+    x <- spliceai_sites[is.finite(spliceai_sites$delta) & spliceai_sites$delta >= min_delta & is.finite(spliceai_sites$site_position), , drop = FALSE]
+    for (i in seq_len(nrow(x))) add(source = "SpliceAI", effect = sub("^.* ", "", x$effect[[i]]), site_type = x$site_type[[i]], start1 = NA_integer_, end1 = NA_integer_,
+      position = as.integer(x$site_position[[i]]), score = x$delta[[i]], observed = FALSE, detail = sprintf("SpliceAI %s %.2f", x$effect[[i]], x$delta[[i]]))
+  }
+  out <- do.call(rbind, rows); rownames(out) <- NULL; out
+}
+
+interp_splice_protein_empty <- function() data.frame(gene = character(), transcript_id = character(), transcript_flags = character(), event = character(),
+  support = character(), basis = character(), mrna_change = character(), coding_effect = character(), protein_change = character(),
+  protein_length_ref = integer(), protein_length_new = integer(), nmd = character(), annotated_in = character(), stringsAsFactors = FALSE)
+
+# Predicted protein consequence of every splice change of `events` that can be placed on a coding transcript of
+# the annotation query, plus the variant's own essential splice sites. basis says what supports the change:
+#   "observed and predicted", "observed", "predicted", "weakly predicted", or "assumed outcome" when a splice
+#   site is lost and nothing shows what replaces it (exon skipping and intron retention are both listed).
+interp_splice_protein <- function(variant, annotation, fetch, events = interp_splice_events_empty(), max_kept_intron = 300L, max_span = 2500000L, max_rows = 40L) {
+  out <- interp_splice_protein_empty()
+  tx <- annotation$transcripts
+  if (is.null(tx) || !nrow(tx)) return(out)
+  spans <- new.env(parent = emptyenv())
+  rows <- list()
+  # Introns of every transcript in the query, coding or not: an intron that ALT favours may be one of them.
+  known <- do.call(rbind, lapply(seq_len(nrow(tx)), function(i) {
+    ex <- interp_merge_intervals(annotation$exons[annotation$exons$transcript_id == tx$transcript_id[[i]], c("start1", "end1"), drop = FALSE])
+    if (nrow(ex) < 2L) return(NULL)
+    data.frame(start1 = ex$end1[-nrow(ex)] + 1L, end1 = ex$start1[-1L] - 1L, label = paste0(tx$transcript_id[[i]], " (", tx$transcript_type[[i]], ")"), stringsAsFactors = FALSE)
+  }))
+  annotated_in <- function(use) if (is.null(use) || is.null(known)) "" else paste(known$label[known$start1 == use[[1L]] & known$end1 == use[[2L]]], collapse = ", ")
+  for (i in seq_len(nrow(tx))) {
+    id <- tx$transcript_id[[i]]
+    model <- interp_transcript_model(tx[i, , drop = FALSE], annotation$exons[annotation$exons$transcript_id == id, , drop = FALSE],
+      annotation$features[annotation$features$transcript_id == id, , drop = FALSE])
+    if (is.null(model$coding)) next
+    exons <- interp_exon_set(model); introns <- interp_intron_set(model)
+    lo <- min(exons$start1); hi <- max(exons$end1); chrom <- tx$chrom[[i]]
+    if (!nrow(introns) || hi - lo + 1L > max_span) next
+    # The reference is read in pieces of at most 1,000 bases, each piece once for all transcripts and exon sets.
+    local_fetch <- function(chrom, start1, end1) {
+      from <- seq.int(start1, end1, by = 1000L); to <- pmin(from + 999L, end1)
+      paste(vapply(seq_along(from), function(j) {
+        key <- paste(chrom, from[[j]], to[[j]])
+        if (is.null(spans[[key]])) spans[[key]] <- toupper(fetch(chrom, from[[j]], to[[j]]))
+        spans[[key]]
+      }, character(1)), collapse = "")
+    }
+    minus <- identical(model$strand, "-")
+    donor_end <- function(k) if (minus) introns$end1[[k]] else introns$start1[[k]]      # intronic base next to the donor
+    acceptor_end <- function(k) if (minus) introns$start1[[k]] else introns$end1[[k]]
+    flags <- paste(intersect(c("MANE_Select", "MANE_Plus_Clinical", "Ensembl_canonical", "basic"), model$tags), collapse = ";")
+    scenarios <- list()
+    scenario <- function(use = NULL, retain = NULL, event, support, basis) scenarios[[length(scenarios) + 1L]] <<- list(use = use, retain = retain,
+      event = event, support = support, basis = basis)
+    # Splice sites of this transcript that the variant destroys or that SpliceAI predicts to weaken.
+    lost <- data.frame(intron = integer(), site = character(), support = character(), strong = logical(), stringsAsFactors = FALSE)
+    where <- interp_locate(model, variant$start1)
+    if (identical(where$region, "intron")) {
+      k <- which(introns$start1 <= variant$start1 & introns$end1 >= variant$start1)
+      if (length(k) && !is.na(where$donor_distance) && where$donor_distance <= 2L) lost <- rbind(lost, data.frame(intron = k[[1L]], site = "donor",
+        support = "the variant changes the essential donor site", strong = TRUE, stringsAsFactors = FALSE))
+      if (length(k) && !is.na(where$acceptor_distance) && where$acceptor_distance <= 2L) lost <- rbind(lost, data.frame(intron = k[[1L]], site = "acceptor",
+        support = "the variant changes the essential acceptor site", strong = TRUE, stringsAsFactors = FALSE))
+    }
+    sites <- events[!is.na(events$position), , drop = FALSE]
+    for (j in which(sites$effect == "loss")) for (k in seq_len(nrow(introns))) {
+      at <- if (sites$site_type[[j]] == "donor") donor_end(k) else acceptor_end(k)
+      if (identical(as.integer(at), sites$position[[j]]) && !any(lost$intron == k & lost$site == sites$site_type[[j]]))
+        lost <- rbind(lost, data.frame(intron = k, site = sites$site_type[[j]], support = sites$detail[[j]], strong = sites$score[[j]] >= 0.5, stringsAsFactors = FALSE))
+    }
+    # Introns used more with ALT, as observed, and introns built from a predicted new site and the annotated site it would pair with.
+    gained <- events[events$effect == "gain" & !is.na(events$start1), c("start1", "end1", "detail", "observed", "score"), drop = FALSE]
+    gained$strong <- rep(TRUE, nrow(gained))
+    falling <- events[events$effect == "loss" & !is.na(events$start1), c("start1", "end1", "detail"), drop = FALSE]
+    seen <- gained
+    for (j in which(sites$effect == "gain")) {
+      p <- sites$position[[j]]
+      low_side <- (sites$site_type[[j]] == "donor") != minus
+      # A predicted site that is an end of an intron seen to rise with ALT supports that intron: the RNA shows what it pairs with.
+      same <- if (low_side) which(seen$start1 == p) else which(seen$end1 == p)
+      if (length(same)) {
+        gained <- rbind(gained, data.frame(start1 = seen$start1[same], end1 = seen$end1[same], detail = sites$detail[[j]], observed = FALSE, score = sites$score[[j]],
+          strong = sites$score[[j]] >= 0.5, stringsAsFactors = FALSE))
+        next
+      }
+      # Otherwise a new donor pairs with the next annotated acceptor downstream; a new acceptor with the nearest annotated donor upstream.
+      k <- if (low_side) which(introns$end1 > p) else which(introns$start1 < p)
+      if (!length(k)) next
+      k <- if (low_side) k[[1L]] else k[[length(k)]]
+      gained <- rbind(gained, data.frame(start1 = if (low_side) p else introns$start1[[k]], end1 = if (low_side) introns$end1[[k]] else p,
+        detail = sites$detail[[j]], observed = FALSE, score = sites$score[[j]], strong = sites$score[[j]] >= 0.5, stringsAsFactors = FALSE))
+    }
+    # The same intron from several sources is one change with all of its support.
+    replaced <- integer()
+    if (nrow(gained)) for (key in unique(paste(gained$start1, gained$end1))) {
+      g <- gained[paste(gained$start1, gained$end1) == key, , drop = FALSE]; use <- c(g$start1[[1L]], g$end1[[1L]])
+      if (use[[1L]] > use[[2L]] || use[[1L]] < lo || use[[2L]] > hi || any(introns$start1 == use[[1L]] & introns$end1 == use[[2L]])) next
+      low_shared <- use[[1L]] %in% introns$start1; high_shared <- use[[2L]] %in% introns$end1
+      if (!low_shared && !high_shared) next
+      respliced <- interp_respliced(model, use = use)
+      kept <- interp_interval_bases(interp_outside(respliced, exons)); removed <- interp_interval_bases(interp_outside(exons, respliced))
+      if (kept > max_kept_intron) next
+      skipped <- sum(exons$start1 >= use[[1L]] & exons$end1 <= use[[2L]])
+      # Which annotated intron it stands in for, and whether a site it leaves unused is one the variant weakens:
+      # the site that moved, or for a skipped exon the two sites of that exon.
+      low_partner <- which(introns$start1 == use[[1L]]); high_partner <- which(introns$end1 == use[[2L]]); partner <- c(low_partner, high_partner)
+      moved <- if (low_shared && high_shared) "" else if (low_shared != minus) "acceptor" else "donor"
+      high_site <- if (minus) "donor" else "acceptor"; low_site <- if (minus) "acceptor" else "donor"
+      answered <- if (low_shared && high_shared) which((lost$intron %in% low_partner & lost$site == high_site) | (lost$intron %in% high_partner & lost$site == low_site)) else
+        which(lost$intron %in% partner & lost$site == moved)
+      hit <- lost[answered, , drop = FALSE]; replaced <- c(replaced, answered)
+      number <- function(k) if (minus) nrow(introns) - k + 1L else k    # intron number in transcript order
+      event <- if (low_shared && high_shared) sprintf("exon skipping: %d exon(s) left out (%d nt)", skipped, removed) else
+        sprintf("alternative %s: intron %s:%d-%d in place of intron %d%s", moved, chrom, use[[1L]], use[[2L]], number(partner[[1L]]),
+          if (skipped) sprintf(", %d exon(s) left out", skipped) else "")
+      observed <- any(g$observed); predicted <- any(!g$observed & g$strong) || any(hit$strong)
+      basis <- if (observed && predicted) "observed and predicted" else if (observed) "observed" else if (predicted) "predicted" else "weakly predicted"
+      # An annotated intron of this transcript that the new one stands in for, and that is itself seen to fall with ALT.
+      stood_in <- introns[introns$end1 >= use[[1L]] & introns$start1 <= use[[2L]], , drop = FALSE]
+      fell <- falling$detail[paste(falling$start1, falling$end1) %in% paste(stood_in$start1, stood_in$end1)]
+      scenario(use = use, event = event, support = paste(unique(c(g$detail, hit$support, if (length(fell)) paste0("the annotated intron it replaces: ", fell))), collapse = "; "), basis = basis)
+    }
+    # A lost site with nothing to replace it: the two usual outcomes, as assumptions.
+    for (j in setdiff(seq_len(nrow(lost)), replaced)) {
+      k <- lost$intron[[j]]; low_site <- (lost$site[[j]] == "donor") != minus
+      neighbour <- if (low_site) k - 1L else k + 1L
+      if (neighbour >= 1L && neighbour <= nrow(introns)) scenario(use = c(min(introns$start1[[k]], introns$start1[[neighbour]]), max(introns$end1[[k]], introns$end1[[neighbour]])),
+        event = sprintf("if the exon next to the lost %s is skipped (%d nt)", lost$site[[j]],
+          if (low_site) introns$start1[[k]] - introns$end1[[neighbour]] - 1L else introns$start1[[neighbour]] - introns$end1[[k]] - 1L),
+        support = lost$support[[j]], basis = "assumed outcome")
+      scenario(retain = c(introns$start1[[k]], introns$end1[[k]]), event = sprintf("if the intron is retained (%d nt)", introns$end1[[k]] - introns$start1[[k]] + 1L),
+        support = lost$support[[j]], basis = "assumed outcome")
+    }
+    for (sc in scenarios) {
+      respliced <- interp_respliced(model, use = sc$use, retain = sc$retain)
+      result <- tryCatch(interp_spliced_outcome(model, respliced, chrom, local_fetch, variant), error = function(e) NULL)
+      if (is.null(result)) next
+      kept <- interp_interval_bases(interp_outside(respliced, exons)); removed <- interp_interval_bases(interp_outside(exons, respliced))
+      rows[[length(rows) + 1L]] <- data.frame(gene = tx$gene_name[[i]], transcript_id = id, transcript_flags = flags, event = sc$event, support = sc$support,
+        basis = sc$basis, mrna_change = paste(c(if (removed) paste0(removed, " exonic nt removed"), if (kept) paste0(kept, " intronic nt kept")), collapse = ", "),
+        coding_effect = result$coding_effect, protein_change = result$protein_change, protein_length_ref = result$protein_length_ref,
+        protein_length_new = result$protein_length_new, nmd = result$nmd, annotated_in = annotated_in(sc$use), stringsAsFactors = FALSE)
+    }
+  }
+  if (!length(rows)) return(out)
+  out <- do.call(rbind, rows)
+  # Reference transcripts first, then the best-supported changes; the same outcome on several transcripts is kept once per gene.
+  basis_rank <- match(out$basis, c("observed and predicted", "observed", "predicted", "weakly predicted", "assumed outcome"))
+  flag_rank <- ifelse(grepl("MANE_Select", out$transcript_flags), 0L, ifelse(grepl("Ensembl_canonical", out$transcript_flags), 1L, ifelse(grepl("basic", out$transcript_flags), 2L, 3L)))
+  out <- out[order(flag_rank, basis_rank, out$gene, out$transcript_id), , drop = FALSE]
+  out <- out[!duplicated(out[, c("gene", "event", "coding_effect", "protein_change", "nmd")]), , drop = FALSE]
+  rownames(out) <- NULL
+  utils::head(out, max_rows)
+}
+
 # ---- Small helpers for nested JSON -----------------------------------------
 # Nested element or default; never fails on a missing branch.
 interp_get <- function(x, ..., default = NA) {
@@ -1813,8 +2178,9 @@ interp_summary_row <- function(question, level, finding, evidence = character(),
   data.frame(question = question, level = level, finding = finding, evidence = paste(evidence[nzchar(evidence)], collapse = " | "),
     sources = paste(unique(sources[nzchar(sources)]), collapse = "; "), stringsAsFactors = FALSE)
 
-interp_evidence_summary <- function(consequences, local = NULL, public = NULL, spliceai = NULL, rna = NULL, ld = NULL) {
+interp_evidence_summary <- function(consequences, local = NULL, public = NULL, spliceai = NULL, rna = NULL, ld = NULL, splice_protein = NULL) {
   rows <- list()
+  rank_up <- function(current, new) interp_levels()[[min(match(current, interp_levels()), match(new, interp_levels()))]]
   genic <- consequences[!consequences$most_severe %in% c("upstream_gene_variant", "downstream_gene_variant"), , drop = FALSE]
   ot <- if (interp_ok(public) && interp_ok(public$open_targets) && isTRUE(public$open_targets$found)) public$open_targets else NULL
   ot_queried <- interp_ok(public) && interp_ok(public$open_targets)
@@ -1871,12 +2237,29 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       level <- "None found"
       finding <- paste0("No change to the protein sequence is predicted (", top$most_severe, " in ", top$gene_name, ").")
     }
+    # What the splice change tied to the variant would do to the protein (interp_splice_protein()), best-supported row first.
+    sp <- if (is.data.frame(splice_protein) && nrow(splice_protein)) splice_protein[!grepl("^(none|no annotated)", splice_protein$coding_effect) &
+      nzchar(splice_protein$coding_effect), , drop = FALSE] else NULL
+    if (!is.null(sp) && nrow(sp)) {
+      best <- sp[1L, ]; on_reference <- grepl("MANE_Select|Ensembl_canonical", best$transcript_flags)
+      via <- switch(best$basis, `observed and predicted` = if (on_reference) "Strong" else "Moderate", observed = "Moderate", predicted = "Moderate", "Limited")
+      evidence <- c(evidence, paste0("through splicing (", best$basis, "), ", best$transcript_id, ": ", best$event, "; ", best$mrna_change, "; ", best$coding_effect,
+        if (nzchar(best$nmd)) paste0("; nonsense-mediated decay ", best$nmd) else "",
+        if (nzchar(best$annotated_in)) paste0("; this intron is annotated in ", best$annotated_in) else ""),
+        if (nrow(sp) > 1L) paste0(nrow(sp) - 1L, " more splice outcome(s) in the table"))
+      if (match(via, interp_levels()) < match(level, interp_levels()) || level == "None found") {
+        finding <- paste0(if (level == "None found") "The variant itself does not change the protein sequence. " else paste0(finding, " "),
+          "Through the splice change (", best$basis, "): ", sub("^(.)", "\\L\\1", best$protein_change, perl = TRUE),
+          if (isTRUE(grepl("^predicted", best$nmd))) " Nonsense-mediated decay of that mRNA is predicted." else "")
+        level <- rank_up(level, via)
+      }
+    }
     rows[[1L]] <- interp_summary_row("Protein sequence", level, finding, evidence,
-      c(src, if (is.finite(cadd)) "CADD v1.7", if (!is.null(am) && nrow(am)) "Open Targets", if (is.finite(revel)) "MyVariant.info"))
+      c(src, if (is.finite(cadd)) "CADD v1.7", if (!is.null(am) && nrow(am)) "Open Targets", if (is.finite(revel)) "MyVariant.info",
+        if (!is.null(sp) && nrow(sp)) "splice outcome prediction (computed here)"))
   }
 
   # 2. Protein abundance: cis-pQTL scans and published protein-level associations (local), pQTL credible sets (public).
-  rank_up <- function(current, new) interp_levels()[[min(match(current, interp_levels()), match(new, interp_levels()))]]
   # Genes whose product this variant is itself predicted to change (coding or essential splice-site change, or SpliceAI >= 0.5).
   sai_scores <- if (interp_ok(spliceai) && is.data.frame(spliceai$scores) && nrow(spliceai$scores)) spliceai$scores else NULL
   mechanism <- unique(c(genic$gene_name[genic$most_severe %in% coding_terms], if (!is.null(sai_scores)) sai_scores$gene[sai_scores$max_delta >= 0.5]))

@@ -102,7 +102,7 @@ writeLines(c(
 # Static pieces.
 ui <- as.character(interpretation_ui("x"))
 for (id in c("x-public", "x-spliceai", "x-summary", "x-consequences", "x-context_plot", "x-gwas", "x-pathways", "x-local_sources", "x-pqtl_table",
-  "x-pqtl_status", "x-gtex_local_plot_box", "x-gtex_local_genes", "x-gtex_local_pairs"))
+  "x-pqtl_status", "x-gtex_local_plot_box", "x-gtex_local_genes", "x-gtex_local_pairs", "x-splice_protein", "x-splice_protein_status"))
   stopifnot(grepl(paste0('id="', id, '"'), ui, fixed = TRUE))
 stopifnot(grepl("sends only the variant", ui, fixed = TRUE), grepl("not a clinical classification", ui, fixed = TRUE))
 cards <- as.character(interpretation_summary_cards(data.frame(question = c("Splicing", "Tissue"), level = c("Strong", "Not assessed"),
@@ -194,6 +194,16 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
     grepl("height:222px", html_text(output$gtex_local_plot_box), fixed = TRUE))
   header <- html_text(output$header)
   stopifnot(grepl("chrT:161:A:G", header, fixed = TRUE), grepl("GENCODE v48", header, fixed = TRUE), !grepl("does not match", header, fixed = TRUE))
+  # The splice outcome is computed on its own once the local sources are in: an essential donor with nothing
+  # to show what replaces it gives the assumed outcome (first exon: retention only), read with the ALT allele.
+  await(session, protein_task, function() !is.null(protein_now()))
+  outcome <- isolate(splice_protein_table())
+  stopifnot(nrow(outcome) == 1L, outcome$transcript_id == "TP", outcome$basis == "assumed outcome", outcome$event == "if the intron is retained (40 nt)",
+    outcome$support == "the variant changes the essential donor site", outcome$protein_length_ref == 39L, nzchar(outcome$coding_effect),
+    grepl("0 SpliceAI site(s) (SpliceAI not run)", html_text(output$splice_protein_status), fixed = TRUE),
+    grepl("1 outcome(s) on coding transcripts", html_text(output$splice_protein_status), fixed = TRUE),
+    grepl("through splicing (assumed outcome), TP: if the intron is retained (40 nt); 40 intronic nt kept", isolate(summary_now())$evidence[[1L]], fixed = TRUE),
+    level(isolate(summary_now()), "Protein sequence") == "Strong")
   stopifnot(grepl("regshiny-level-strong", html_text(output$summary), fixed = TRUE), !length(readLines(request_log)))
   # The reading names the best-supported effect and the steps that have not been run.
   stopifnot(grepl("Best-supported molecular effect: a change to the protein sequence and protein abundance and splicing (Strong)", html_text(output$reading), fixed = TRUE),
@@ -213,6 +223,10 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   stopifnot(nrow(sites) == 1L, sites$effect == "donor loss", sites$site_position == 161L, sites$annotated_site == "yes",
     grepl("bin ratio -0.400", sites$observed_in_cohort, fixed = TRUE), grepl("SYNTHETIC SpliceAI", html_text(output$spliceai_status), fixed = TRUE))
   stopifnot(grepl("donor loss 0.93 at exon base 160", isolate(summary_now())$evidence[3L], fixed = TRUE))
+  # The SpliceAI site joins the splice changes and the outcome is computed again with it.
+  await(session, protein_task, function() !is.null(protein_now()) && nrow(protein_now()$events) == 1L)
+  stopifnot(isolate(protein_now())$events$source == "SpliceAI", isolate(protein_now())$events$effect == "loss", nrow(isolate(splice_protein_table())) == 1L,
+    grepl("1 SpliceAI site(s);", html_text(output$splice_protein_status), fixed = TRUE))
   # The LD scan runs on request with the record's own VCF and feeds Disease and the pQTL question.
   stopifnot(is.null(isolate(ld_now())), grepl("Not computed for this variant yet", html_text(output$ld_status), fixed = TRUE))
   session$setInputs(ld = 1L); await(session, ld_task, function() !is.null(ld_now()))
@@ -249,6 +263,28 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
     grepl("Transcript consequences unavailable", html_text(output$header), fixed = TRUE))
   current(record(build = "GRCh37")); session$flushReact(); await(session, local_task, function() is.null(local_now()$local) && identical(local_now()$variant$chrom, "chrT"))
   stopifnot(grepl("GRCh38 only", html_text(output$header), fixed = TRUE), nrow(isolate(summary_now())) == 7L)
+})
+# A junction of the open result that rises with ALT is re-spliced into the transcript: exon 2 left out, in frame.
+rising <- reactiveVal(data.frame(chrom = "chrT", intron_start1 = 161L, intron_end1 = 300L, status = "OK", beta = 3, p_permutation = 1e-4, n = 800L, stringsAsFactors = FALSE))
+shiny::testServer(interpretation_server, args = list(variant = reactive(record(pos = 175L, ref = "A", alt = "G")), annotation_resources = list(release = "48"),
+  annotation_file = annotation_source, reference = list(fasta = "/synthetic.fa"), splice_file = splice_source, interpretation_file = fixture_backend,
+  junctions = reactive(rising())), {
+  session$flushReact(); await(session, local_task, function() !is.null(local_now()))
+  await(session, protein_task, function() !is.null(protein_now()))
+  outcome <- isolate(splice_protein_table()); s <- isolate(summary_now())
+  stopifnot(nrow(outcome) == 1L, outcome$event == "exon skipping: 1 exon(s) left out (60 nt)", outcome$basis == "observed", outcome$coding_effect == "in-frame deletion",
+    outcome$protein_length_new == 19L, grepl("this cohort: junction used more with ALT (+3.00 reads per 100", outcome$support, fixed = TRUE),
+    level(s, "Protein sequence") == "Moderate", grepl("The variant itself does not change the protein sequence. Through the splice change (observed): residues ", s$finding[[1L]], fixed = TRUE),
+    grepl("(20 residues) are removed; the rest of the protein is unchanged (19 instead of 39 residues).", s$finding[[1L]], fixed = TRUE),
+    grepl("1 intron(s) used more and 0 used less with ALT (0 from TOPMed sQTL, 1 from the open result)", html_text(output$splice_protein_status), fixed = TRUE))
+})
+# Without a reference sequence the outcome is not computed and says why.
+shiny::testServer(interpretation_server, args = list(variant = reactive(record()), annotation_resources = list(release = "48"), annotation_file = annotation_source,
+  reference = simpleError("no FASTA"), splice_file = splice_source, interpretation_file = fixture_backend), {
+  session$flushReact(); await(session, local_task, function() !is.null(local_now()))
+  await(session, protein_task, function() !is.null(protein_now()))
+  stopifnot(inherits(isolate(protein_now()), "error"), is.null(isolate(splice_protein_table())),
+    grepl("Not computed: the reference sequence is unavailable.", html_text(output$splice_protein_status), fixed = TRUE), nrow(isolate(summary_now())) == 7L)
 })
 # No reference: consequences still classify by position, SpliceAI reports why it cannot run.
 shiny::testServer(interpretation_server, args = list(variant = reactive(record(pos = 124L, ref = "G", alt = "A")),

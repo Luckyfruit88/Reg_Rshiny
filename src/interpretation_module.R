@@ -33,6 +33,10 @@ interpretation_ui <- function(id) {
         shiny::h5("Every transcript"),
         interpretation_table_output(ns("consequences")),
         shiny::downloadButton(ns("download_consequences"), "Consequences CSV"),
+        shiny::h5("Protein consequence of the splice change (predicted)"),
+        shiny::uiOutput(ns("splice_protein_status"), role = "status", `aria-live` = "polite"),
+        interpretation_table_output(ns("splice_protein")),
+        shiny::p("For every splice change tied to this variant, the coding transcripts it fits are re-spliced from the reference sequence and translated from their annotated start codon. Changes come from three places: an intron that a TOPMed sQTL or a junction of the open result shows is used more with the ALT allele; a splice site SpliceAI predicts to appear (paired with the annotated site it would splice to) or to weaken; and an essential splice site the variant itself changes. basis says what supports the change: observed (RNA association), predicted (SpliceAI of at least 0.5, or an essential site), both, weakly predicted (SpliceAI 0.2 to 0.5), or assumed outcome, used when a site is lost and nothing shows what replaces it, in which case exon skipping and intron retention are both listed. coding_effect and protein_change compare the product with the annotated protein; nmd says whether the new stop codon lies more than 50 nt before the last exon junction, the usual condition for nonsense-mediated decay. annotated_in names transcripts of the selected GENCODE release that already contain the intron. The table says what the changed splice would encode. It does not say how much of the gene's RNA is spliced that way: read that from the RNA evidence. Transcripts longer than 2.5 Mb and changes that would keep more than 300 nt of intron are left out."),
         shiny::p("Consequences are computed here from the selected GENCODE release and the reference sequence, with Sequence Ontology terms and Ensembl VEP's severity order. donor_distance and acceptor_distance count into the intron from its 5' and 3' ends (1 = first or last intronic base); negative values are exonic bases counted from the exon edge. Insertions, deletions and multi-base changes are classified by what they overlap and get no protein change."),
         shiny::uiOutput(ns("predictors"))),
       bslib::nav_panel("Splicing",
@@ -403,13 +407,57 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     ld_now <- shiny::reactive(ld_store()[[variant_key()]])
 
     backend <- new.env(parent = globalenv()); sys.source(interpretation_file, envir = backend)
+    # Protein consequence of the splice changes tied to the variant. Recomputed when SpliceAI or the open result
+    # adds a change; reads the annotation and the reference sequence, nothing else.
+    splice_events_now <- shiny::reactive({
+      x <- local_ready(); shiny::req(!is.null(x))
+      pairs <- if (!is.null(x$local) && !inherits(x$local$topmed, "error")) x$local$topmed$pairs else NULL
+      sites <- tryCatch(spliceai_sites(), error = function(e) NULL)
+      observed <- if (is.null(junctions)) NULL else tryCatch(junctions(), error = function(e) NULL)
+      backend$interp_splice_events(pairs, sites, observed)
+    })
+    protein_key <- shiny::reactive({
+      ev <- splice_events_now()
+      paste(key(), nrow(ev), paste(ev$source, ev$effect, ev$start1, ev$end1, ev$position, signif(ev$score, 4), collapse = "|"))
+    })
+    protein_store <- shiny::reactiveVal(list())
+    protein_task <- shiny::ExtendedTask$new(function(key, allele, events, annotation, annotation_file, reference, splice_file, interpretation_file) {
+      promises::future_promise({
+        value <- tryCatch({
+          if (is.null(annotation) || inherits(annotation, "error") || is.null(annotation_file)) stop("the GENCODE annotation is unavailable.")
+          if (is.null(reference) || inherits(reference, "error") || is.null(splice_file)) stop("the reference sequence is unavailable.")
+          e <- new.env(parent = globalenv()); sys.source(interpretation_file, envir = e)
+          a <- new.env(parent = globalenv()); sys.source(annotation_file, envir = a)
+          s <- new.env(parent = globalenv()); sys.source(splice_file, envir = s)
+          v <- e$interp_variant(allele$chrom, allele$pos1, allele$ref, allele$alt)
+          q <- a$query_annotation(annotation, v$chrom, max(1L, v$pos1 - 5000L), v$pos1 + 5000L, allele$build)
+          list(table = e$interp_splice_protein(v, q, function(chrom, start1, end1) s$splice_fetch_reference(reference, chrom, start1, end1)$sequence, events),
+            events = events)
+        }, error = function(err) err)
+        list(key = key, value = value)
+      }, seed = TRUE)
+    })
+    shiny::observeEvent(protein_key(), {
+      a <- alleles()
+      protein_task$invoke(protein_key(), list(chrom = a$chrom, pos1 = a$pos1, ref = a$ref, alt = selected_alt(), build = a$build), splice_events_now(),
+        current_annotation(), annotation_file, reference, splice_file, interpretation_file)
+    })
+    shiny::observeEvent(protein_task$status(), {
+      if (protein_task$status() != "success") return()
+      r <- protein_task$result(); store <- protein_store(); store[[r$key]] <- r$value; protein_store(store)
+    }, ignoreInit = TRUE)
+    protein_now <- shiny::reactive({
+      k <- tryCatch(protein_key(), error = function(e) NULL)
+      if (is.null(k)) NULL else protein_store()[[k]]
+    })
+    splice_protein_table <- shiny::reactive({ p <- protein_now(); if (is.null(p) || inherits(p, "error")) NULL else p$table })
     rna_now <- shiny::reactive({
       get_table <- function(f) if (is.null(f)) NULL else tryCatch(f(), error = function(e) NULL)
       backend$interp_rna_evidence(get_table(bin_ratio), get_table(junctions))
     })
     summary_now <- shiny::reactive({
       x <- local_now()
-      backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now(), ld_now())
+      backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now(), ld_now(), splice_protein_table())
     })
 
     show_table <- function(expr, digits = 3L, empty = "No rows.") DT::renderDT({
@@ -464,6 +512,21 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       x <- local_now()$consequences
       x[, setdiff(names(x), "most_severe"), drop = FALSE]
     }, empty = "No transcript within 5 kb of the variant.")
+    output$splice_protein_status <- shiny::renderUI({
+      p <- protein_now(); ev <- tryCatch(splice_events_now(), error = function(e) NULL)
+      if (inherits(p, "error")) return(shiny::p(paste0("Not computed: ", conditionMessage(p))))
+      if (is.null(p)) return(shiny::p(if (is.null(ev)) "Waiting for the local sources." else "Re-splicing the transcripts this change fits..."))
+      ev <- p$events; seen <- ev$source != "SpliceAI"
+      shiny::p(paste0("Splice changes considered: ", sum(seen & ev$effect == "gain"), " intron(s) used more and ", sum(seen & ev$effect == "loss"),
+        " used less with ALT (", sum(ev$source == "TOPMed sQTL"), " from TOPMed sQTL, ", sum(ev$source == "this cohort"), " from the open result), ",
+        sum(!seen), " SpliceAI site(s)", if (!any(!seen) && is.null(spliceai_now())) " (SpliceAI not run)" else "",
+        "; plus the variant's own essential splice sites. ", nrow(p$table), " outcome(s) on coding transcripts."))
+    })
+    # The outcome before its long justification.
+    splice_protein_columns <- c("gene", "transcript_id", "transcript_flags", "event", "basis", "coding_effect", "protein_change", "nmd", "mrna_change",
+      "annotated_in", "support", "protein_length_ref", "protein_length_new")
+    output$splice_protein <- show_table(function() { x <- splice_protein_table(); if (is.null(x)) NULL else x[, intersect(splice_protein_columns, names(x)), drop = FALSE] },
+      empty = "No splice change tied to this variant fits a coding transcript here.")
     output$predictors <- shiny::renderUI({
       p <- public_now()
       if (is.null(p) || inherits(p$open_targets, "error") || !nrow(p$open_targets$predictors)) return(NULL)
@@ -703,7 +766,8 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       list(variant = x$variant, gencode_release = x$release, reading = reading_now(), summary = summary_now(), gene_summary = x$gene_summary,
         consequences = x$consequences, local = if (is.null(x$local)) NULL else lapply(x$local, plain),
         public = if (is.null(p)) NULL else lapply(p, plain), spliceai = if (is.null(s)) NULL else plain(s),
-        gwas_ld = if (is.null(ld_now())) NULL else plain(ld_now()), rna_evidence = rna_now())
+        gwas_ld = if (is.null(ld_now())) NULL else plain(ld_now()), rna_evidence = rna_now(),
+        splice_protein = if (is.null(protein_now())) NULL else plain(protein_now()))
     }
     output$download_json <- shiny::downloadHandler(function() paste0("interpretation_", gsub(":", "_", local_now()$variant$id), ".json"),
       function(file) writeLines(jsonlite::toJSON(export(), dataframe = "rows", auto_unbox = TRUE, na = "null", null = "null", digits = NA, pretty = TRUE), file))
@@ -711,7 +775,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       utils::write.csv(summary_now(), file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8"))
     output$download_consequences <- shiny::downloadHandler("transcript_consequences.csv", function(file)
       utils::write.csv(local_now()$consequences, file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8"))
-    invisible(list(summary = summary_now, local = local_now, public = public_now, spliceai = spliceai_now, ld = ld_now,
-      tasks = list(local = local_task, public = public_task, spliceai = spliceai_task, ld = ld_task)))
+    invisible(list(summary = summary_now, local = local_now, public = public_now, spliceai = spliceai_now, ld = ld_now, splice_protein = protein_now,
+      tasks = list(local = local_task, public = public_task, spliceai = spliceai_task, ld = ld_task, splice_protein = protein_task)))
   })
 }

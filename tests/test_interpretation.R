@@ -148,6 +148,161 @@ x <- csq(annotation_T, "chrT", 170L, "A", "AT", "TP"); stopifnot(x$consequence =
 x <- csq(annotation_T, "chrT", 109L, "AA", "A", "TP"); stopifnot(x$consequence == "5_prime_UTR_variant")
 stopifnot(!nrow(interp_consequences(v, list(transcripts = NULL), fetch)), !nrow(interp_gene_summary(interp_empty_consequences())))
 
+# ---- Protein consequence of a changed splice ----------------------------------
+# chrS carries one plus-strand transcript with the exons and CDS of TP; chrR is its reverse complement with the
+# mirrored transcript, so every outcome must come out the same on both strands.
+genome$chrS <- rep("A", 400L)
+put("chrS", 121L, "ATG"); put("chrS", 124L, "GCTTGG"); put("chrS", 161L, "GT"); put("chrS", 166L, "TAA"); put("chrS", 199L, "AG")
+put("chrS", 204L, "TGA"); put("chrS", 318L, "TAA")
+genome$chrR <- strsplit(interp_revcomp(paste(genome$chrS, collapse = "")), "")[[1L]]
+mirror <- function(x) 401L - x
+annotation_S <- list(transcripts = tx_row("SP", "SPL", "chrS", "+", 101L, 360L, "basic;Ensembl_canonical;MANE_Select"),
+  exons = exon_rows("SP", "SPL", "chrS", "+", c(101L, 201L, 301L), c(160L, 260L, 360L)),
+  features = feature_rows("SP", "SPL", "chrS", "+", c("CDS", "CDS", "CDS", "stop_codon"), c(121L, 201L, 301L, 318L), c(160L, 260L, 317L, 320L), c(0, 2, 2, 0)))
+annotation_R <- list(transcripts = tx_row("SM", "SPL", "chrR", "-", mirror(360L), mirror(101L), "basic;Ensembl_canonical"),
+  exons = exon_rows("SM", "SPL", "chrR", "-", mirror(c(360L, 260L, 160L)), mirror(c(301L, 201L, 101L))),
+  features = feature_rows("SM", "SPL", "chrR", "-", c("CDS", "CDS", "CDS", "stop_codon"), mirror(c(160L, 260L, 317L, 320L)), mirror(c(121L, 201L, 301L, 318L)), c(0, 2, 2, 0)))
+model_of <- function(a) interp_transcript_model(a$transcripts, a$exons, a$features)
+ms <- model_of(annotation_S); mr <- model_of(annotation_R)
+stopifnot(interp_revcomp("AACG") == "CGTT", identical(interp_intron_set(ms)$start1, c(161L, 261L)), identical(interp_intron_set(ms)$end1, c(200L, 300L)),
+  identical(interp_merge_intervals(data.frame(start1 = c(10L, 1L, 6L), end1 = c(12L, 5L, 8L)))$end1, c(8L, 12L)),
+  identical(interp_subtract_interval(data.frame(start1 = 1L, end1 = 10L), 4L, 6L)$start1, c(1L, 7L)),
+  interp_interval_bases(interp_outside(data.frame(start1 = 1L, end1 = 10L), data.frame(start1 = c(2L, 9L), end1 = c(3L, 20L)))) == 6L,
+  # mRNA coordinates on both strands: the first coding base and its way back.
+  interp_mrna_index(interp_exon_set(ms), "+", 121L) == 21L, interp_mrna_index(interp_exon_set(mr), "-", mirror(121L)) == 21L,
+  interp_mrna_to_genome(interp_exon_set(ms), "+", 61L) == 201L, interp_mrna_to_genome(interp_exon_set(mr), "-", 61L) == mirror(201L),
+  is.na(interp_mrna_index(interp_exon_set(ms), "+", 170L)),
+  interp_spliced_mrna(interp_exon_set(ms), "+", "chrS", fetch) == interp_spliced_mrna(interp_exon_set(mr), "-", "chrR", fetch))
+outcome <- function(model, chrom, use = NULL, retain = NULL, variant = NULL) interp_spliced_outcome(model, interp_respliced(model, use = use, retain = retain), chrom, fetch, variant)
+both <- function(use = NULL, retain = NULL) {
+  plus <- outcome(ms, "chrS", use, retain)
+  minus <- outcome(mr, "chrR", if (is.null(use)) NULL else rev(mirror(use)), if (is.null(retain)) NULL else rev(mirror(retain)))
+  stopifnot(identical(plus, minus))
+  plus
+}
+# The annotated transcript itself: 39 residues, nothing changes.
+same <- both()
+stopifnot(same$coding_effect == "none: the coding sequence is unchanged", !same$changes_protein, same$protein_length_ref == 39L, same$protein_length_new == 39L)
+# Exon 2 skipped: 60 nt, in frame.
+skip <- both(use = c(161L, 300L))
+stopifnot(skip$coding_effect == "in-frame deletion", skip$protein_length_new == 19L, skip$changes_protein, skip$nmd == "",
+  skip$protein_change == "Residues 15 to 34 (20 residues) are removed; the rest of the protein is unchanged (19 instead of 39 residues).")
+# Donor moved 10 nt into exon 1: the next codon is a stop, 54 nt before the last junction.
+early <- both(use = c(151L, 200L))
+stopifnot(early$coding_effect == "premature stop", early$protein_length_new == 11L, isTRUE(early$nmd_predicted),
+  early$protein_change == "A stop codon follows residue 11: the protein ends there (11 instead of 39 residues).",
+  grepl("ends 54 nt before the last exon junction", early$nmd, fixed = TRUE))
+# Donor moved 10 nt into the intron: the frame changes and its stop codon (TAA at 166-168) is read.
+late <- both(use = c(171L, 200L))
+stopifnot(late$coding_effect == "frameshift", late$protein_length_new == 15L, isTRUE(late$nmd_predicted),
+  late$protein_change == "After residue 13 the sequence differs from the annotated protein: 2 residues, then a stop codon (15 instead of 39 residues).")
+# Intron 1 retained: the same stop inside the intron; exons 1 and 2 are now one exon.
+kept <- both(retain = c(161L, 200L))
+stopifnot(kept$coding_effect == "frameshift", kept$protein_length_new == 15L, isTRUE(kept$nmd_predicted), grepl("ends 92 nt before", kept$nmd, fixed = TRUE))
+# Acceptor moved 5 nt into exon 2: the new frame has no stop before the transcript ends.
+open_end <- both(use = c(161L, 205L))
+stopifnot(open_end$coding_effect == "no stop codon", grepl("no stop codon follows before the end of the transcript", open_end$protein_change, fixed = TRUE), open_end$nmd == "")
+# Acceptor moved 6 nt into exon 3 (in frame): two residues lost. A stop in the last exon is not a target of decay.
+stopifnot(both(use = c(261L, 306L))$coding_effect == "in-frame deletion", both(use = c(261L, 306L))$protein_length_new == 37L)
+last_exon <- outcome(ms, "chrS", use = c(261L, 304L))
+stopifnot(last_exon$coding_effect %in% c("frameshift", "no stop codon"))
+# The start codon spliced out; a transcript without CDS.
+stopifnot(both(use = c(111L, 200L))$coding_effect == "start codon removed",
+  interp_spliced_outcome(model_of(list(transcripts = annotation_T$transcripts[2L, ], exons = annotation_T$exons[annotation_T$exons$transcript_id == "TNC", ],
+    features = annotation_T$features[0, ])), data.frame(start1 = 101L, end1 = 160L), "chrT", fetch)$coding_effect == "no annotated coding sequence")
+# The ALT allele is read where it ends up in the mRNA: G>A at the first intron base turns the retained codon AGT (Ser) into AAT (Asn).
+alt_kept <- outcome(ms, "chrS", retain = c(161L, 200L), variant = interp_variant("chrS", 161L, "G", "A"))
+stopifnot(alt_kept$protein_length_new == 15L, identical(alt_kept$protein_change, kept$protein_change))
+ref_mrna <- interp_spliced_mrna(interp_respliced(ms, retain = c(161L, 200L)), "+", "chrS", fetch)
+alt_mrna <- interp_spliced_mrna(interp_respliced(ms, retain = c(161L, 200L)), "+", "chrS", fetch, interp_variant("chrS", 161L, "G", "A"))
+stopifnot(substr(ref_mrna, 60L, 62L) == "AGT", substr(alt_mrna, 60L, 62L) == "AAT", nchar(ref_mrna) == nchar(alt_mrna),
+  nchar(interp_spliced_mrna(interp_exon_set(ms), "+", "chrS", fetch, interp_variant("chrS", 130L, "A", "ATT"))) == 182L,
+  nchar(interp_spliced_mrna(interp_exon_set(ms), "+", "chrS", fetch, interp_variant("chrS", 130L, "AAA", "A"))) == 178L)
+
+# Events: a TOPMed intron used more with ALT, a junction of the open result, SpliceAI sites.
+sp_pair <- function(type, context, phenotype, slope, p, significant) data.frame(qtl_type = type, context = context, phenotype = phenotype, gene_id = "ENSGSPL.1",
+  gene = "SPL", slope_alt = slope, slope_se = .1, p_nominal = p, significant = significant, stringsAsFactors = FALSE)
+sp_pairs <- rbind(sp_pair("sQTL", "Lung", "chrS:150:201:clu_1_+:ENSGSPL.1", 1.2, 1e-30, TRUE), sp_pair("sQTL", "PBMC", "chrS:150:201:clu_9_+:ENSGSPL.1", .8, 1e-9, TRUE),
+  sp_pair("sQTL", "Lung", "chrS:160:201:clu_1_+:ENSGSPL.1", -1.2, 1e-30, TRUE), sp_pair("sQTL", "Lung", "chrS:140:201:clu_1_+:ENSGSPL.1", .5, .01, FALSE),
+  sp_pair("eQTL", "Lung", "ENSGSPL.1", .5, 1e-30, TRUE))
+sp_junctions <- data.frame(chrom = "chrS", intron_start1 = c(161L, 161L, 261L), intron_end1 = c(300L, 200L, 300L), status = "OK", beta = c(2.5, -2, .1),
+  p_permutation = c(1e-4, 1e-4, .5), n = 900L, stringsAsFactors = FALSE)
+sp_sites <- data.frame(gene = "SPL", effect = c("donor gain", "donor loss", "acceptor gain", "acceptor loss"), delta = c(.6, .7, .3, .05), exon_boundary_pos1 = c(150L, 160L, 206L, 201L),
+  site_type = c("donor", "donor", "acceptor", "acceptor"), site_position = c(151L, 161L, 205L, 200L), annotated_site = c("no", "yes", "no", "yes"), stringsAsFactors = FALSE)
+ev <- interp_splice_events(sp_pairs, sp_sites, sp_junctions)
+stopifnot(nrow(ev) == 7L, identical(ev$source, c("TOPMed sQTL", "TOPMed sQTL", "this cohort", "this cohort", "SpliceAI", "SpliceAI", "SpliceAI")),
+  # Leafcutter's exon-boundary coordinates become the first and last intronic base; contexts of one intron are merged.
+  ev$start1[[1L]] == 151L, ev$end1[[1L]] == 200L, grepl("used more with ALT in 2 context(s), strongest Lung (slope +1.20", ev$detail[[1L]], fixed = TRUE),
+  # An intron used less with ALT is kept as such, from TOPMed and from the open result.
+  identical(ev$effect[1:4], c("gain", "loss", "gain", "loss")), ev$start1[[2L]] == 161L, ev$end1[[2L]] == 200L, grepl("used less with ALT", ev$detail[[2L]], fixed = TRUE),
+  ev$start1[[3L]] == 161L, ev$end1[[3L]] == 300L, ev$start1[[4L]] == 161L, ev$end1[[4L]] == 200L, grepl("junction used less with ALT (-2.00", ev$detail[[4L]], fixed = TRUE),
+  identical(ev$effect[5:7], c("gain", "loss", "gain")), identical(ev$position[5:7], c(151L, 161L, 205L)),
+  !nrow(interp_splice_events()), !nrow(interp_splice_events(sp_pairs[5L, ])))
+far_variant <- interp_variant("chrS", 180L, "A", "G")
+sp <- interp_splice_protein(far_variant, annotation_S, fetch, ev)
+row_for <- function(x, text) x[grepl(text, x$event, fixed = TRUE), , drop = FALSE]
+stopifnot(nrow(sp) == 3L, all(sp$transcript_id == "SP"), all(sp$gene == "SPL"),
+  # The observed alternative donor stands in for the annotated donor that SpliceAI predicts to weaken: observed and predicted, listed first.
+  sp$event[[1L]] == "alternative donor: intron chrS:151-200 in place of intron 1", sp$basis[[1L]] == "observed and predicted", sp$coding_effect[[1L]] == "premature stop",
+  grepl("TOPMed sQTL: intron used more with ALT", sp$support[[1L]], fixed = TRUE), grepl("SpliceAI donor gain 0.60", sp$support[[1L]], fixed = TRUE),
+  grepl("SpliceAI donor loss 0.70", sp$support[[1L]], fixed = TRUE), sp$mrna_change[[1L]] == "10 exonic nt removed", grepl("^predicted", sp$nmd[[1L]]),
+  # The annotated intron it stands in for is itself seen to fall with ALT, in TOPMed and in the open result.
+  grepl("the annotated intron it replaces: TOPMed sQTL: intron used less with ALT in 1 context(s), strongest Lung (slope -1.20", sp$support[[1L]], fixed = TRUE),
+  grepl("the annotated intron it replaces: this cohort: junction used less with ALT", sp$support[[1L]], fixed = TRUE),
+  row_for(sp, "exon skipping")$basis == "observed", row_for(sp, "exon skipping")$coding_effect == "in-frame deletion",
+  row_for(sp, "exon skipping")$event == "exon skipping: 1 exon(s) left out (60 nt)", row_for(sp, "exon skipping")$mrna_change == "60 exonic nt removed",
+  # A new acceptor predicted at 0.3 pairs with the donor upstream of it.
+  row_for(sp, "alternative acceptor")$basis == "weakly predicted", row_for(sp, "alternative acceptor")$event == "alternative acceptor: intron chrS:161-205 in place of intron 1",
+  row_for(sp, "alternative acceptor")$mrna_change == "5 exonic nt removed")
+# Without any event, a variant on an essential site gives the usual outcomes as assumptions.
+donor_hit <- interp_splice_protein(interp_variant("chrS", 161L, "G", "A"), annotation_S, fetch)
+stopifnot(nrow(donor_hit) == 1L, donor_hit$event == "if the intron is retained (40 nt)", donor_hit$basis == "assumed outcome",
+  donor_hit$support == "the variant changes the essential donor site", donor_hit$mrna_change == "40 intronic nt kept", donor_hit$coding_effect == "frameshift")
+acceptor_hit <- interp_splice_protein(interp_variant("chrS", 200L, "G", "A"), annotation_S, fetch)
+stopifnot(nrow(acceptor_hit) == 2L, acceptor_hit$event[[1L]] == "if the exon next to the lost acceptor is skipped (60 nt)", acceptor_hit$coding_effect[[1L]] == "in-frame deletion",
+  acceptor_hit$event[[2L]] == "if the intron is retained (40 nt)", all(acceptor_hit$basis == "assumed outcome"))
+# With an observed replacement the assumptions are not listed; the essential site makes it observed and predicted.
+replaced <- interp_splice_protein(interp_variant("chrS", 161L, "G", "A"), annotation_S, fetch, interp_splice_events(sp_pairs))
+stopifnot(nrow(replaced) == 1L, replaced$basis == "observed and predicted", grepl("the variant changes the essential donor site", replaced$support, fixed = TRUE))
+# A predicted new donor that is the donor of an intron seen to rise with ALT supports that intron instead of being paired
+# with the nearest annotated acceptor: here the observed intron skips an exon, and a weak prediction leaves it "observed".
+long_intron <- transform(ev[1L, ], start1 = 151L, end1 = 300L)
+joined <- interp_splice_protein(far_variant, annotation_S, fetch, rbind(long_intron, transform(ev[5L, ], score = .42, detail = "SpliceAI donor gain 0.42")))
+stopifnot(nrow(joined) == 1L, joined$basis == "observed", grepl("SpliceAI donor gain 0.42", joined$support, fixed = TRUE), grepl("1 exon(s) left out", joined$event, fixed = TRUE),
+  interp_splice_protein(far_variant, annotation_S, fetch, rbind(long_intron, ev[5L, ]))$basis == "observed and predicted")
+# The mirrored transcript gives the mirrored events the same reading; a change that fits no transcript gives no row.
+mirror_events <- transform(ev, start1 = ifelse(is.na(ev$end1), NA_integer_, mirror(ev$end1)), end1 = ifelse(is.na(ev$start1), NA_integer_, mirror(ev$start1)),
+  position = ifelse(is.na(ev$position), NA_integer_, mirror(ev$position)))
+sm <- interp_splice_protein(interp_variant("chrR", mirror(180L), "T", "C"), annotation_R, fetch, mirror_events)
+stopifnot(nrow(sm) == 3L, identical(sm$coding_effect, sp$coding_effect), identical(sm$protein_change, sp$protein_change), identical(sm$basis, sp$basis),
+  sm$event[[1L]] == paste0("alternative donor: intron chrR:", mirror(200L), "-", mirror(151L), " in place of intron 1"), all(sp$annotated_in == ""),
+  !nrow(interp_splice_protein(far_variant, annotation_S, fetch, transform(ev[1L, ], start1 = 171L, end1 = 190L))),
+  # An intron that would keep more than 300 nt of intron in the transcript is not placed on it.
+  !nrow(interp_splice_protein(far_variant, annotation_S, fetch, transform(ev[1L, ], start1 = 195L, end1 = 200L), max_kept_intron = 30L)),
+  !nrow(interp_splice_protein(far_variant, annotation_T, fetch)), !nrow(interp_splice_protein(far_variant, list(transcripts = NULL), fetch)))
+# An intron that another transcript of the query already has is named, whatever that transcript's type.
+annotation_S2 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC", "SPL", "chrS", "+", 101L, 360L, "", "retained_intron")),
+  exons = rbind(annotation_S$exons, exon_rows("SNC", "SPL", "chrS", "+", c(101L, 301L), c(150L, 360L))), features = annotation_S$features)
+named <- interp_splice_protein(far_variant, annotation_S2, fetch, transform(ev[1L, ], start1 = 151L, end1 = 300L))
+stopifnot(nrow(named) == 1L, named$annotated_in == "SNC (retained_intron)", named$event == "alternative donor: intron chrS:151-300 in place of intron 2, 1 exon(s) left out",
+  named$mrna_change == "70 exonic nt removed")
+# In the summary the splice outcome speaks for the protein when the variant itself changes nothing.
+intron_only <- csq(annotation_S, "chrS", 180L, "A", "G")
+ps <- interp_evidence_summary(intron_only, splice_protein = sp)
+stopifnot(interp_evidence_summary(intron_only)$level[[1L]] == "None found", ps$question[[1L]] == "Protein sequence", ps$level[[1L]] == "Strong",
+  grepl("The variant itself does not change the protein sequence. Through the splice change (observed and predicted): a stop codon follows residue 11", ps$finding[[1L]], fixed = TRUE),
+  grepl("Nonsense-mediated decay of that mRNA is predicted.", ps$finding[[1L]], fixed = TRUE),
+  grepl("through splicing (observed and predicted), SP: alternative donor: intron chrS:151-200 in place of intron 1; 10 exonic nt removed; premature stop; nonsense-mediated decay predicted", ps$evidence[[1L]], fixed = TRUE),
+  grepl("2 more splice outcome(s) in the table", ps$evidence[[1L]], fixed = TRUE), grepl("splice outcome prediction", ps$sources[[1L]], fixed = TRUE),
+  # Observed alone, or on a transcript that is not the reference one, stops at Moderate; an assumed outcome at Limited.
+  interp_evidence_summary(intron_only, splice_protein = sp[sp$basis == "observed", ])$level[[1L]] == "Moderate",
+  interp_evidence_summary(intron_only, splice_protein = transform(sp[1L, ], transcript_flags = "basic"))$level[[1L]] == "Moderate",
+  interp_evidence_summary(intron_only, splice_protein = sp[sp$basis == "weakly predicted", ])$level[[1L]] == "Limited",
+  interp_evidence_summary(intron_only, splice_protein = donor_hit)$level[[1L]] == "Limited",
+  # An outcome that leaves the protein as it is changes nothing; a level that is already higher is kept.
+  interp_evidence_summary(intron_only, splice_protein = transform(sp[1L, ], coding_effect = "none: the coding sequence is unchanged"))$level[[1L]] == "None found",
+  interp_evidence_summary(csq(annotation_S, "chrS", 129L, "G", "A"), splice_protein = sp[sp$basis == "observed", ])$level[[1L]] == "Strong")
+
 # ---- Nested JSON helpers ----------------------------------------------------
 stopifnot(interp_get(list(a = list(b = list(1, 2))), "a", "b", 2L) == 2, is.na(interp_get(list(a = NULL), "a", "b")),
   interp_get(list(), "x", default = "d") == "d", interp_join(c("a", "", NA, "a", "b")) == "a; b",
