@@ -2,11 +2,12 @@
 
 The **Variant interpretation** tab answers, for the variant that is open (or, before a comparison exists, the record selected in step 1): what does it do to transcripts and proteins, is it tied to splicing, expression, disease or a pathway, and in which tissues. It reads; it never reruns BAM counting, refits Model 1 or changes a saved result.
 
-It has three layers, in the order they appear.
+It has these layers, in the order they run.
 
 | Layer | When it runs | Network |
 |---|---|---|
 | Transcript and protein consequences, local sources | Automatically, a few seconds | None |
+| Protein consequence of the splice change; colocalisation of the variant's molecular signals | Automatically, once the local sources are in; a few seconds more | None |
 | Public databases (Open Targets, GTEx, MyVariant.info) | **Query public databases** button | Sends the variant and gene IDs only |
 | SpliceAI | **Run SpliceAI** button, about 1–2 minutes | None |
 | LD with GWAS Catalog variants | **LD with GWAS variants** button, about 30 seconds | None |
