@@ -843,6 +843,12 @@ interp_local_sources <- function() {
     topmed_qtl = env("REGSHINY_TOPMED_QTL", file.path(lab, "projectnb/RNAseq/TOPMed_cis-sQTL")),
     fhs_sqtl = stats::setNames(sqtl, c("discovery", "replication")[seq_along(sqtl)]),
     fhs_eqtl = env("REGSHINY_FHS_EQTL", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/topmed_qtl/fhs_whole_blood_eqtl_gene_combined_1e-7.sorted.csv")),
+    gwas_catalog = env("REGSHINY_GWAS_CATALOG", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/disease/gwas_catalog_e114_r2025-07-21.b38.tsv.gz")),
+    clinvar_vcf = env("REGSHINY_CLINVAR_VCF", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/disease/clinvar_2025-07-21.GRCh38.vcf.gz")),
+    reactome = env("REGSHINY_REACTOME", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/pathway/reactome_ensembl_all_levels_2026-09-22.human.tsv")),
+    msigdb = env("REGSHINY_MSIGDB", "/restricted/projectnb/cbmhive/MSigDB/2026.1.Hs"),
+    tissue_model = c(eQTL = env("REGSHINY_TISSUE_MODEL_EQTL", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/topmed_qtl/tissue_model/tissue_sharing_eqtl.json")),
+      sQTL = env("REGSHINY_TISSUE_MODEL_SQTL", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/topmed_qtl/tissue_model/tissue_sharing_sqtl.json"))),
     spliceai = env("REGSHINY_SPLICEAI", "/share/pkg.8/spliceai/1.3.1/install/bin/spliceai"))
 }
 
@@ -858,10 +864,20 @@ interp_local_status <- function(sources = interp_local_sources()) {
       tabix && dir.exists(sources$vep_cache), sources$vep_cache),
     row("TOPMed multi-tissue cis-QTL", "cis-eQTL and cis-sQTL in lung, monocytes, nasal epithelium, PBMC, T cells and whole blood",
       tabix && dir.exists(file.path(sources$topmed_qtl, "cis-eqtl", "nominal")), sources$topmed_qtl),
+    row("Cross-context sharing model", "Model trained on TOPMed lead cis-QTLs: effect and its certainty in each context (scripts/train_tissue_model.R)",
+      length(sources$tissue_model) > 0L && any(vapply(sources$tissue_model, interp_readable, logical(1))), sources$tissue_model),
     row("FHS whole-blood isoform-ratio sQTL", "Discovery and replication sets, p < 1e-4",
       nzchar(sources$look) && all(vapply(sources$fhs_sqtl, interp_readable, logical(1))), sources$fhs_sqtl),
     row("FHS whole-blood gene eQTL", "Combined set, p < 1e-7 (position-sorted copy)",
       nzchar(sources$look) && interp_readable(sources$fhs_eqtl), sources$fhs_eqtl),
+    row("GWAS Catalog", "Published trait associations reported at the variant's position (position-indexed copy)",
+      tabix && interp_readable(sources$gwas_catalog) && interp_readable(paste0(sources$gwas_catalog, ".tbi")), sources$gwas_catalog),
+    row("ClinVar VCF", "Germline classification, review status and conditions of this allele",
+      tabix && interp_readable(sources$clinvar_vcf) && interp_readable(paste0(sources$clinvar_vcf, ".tbi")), sources$clinvar_vcf),
+    row("Reactome gene-to-pathway mapping", "Pathways of the genes the variant overlaps or is a QTL for (gene-sorted copy)",
+      interp_readable(sources$look) && interp_readable(sources$reactome), sources$reactome),
+    row("MSigDB gene sets", "Hallmark, canonical pathways (KEGG, WikiPathways, PID, BioCarta) and GO biological process",
+      length(interp_msigdb_files(sources)) > 0L, sources$msigdb),
     row("SpliceAI 1.3.1", "Predicted gain or loss of splice sites within 500 bp (run on request)", interp_readable(sources$spliceai), sources$spliceai))
 }
 
@@ -943,6 +959,184 @@ interp_known_variant <- function(variant, sources = interp_local_sources()) {
     if (length(freq)) out$frequencies <- do.call(rbind, freq)
     break
   }
+  out
+}
+
+# Position range that covers the variant in VCF form and its changed bases.
+interp_variant_span <- function(variant) c(min(variant$pos1, variant$start1), max(variant$pos1 + nchar(variant$ref) - 1L, variant$end1))
+
+# GWAS Catalog associations reported at this position (position-indexed copy,
+# see scripts/build_gwas_index.sh). The catalog keys a row by rsID and position,
+# not by allele: risk_allele_is says whether the reported risk allele is this
+# variant's ALT, its REF, or neither / not reported.
+interp_gwas_catalog_empty <- function() data.frame(rs_id = character(), risk_allele = character(), risk_allele_is = character(),
+  trait = character(), mapped_trait = character(), p_value = numeric(), effect = numeric(), ci_text = character(),
+  risk_allele_frequency = character(), mapped_gene = character(), pubmed = character(), first_author = character(),
+  date = character(), study_accession = character(), initial_sample = character(), stringsAsFactors = FALSE)
+
+interp_gwas_catalog <- function(variant, sources = interp_local_sources()) {
+  out <- list(available = FALSE, found = FALSE, associations = interp_gwas_catalog_empty(), release = "",
+    source = "GWAS Catalog associations (local position-indexed copy)")
+  file <- sources$gwas_catalog
+  if (!interp_readable(sources$tabix) || !interp_readable(file) || !interp_readable(paste0(file, ".tbi"))) return(out)
+  out$available <- TRUE
+  out$release <- sub("^.*_(e[0-9]+_r[0-9-]+).*$", "\\1", basename(file))
+  if (identical(out$release, basename(file))) out$release <- ""
+  span <- interp_variant_span(variant)
+  lines <- interp_tabix(sources, file, variant$chrom, span[[1L]], span[[2L]])
+  lines <- lines[!startsWith(lines, "#")]
+  if (!length(lines)) return(out)
+  f <- strsplit(lines, "\t", fixed = TRUE)
+  field <- function(i) vapply(f, function(x) if (length(x) >= i) x[[i]] else "", character(1))
+  allele <- toupper(sub("^.*-", "", field(4L))); allele[!grepl("-", field(4L), fixed = TRUE)] <- ""
+  is <- ifelse(allele == variant$alt | allele == variant$alt_changed, "ALT",
+    ifelse(allele == variant$ref | allele == variant$ref_changed, "REF", ifelse(allele %in% c("", "?"), "not reported", "another allele")))
+  x <- data.frame(rs_id = field(3L), risk_allele = field(4L), risk_allele_is = is, trait = field(5L), mapped_trait = field(6L),
+    p_value = suppressWarnings(as.numeric(field(7L))), effect = suppressWarnings(as.numeric(field(9L))), ci_text = field(10L),
+    risk_allele_frequency = field(11L), mapped_gene = field(12L), pubmed = field(13L), first_author = field(14L), date = field(15L),
+    study_accession = field(16L), initial_sample = field(17L), stringsAsFactors = FALSE)
+  # A p-value too small for a double is kept as 0 and ordered by its stored -log10.
+  mlog <- suppressWarnings(as.numeric(field(8L)))
+  x <- x[order(-ifelse(is.finite(mlog), mlog, -Inf), x$trait), , drop = FALSE]; rownames(x) <- NULL
+  out$associations <- x; out$found <- TRUE
+  out
+}
+
+# GWAS Catalog traits that are the blood level of one protein (pQTL studies map
+# to "level of <protein> in blood"). Deliberately narrow: clinical measurements
+# such as cholesterol or "protein measurement" in general are not counted.
+interp_is_protein_trait <- function(mapped_trait) grepl("^level of .+ in blood( plasma| serum)?$", mapped_trait, ignore.case = TRUE)
+interp_protein_name <- function(mapped_trait) sub("^level of (.+) in blood( plasma| serum)?$", "\\1", mapped_trait, ignore.case = TRUE)
+
+# -- Linkage disequilibrium with nearby GWAS Catalog variants (run on request) --
+# ALT-allele dosage (0, 1, 2; NA when any allele is missing) from VCF GT strings.
+interp_gt_dosage <- function(gt, allele = 1L) {
+  first <- sub("[/|].*$", "", gt); rest <- sub("^[^/|]*[/|]?", "", gt)
+  second <- sub("[/|].*$", "", rest)
+  missing <- first == "." | second == "." | !nzchar(first)
+  d <- (first == as.character(allele)) + ifelse(nzchar(second), second == as.character(allele), 0L)
+  d[missing] <- NA_integer_
+  as.numeric(d)
+}
+
+interp_gwas_ld_empty <- function() data.frame(rs_id = character(), position = integer(), distance = integer(), ref = character(),
+  alt = character(), r2 = numeric(), r = numeric(), n = integer(), risk_allele = character(), risk_allele_travels_with = character(),
+  trait = character(), mapped_trait = character(), p_value = numeric(), effect = numeric(), pubmed = character(),
+  study_accession = character(), stringsAsFactors = FALSE)
+
+# r2 between this variant and every variant the GWAS Catalog reports within
+# `window` bp, from the genotypes of the dataset's own VCF. Only correlations
+# and counts leave this function: no genotype and no sample identifier.
+# Rows with r2 >= keep_r2 are returned. A GWAS signal can be carried by this
+# variant only if the two are in LD in the population studied; this cohort's
+# LD is the available estimate of that.
+interp_gwas_ld <- function(variant, vcf, sources = interp_local_sources(), window = 500000L, max_positions = 300L, keep_r2 = 0.2,
+                           bcftools = unname(Sys.which("bcftools")), timeout = 900) {
+  out <- list(available = FALSE, found = FALSE, ld = interp_gwas_ld_empty(), window = window, keep_r2 = keep_r2, positions_in_window = 0L,
+    positions_examined = 0L, truncated = FALSE, samples = 0L, release = "", ran_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z", tz = "UTC"))
+  file <- sources$gwas_catalog
+  if (!interp_readable(sources$tabix) || !interp_readable(file) || !interp_readable(paste0(file, ".tbi")))
+    stop("The local GWAS Catalog copy is not readable (see scripts/build_gwas_index.sh).", call. = FALSE)
+  if (!nzchar(bcftools) || !file.exists(bcftools)) stop("bcftools is not available in PATH.", call. = FALSE)
+  if (length(vcf) != 1L || !interp_readable(vcf)) stop("The dataset's VCF for this chromosome is not readable.", call. = FALSE)
+  out$available <- TRUE
+  out$release <- sub("^.*_(e[0-9]+_r[0-9-]+).*$", "\\1", basename(file)); if (identical(out$release, basename(file))) out$release <- ""
+  lines <- interp_tabix(sources, file, variant$chrom, max(1L, variant$pos1 - window), variant$pos1 + window)
+  lines <- lines[!startsWith(lines, "#")]
+  f <- strsplit(lines, "\t", fixed = TRUE)
+  field <- function(i) vapply(f, function(x) if (length(x) >= i) x[[i]] else "", character(1))
+  catalog <- data.frame(position = suppressWarnings(as.integer(field(2L))), rs_id = field(3L), risk_allele = field(4L), trait = field(5L),
+    mapped_trait = field(6L), p_value = suppressWarnings(as.numeric(field(7L))), mlog = suppressWarnings(as.numeric(field(8L))),
+    effect = suppressWarnings(as.numeric(field(9L))), pubmed = field(13L), study_accession = field(16L), stringsAsFactors = FALSE)
+  catalog <- catalog[is.finite(catalog$position) & catalog$position != variant$pos1, , drop = FALSE]
+  positions <- sort(unique(catalog$position)); out$positions_in_window <- length(positions)
+  if (length(positions) > max_positions) {
+    # A dense locus: keep the nearest positions and say so.
+    positions <- sort(positions[order(abs(positions - variant$pos1))][seq_len(max_positions)]); out$truncated <- TRUE
+  }
+  out$positions_examined <- length(positions)
+  if (!length(positions)) return(out)
+  targets <- tempfile("regshiny_ld_", fileext = ".tsv"); on.exit(unlink(targets), add = TRUE)
+  file.create(targets); Sys.chmod(targets, "0600")
+  writeLines(paste(variant$chrom, sort(unique(c(positions, variant$pos1))), sep = "\t"), targets)
+  p <- processx::run(bcftools, c("query", "-R", targets, "-f", "%CHROM\t%POS\t%REF\t%ALT\t%ID[\t%GT]\n", vcf), timeout = timeout, error_on_status = FALSE)
+  if (isTRUE(p$timeout)) stop("Reading genotypes timed out.", call. = FALSE)
+  if (is.na(p$status) || p$status != 0L) stop("bcftools failed: ", trimws(p$stderr), call. = FALSE)
+  records <- strsplit(strsplit(p$stdout, "\n", fixed = TRUE)[[1L]], "\t", fixed = TRUE)
+  records <- records[lengths(records) > 5L]
+  own <- Filter(function(x) x[[2L]] == as.character(variant$pos1) && x[[3L]] == variant$ref &&
+    variant$alt %in% strsplit(x[[4L]], ",", fixed = TRUE)[[1L]], records)
+  if (length(own) != 1L) stop("This variant's own record was not found once in the VCF.", call. = FALSE)
+  own <- own[[1L]]
+  target <- interp_gt_dosage(own[-(1:5)], match(variant$alt, strsplit(own[[4L]], ",", fixed = TRUE)[[1L]]))
+  out$samples <- sum(is.finite(target))
+  if (!is.finite(stats::var(target, na.rm = TRUE)) || stats::var(target, na.rm = TRUE) == 0)
+    stop("This variant does not vary among the samples with a genotype call.", call. = FALSE)
+  rows <- list()
+  for (x in records) {
+    pos <- as.integer(x[[2L]])
+    if (!pos %in% positions) next
+    alts <- strsplit(x[[4L]], ",", fixed = TRUE)[[1L]]
+    here <- catalog[catalog$position == pos, , drop = FALSE]
+    # With several records at one position, a record whose ID is the catalog's rsID answers for that rsID.
+    ids <- strsplit(x[[5L]], ";", fixed = TRUE)[[1L]]
+    named <- vapply(records, function(y) y[[2L]] == x[[2L]] && any(strsplit(y[[5L]], ";", fixed = TRUE)[[1L]] %in% here$rs_id), logical(1))
+    if (any(named)) here <- here[here$rs_id %in% ids, , drop = FALSE]
+    if (!nrow(here)) next
+    for (j in seq_along(alts)) {
+      d <- interp_gt_dosage(x[-(1:5)], j); ok <- is.finite(d) & is.finite(target)
+      if (sum(ok) < 10L || stats::var(d[ok]) == 0 || stats::var(target[ok]) == 0) next
+      r <- stats::cor(d[ok], target[ok])
+      risk <- toupper(sub("^.*-", "", here$risk_allele)); risk[!grepl("-", here$risk_allele, fixed = TRUE)] <- ""
+      # Which allele of this variant the reported risk allele is found with.
+      with <- ifelse(risk == alts[[j]], if (r > 0) "ALT" else "REF", ifelse(risk == x[[3L]], if (r > 0) "REF" else "ALT", ""))
+      rows[[length(rows) + 1L]] <- data.frame(rs_id = here$rs_id, position = pos, distance = pos - variant$pos1, ref = x[[3L]], alt = alts[[j]],
+        r2 = r^2, r = r, n = sum(ok), risk_allele = here$risk_allele, risk_allele_travels_with = with, trait = here$trait,
+        mapped_trait = here$mapped_trait, p_value = here$p_value, mlog = here$mlog, effect = here$effect, pubmed = here$pubmed,
+        study_accession = here$study_accession, stringsAsFactors = FALSE)
+    }
+  }
+  if (!length(rows)) return(out)
+  ld <- do.call(rbind, rows); ld <- ld[ld$r2 >= keep_r2, , drop = FALSE]
+  ld <- ld[order(-round(ld$r2, 6), -ifelse(is.finite(ld$mlog), ld$mlog, -Inf), ld$trait), names(interp_gwas_ld_empty()), drop = FALSE]
+  rownames(ld) <- NULL
+  out$ld <- ld; out$found <- nrow(ld) > 0L
+  out
+}
+
+# ClinVar record of this exact allele from a tabix-indexed ClinVar VCF.
+interp_clinvar_empty <- function() data.frame(variation_id = character(), clinical_significance = character(),
+  review_status = character(), conditions = character(), gene = character(), molecular_consequence = character(),
+  rs_id = character(), stringsAsFactors = FALSE)
+
+interp_clinvar_local <- function(variant, sources = interp_local_sources()) {
+  out <- list(available = FALSE, found = FALSE, records = interp_clinvar_empty(), other_alleles = 0L, file_date = "",
+    source = "ClinVar VCF (local)")
+  file <- sources$clinvar_vcf
+  if (!interp_readable(sources$tabix) || !interp_readable(file) || !interp_readable(paste0(file, ".tbi"))) return(out)
+  out$available <- TRUE
+  header <- tryCatch(interp_run_lines(sources$tabix, c("-H", file)), error = function(e) character())
+  date <- sub("^##fileDate=", "", grep("^##fileDate=", header, value = TRUE))
+  if (length(date)) { out$file_date <- date[[1L]]; out$source <- paste0("ClinVar VCF ", date[[1L]], " (local)") }
+  span <- interp_variant_span(variant)
+  lines <- interp_tabix(sources, file, interp_bare_chrom(variant$chrom), span[[1L]], span[[2L]])
+  rows <- list()
+  for (line in lines) {
+    f <- strsplit(line, "\t", fixed = TRUE)[[1L]]
+    if (length(f) < 8L) next
+    if (!identical(f[[2L]], as.character(variant$pos1)) || !identical(f[[4L]], variant$ref) || !identical(f[[5L]], variant$alt)) {
+      if (!identical(f[[5L]], ".")) out$other_alleles <- out$other_alleles + 1L
+      next
+    }
+    info <- strsplit(f[[8L]], ";", fixed = TRUE)[[1L]]
+    kv <- stats::setNames(sub("^[^=]*=", "", info), sub("=.*$", "", info))
+    get <- function(key) if (key %in% names(kv)) utils::URLdecode(gsub("_", " ", kv[[key]])) else ""
+    rows[[length(rows) + 1L]] <- data.frame(variation_id = f[[3L]], clinical_significance = get("CLNSIG"),
+      review_status = get("CLNREVSTAT"), conditions = gsub("|", "; ", get("CLNDN"), fixed = TRUE),
+      gene = sub(":.*$", "", get("GENEINFO")), molecular_consequence = gsub("SO:[0-9]+\\|", "", get("MC")),
+      rs_id = if (nzchar(get("RS"))) paste0("rs", get("RS")) else "", stringsAsFactors = FALSE)
+  }
+  if (length(rows)) { out$records <- do.call(rbind, rows); out$found <- TRUE }
   out
 }
 
@@ -1204,11 +1398,108 @@ interp_spliceai_sites <- function(scores, strand, introns = NULL, min_delta = 0.
   out <- do.call(rbind, rows); out <- out[order(-out$delta), , drop = FALSE]; rownames(out) <- NULL; out
 }
 
+# ---- Genes linked to the variant, and their pathways -------------------------
+# Genes the variant can act through: the ones it overlaps, and the ones whose
+# splicing or expression is associated with it in the local QTL sources.
+interp_linked_genes <- function(consequences, local = NULL) {
+  rows <- list()
+  add <- function(gene_id, gene, relation) if (length(gene_id)) rows[[length(rows) + 1L]] <<- data.frame(
+    gene_id = interp_bare_gene(gene_id), gene = gene, relation = relation, stringsAsFactors = FALSE)
+  genic <- consequences[!consequences$most_severe %in% c("upstream_gene_variant", "downstream_gene_variant"), , drop = FALSE]
+  add(genic$gene_id, genic$gene_name, "overlaps")
+  topmed <- if (interp_ok(local) && interp_ok(local$topmed) && isTRUE(local$topmed$available)) local$topmed$pairs else NULL
+  if (!is.null(topmed) && nrow(topmed)) {
+    hit <- topmed[topmed$significant %in% TRUE, , drop = FALSE]
+    add(hit$gene_id[hit$qtl_type == "sQTL"], hit$gene[hit$qtl_type == "sQTL"], "sQTL target (TOPMed)")
+    add(hit$gene_id[hit$qtl_type == "eQTL"], hit$gene[hit$qtl_type == "eQTL"], "eQTL target (TOPMed)")
+  }
+  if (!length(rows)) return(data.frame(gene_id = character(), gene = character(), relation = character(), stringsAsFactors = FALSE))
+  x <- unique(do.call(rbind, rows))
+  # One row per gene; a name from any row, relations joined in a fixed order.
+  out <- do.call(rbind, lapply(split(x, x$gene_id), function(g) data.frame(gene_id = g$gene_id[[1L]],
+    gene = { n <- g$gene[nzchar(g$gene) & !startsWith(g$gene, "ENSG")]; if (length(n)) n[[1L]] else "" },
+    relation = paste(unique(g$relation), collapse = "; "), stringsAsFactors = FALSE)))
+  out <- out[order(!grepl("overlaps", out$relation), out$gene, out$gene_id), , drop = FALSE]; rownames(out) <- NULL; out
+}
+
+# Reactome's top-level pathways. The mapping file lists every level, so a gene's
+# rows with one of these names are its top-level pathways.
+interp_reactome_top_levels <- function() c("Autophagy", "Cell Cycle", "Cell-Cell communication", "Cellular responses to stimuli",
+  "Chromatin organization", "Circadian clock", "Developmental Biology", "Digestion and absorption", "Disease", "DNA Repair",
+  "DNA Replication", "Drug ADME", "Extracellular matrix organization", "Gene expression (Transcription)", "Hemostasis",
+  "Immune System", "Metabolism", "Metabolism of proteins", "Metabolism of RNA", "Muscle contraction", "Neuronal System",
+  "Organelle biogenesis and maintenance", "Programmed Cell Death", "Protein localization", "Reproduction", "Sensory Perception",
+  "Signal Transduction", "Transport of small molecules", "Vesicle-mediated transport")
+
+interp_msigdb_files <- function(sources) {
+  if (length(sources$msigdb) != 1L || !nzchar(sources$msigdb) || !dir.exists(sources$msigdb)) return(character())
+  pick <- function(pattern) { f <- Sys.glob(file.path(sources$msigdb, pattern)); if (length(f)) f[[1L]] else NA_character_ }
+  files <- c(Hallmark = pick("h.all.v*.Hs.symbols.gmt"), `Canonical pathways` = pick("c2.cp.v*.Hs.symbols.gmt"),
+    `GO biological process` = pick("c5.go.bp.v*.Hs.symbols.gmt"))
+  files[!is.na(files) & vapply(files, interp_readable, logical(1))]
+}
+
+interp_pathways_empty <- function() list(
+  reactome = data.frame(gene = character(), relation = character(), pathway = character(), pathway_id = character(),
+    top_level = logical(), evidence = character(), stringsAsFactors = FALSE),
+  gene_sets = data.frame(gene = character(), relation = character(), collection = character(), gene_set = character(),
+    genes_in_set = integer(), stringsAsFactors = FALSE))
+
+# Pathways and gene sets of the linked genes, from local files only. They
+# describe the genes; they are not evidence that the variant changes a pathway.
+interp_local_pathways <- function(genes, sources = interp_local_sources()) {
+  out <- c(list(available = FALSE, reactome_available = FALSE, msigdb_available = FALSE, genes = genes), interp_pathways_empty(),
+    list(source = character()))
+  if (is.null(genes) || !nrow(genes)) return(out)
+  label <- ifelse(nzchar(genes$gene), genes$gene, genes$gene_id)
+  if (interp_readable(sources$look) && interp_readable(sources$reactome)) {
+    out$reactome_available <- TRUE; out$source <- c(out$source, paste0("Reactome (", basename(sources$reactome), ")"))
+    rows <- list()
+    for (i in seq_len(nrow(genes))) {
+      lines <- interp_run_lines(sources$look, c(paste0(genes$gene_id[[i]], "\t"), sources$reactome), env = c("current", LC_ALL = "C"))
+      if (!length(lines)) next
+      f <- strsplit(lines, "\t", fixed = TRUE)
+      x <- data.frame(gene = label[[i]], relation = genes$relation[[i]], pathway = vapply(f, `[[`, character(1), 4L),
+        pathway_id = vapply(f, `[[`, character(1), 2L), evidence = vapply(f, `[[`, character(1), 5L), stringsAsFactors = FALSE)
+      # The same pathway can be listed once per evidence code.
+      x <- do.call(rbind, lapply(split(x, x$pathway_id), function(g) { g$evidence <- paste(sort(unique(g$evidence)), collapse = ", "); g[1L, ] }))
+      x$top_level <- x$pathway %in% interp_reactome_top_levels()
+      rows[[length(rows) + 1L]] <- x[order(!x$top_level, x$pathway), c("gene", "relation", "pathway", "pathway_id", "top_level", "evidence")]
+    }
+    if (length(rows)) { out$reactome <- do.call(rbind, rows); rownames(out$reactome) <- NULL }
+  }
+  files <- interp_msigdb_files(sources)
+  named <- nzchar(genes$gene)
+  if (length(files)) {
+    out$msigdb_available <- TRUE
+    out$source <- c(out$source, paste0("MSigDB ", sub("^.*\\.v([0-9.]+)\\.Hs\\..*$", "\\1", basename(files[[1L]]))))
+    rows <- list()
+    if (any(named)) for (collection in names(files)) {
+      sets <- strsplit(readLines(files[[collection]], warn = FALSE), "\t", fixed = TRUE)
+      # Reactome sets are left to the Reactome mapping above, which is keyed by gene ID.
+      sets <- sets[!startsWith(vapply(sets, `[[`, character(1), 1L), "REACTOME_")]
+      for (i in which(named)) {
+        hit <- vapply(sets, function(set) genes$gene[[i]] %in% set[-(1:2)], logical(1))
+        if (any(hit)) rows[[length(rows) + 1L]] <- data.frame(gene = genes$gene[[i]], relation = genes$relation[[i]], collection = collection,
+          gene_set = vapply(sets[hit], `[[`, character(1), 1L), genes_in_set = lengths(sets[hit]) - 2L, stringsAsFactors = FALSE)
+      }
+    }
+    if (length(rows)) {
+      x <- do.call(rbind, rows)
+      out$gene_sets <- x[order(match(x$gene, genes$gene), match(x$collection, names(files)), x$genes_in_set), , drop = FALSE]
+      rownames(out$gene_sets) <- NULL
+    }
+  }
+  out$available <- out$reactome_available || out$msigdb_available
+  out
+}
+
 # All local lookups; each source fails on its own.
 interp_local_evidence <- function(variant, sources = interp_local_sources()) {
   attempt <- function(expr) tryCatch(expr, error = function(e) e)
   list(cadd = attempt(interp_cadd(variant, sources)), known = attempt(interp_known_variant(variant, sources)),
     fhs = attempt(interp_fhs_qtl(variant, sources)), topmed = attempt(interp_topmed_qtl(variant, sources)),
+    gwas_catalog = attempt(interp_gwas_catalog(variant, sources)), clinvar = attempt(interp_clinvar_local(variant, sources)),
     status = interp_local_status(sources))
 }
 
@@ -1269,7 +1560,7 @@ interp_summary_row <- function(question, level, finding, evidence = character(),
   data.frame(question = question, level = level, finding = finding, evidence = paste(evidence[nzchar(evidence)], collapse = " | "),
     sources = paste(unique(sources[nzchar(sources)]), collapse = "; "), stringsAsFactors = FALSE)
 
-interp_evidence_summary <- function(consequences, local = NULL, public = NULL, spliceai = NULL, rna = NULL) {
+interp_evidence_summary <- function(consequences, local = NULL, public = NULL, spliceai = NULL, rna = NULL, ld = NULL) {
   rows <- list()
   genic <- consequences[!consequences$most_severe %in% c("upstream_gene_variant", "downstream_gene_variant"), , drop = FALSE]
   ot <- if (interp_ok(public) && interp_ok(public$open_targets) && isTRUE(public$open_targets$found)) public$open_targets else NULL
@@ -1292,7 +1583,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     reference <- genic[grepl("MANE_Select|Ensembl_canonical", genic$transcript_flags), , drop = FALSE]
     ref_top <- if (nrow(reference)) reference[1L, ] else top
     n_severe <- sum(genic$most_severe == top$most_severe & genic$gene_id == top$gene_id)
-    n_gene <- sum(genic$gene_id == top$gene_id)
+    # Same denominator as the per-gene table: every transcript of the gene within reach.
+    n_gene <- sum(consequences$gene_id == top$gene_id)
     where <- sprintf("%s in %s, %d of %d transcripts", top$most_severe, top$gene_name, n_severe, n_gene)
     hgvs <- trimws(paste(ref_top$hgvs_c, ref_top$hgvs_p))
     evidence <- c(where, if (nzchar(hgvs)) paste0("reference transcript ", ref_top$transcript_id, ": ", ref_top$consequence, " ", hgvs) else "",
@@ -1330,27 +1622,44 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       c(src, if (is.finite(cadd)) "CADD v1.7", if (!is.null(am) && nrow(am)) "Open Targets", if (is.finite(revel)) "MyVariant.info"))
   }
 
-  # 2. Protein abundance (pQTL credible sets).
-  if (!ot_queried) {
-    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "Not assessed", "Public databases were not queried; no pQTL results are stored locally.")
+  # 2. Protein abundance: pQTL credible sets (public), and published protein-level associations (local).
+  catalog_p <- if (interp_ok(local) && interp_ok(local$gwas_catalog) && isTRUE(local$gwas_catalog$available)) local$gwas_catalog$associations else NULL
+  protein_here <- if (!is.null(catalog_p)) catalog_p[interp_is_protein_trait(catalog_p$mapped_trait) & is.finite(catalog_p$p_value) & catalog_p$p_value <= 5e-8, , drop = FALSE] else NULL
+  protein_ld <- if (interp_ok(ld) && isTRUE(ld$available)) ld$ld[ld$ld$r2 >= 0.8 & interp_is_protein_trait(ld$ld$mapped_trait) &
+    is.finite(ld$ld$p_value) & ld$ld$p_value <= 5e-8, , drop = FALSE] else NULL
+  local_lines <- c(
+    if (!is.null(protein_here) && nrow(protein_here)) paste0("GWAS Catalog, at this variant: ", interp_join(unique(interp_protein_name(protein_here$mapped_trait)), ", ", max = 6)),
+    if (!is.null(protein_ld) && nrow(protein_ld)) paste0("GWAS Catalog, through LD (r2 >= 0.8 in this cohort): ",
+      interp_join(unique(sprintf("%s (%s, r2 %.2f)", interp_protein_name(protein_ld$mapped_trait), protein_ld$rs_id, protein_ld$r2)), ", ", max = 6)))
+  local_sources <- c(if (length(local_lines)) "GWAS Catalog", if (!is.null(protein_ld) && nrow(protein_ld)) "cohort WGS genotypes")
+  pq <- if (!is.null(ot)) ot$qtl[ot$qtl$qtl_type == "pqtl", , drop = FALSE] else NULL
+  if (!is.null(pq) && nrow(pq)) {
+    pip <- ifelse(is.na(pq$posterior_probability), 0, pq$posterior_probability)
+    cis <- !(pq$trans %in% TRUE)
+    level <- if (any(pip >= 0.9 & cis)) "Strong" else "Moderate"
+    if (!any(pip >= 0.1) && !length(local_lines)) level <- "Limited"
+    # Cis sets first: they concern the protein encoded next to the variant.
+    order_best <- order(!cis, -pip)
+    best <- pq[order_best, , drop = FALSE]; best_pip <- pip[order_best]; best_cis <- cis[order_best]
+    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", level,
+      sprintf("In %d pQTL credible set(s), %d in cis; leading set: %s in %s (%s), posterior probability %.2f.", nrow(pq), sum(cis),
+        best$gene[[1L]], best$biosample[[1L]], if (best_cis[[1L]]) "cis" else "trans", best_pip[[1L]]),
+      c(sprintf("%s in %s: PIP %.2f, beta %+.2f, p %s%s", head(best$gene, 6L), head(best$biosample, 6L), head(best_pip, 6L),
+        head(best$beta, 6L), interp_fmt_p(head(best$p_value, 6L)), ifelse(head(best_cis, 6L), "", " (trans)")), local_lines),
+      c("Open Targets", local_sources))
+  } else if (length(local_lines)) {
+    # A published association with a protein level, at the variant or at one it travels with: not fine-mapped, so Moderate.
+    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "Moderate",
+      paste0("Associated with the blood level of ", length(unique(c(interp_protein_name(protein_here$mapped_trait), interp_protein_name(protein_ld$mapped_trait)))),
+        " protein(s) in published GWAS; not fine-mapped to this variant, and cis or trans is not determined here."),
+      c(local_lines, if (!ot_queried) "pQTL credible sets not consulted: public query not run"), local_sources)
+  } else if (ot_queried) {
+    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "None found", "Not in any pQTL credible set in Open Targets.", sources = "Open Targets")
   } else {
-    pq <- if (!is.null(ot)) ot$qtl[ot$qtl$qtl_type == "pqtl", , drop = FALSE] else NULL
-    if (is.null(pq) || !nrow(pq)) {
-      rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "None found", "Not in any pQTL credible set in Open Targets.", sources = "Open Targets")
-    } else {
-      pip <- ifelse(is.na(pq$posterior_probability), 0, pq$posterior_probability)
-      cis <- !(pq$trans %in% TRUE)
-      level <- if (any(pip >= 0.9 & cis)) "Strong" else if (any(pip >= 0.1)) "Moderate" else "Limited"
-      # Cis sets first: they concern the protein encoded next to the variant.
-      order_best <- order(!cis, -pip)
-      best <- pq[order_best, , drop = FALSE]; best_pip <- pip[order_best]; best_cis <- cis[order_best]
-      rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", level,
-        sprintf("In %d pQTL credible set(s), %d in cis; leading set: %s in %s (%s), posterior probability %.2f.", nrow(pq), sum(cis),
-          best$gene[[1L]], best$biosample[[1L]], if (best_cis[[1L]]) "cis" else "trans", best_pip[[1L]]),
-        sprintf("%s in %s: PIP %.2f, beta %+.2f, p %s%s", head(best$gene, 6L), head(best$biosample, 6L), head(best_pip, 6L),
-          head(best$beta, 6L), interp_fmt_p(head(best$p_value, 6L)), ifelse(head(best_cis, 6L), "", " (trans)")),
-        "Open Targets")
-    }
+    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "Not assessed", paste0(
+      if (!is.null(catalog_p)) "No protein-level association is reported at this position in the GWAS Catalog" else "No local pQTL source was readable",
+      if (!is.null(catalog_p) && !(interp_ok(ld) && isTRUE(ld$available))) " (variants in LD not checked: run the LD scan)" else "",
+      "; pQTL credible sets need the public query."))
   }
 
   # 3. Splicing.
@@ -1370,7 +1679,7 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   if (!is.null(sai)) {
     s <- sai[which.max(sai$max_delta), ]
     kinds <- c(acceptor_gain = "acceptor gain", acceptor_loss = "acceptor loss", donor_gain = "donor gain", donor_loss = "donor loss")
-    parts <- vapply(names(kinds), function(k) if (s[[k]] >= 0.1) sprintf("%s %.2f at %d", kinds[[k]], s[[k]], s[[paste0(k, "_pos1")]]) else "", character(1))
+    parts <- vapply(names(kinds), function(k) if (s[[k]] >= 0.1) sprintf("%s %.2f at exon base %d", kinds[[k]], s[[k]], s[[paste0(k, "_pos1")]]) else "", character(1))
     evidence <- c(evidence, paste0("SpliceAI (", s$gene, "): ", if (any(nzchar(parts))) paste(parts[nzchar(parts)], collapse = ", ") else
       sprintf("largest change %.2f", sai_max)))
     sources <- c(sources, "SpliceAI")
@@ -1469,14 +1778,25 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   # 5. Disease and traits.
   evidence <- character(); sources <- character(); level <- "None found"
   rank_up <- function(current, new) interp_levels()[[min(match(current, interp_levels()), match(new, interp_levels()))]]
-  significance <- character()
+  clinvar_local <- if (interp_ok(local) && interp_ok(local$clinvar) && isTRUE(local$clinvar$available)) local$clinvar else NULL
+  catalog <- if (interp_ok(local) && interp_ok(local$gwas_catalog) && isTRUE(local$gwas_catalog$available)) local$gwas_catalog else NULL
+  significance <- character(); detail <- ""
   if (!is.null(myv) && nrow(myv$clinvar)) { significance <- tolower(myv$clinvar$clinical_significance); sources <- c(sources, "ClinVar via MyVariant.info") }
+  if (!length(significance) && !is.null(clinvar_local) && isTRUE(clinvar_local$found)) {
+    r <- clinvar_local$records
+    significance <- tolower(trimws(unlist(strsplit(r$clinical_significance, "[|/,]"))))
+    conditions <- setdiff(unique(trimws(unlist(strsplit(r$conditions, ";", fixed = TRUE)))), c("", "not provided", "not specified"))
+    detail <- paste0(if (length(conditions)) paste0(" for ", interp_join(conditions, ", ", max = 4)) else "",
+      if (any(nzchar(r$review_status))) paste0(" (", interp_join(unique(r$review_status), "; "), ")") else "")
+    sources <- c(sources, clinvar_local$source)
+  }
   if (!length(significance) && !is.null(known) && nzchar(known$clinvar_significance)) {
     significance <- tolower(gsub("_", " ", strsplit(known$clinvar_significance, ", ", fixed = TRUE)[[1L]]))
     sources <- c(sources, "ClinVar 2023-10 (VEP cache)")
   }
+  significance <- unique(significance[nzchar(significance)])
   if (length(significance)) {
-    evidence <- c(evidence, paste0("ClinVar: ", interp_join(significance, ", ", max = 6)))
+    evidence <- c(evidence, paste0("ClinVar: ", interp_join(significance, ", ", max = 6), detail))
     pathogenic <- any(grepl("^(likely )?pathogenic", significance))
     benign <- any(grepl("benign", significance))
     level <- rank_up(level, if (pathogenic && !benign) "Strong" else if (pathogenic || any(grepl("risk|drug|association|protective|affects|conflicting", significance))) "Moderate" else "Limited")
@@ -1491,35 +1811,93 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     sources <- c(sources, "Open Targets")
     level <- rank_up(level, if (any(pip >= 0.5)) "Strong" else if (any(pip >= 0.1)) "Moderate" else "Limited")
   }
+  if (!is.null(catalog) && isTRUE(catalog$found)) {
+    a <- catalog$associations
+    genome_wide <- is.finite(a$p_value) & a$p_value <= 5e-8
+    traits <- unique(ifelse(nzchar(a$mapped_trait), a$mapped_trait, a$trait))
+    evidence <- c(evidence, sprintf("GWAS Catalog: %d association(s) reported at this position, %d at p <= 5e-8, %d distinct trait(s); strongest: %s",
+      nrow(a), sum(genome_wide), length(traits), interp_join(traits, "; ", max = 5)))
+    sources <- c(sources, trimws(paste("GWAS Catalog", catalog$release)))
+    # A published association at the variant itself; alone it does not single the variant out from its LD neighbours.
+    level <- rank_up(level, if (any(genome_wide)) "Moderate" else "Limited")
+  }
+  if (interp_ok(ld) && isTRUE(ld$available)) {
+    # LD with other reported variants: the variant can carry their signal only if it travels with them.
+    x <- ld$ld; tight <- x[x$r2 >= 0.8, , drop = FALSE]; loose <- x[x$r2 < 0.8, , drop = FALSE]
+    wide <- function(y) is.finite(y$p_value) & y$p_value <= 5e-8
+    name <- function(y) interp_join(unique(ifelse(nzchar(y$mapped_trait), y$mapped_trait, y$trait)), "; ", max = 5)
+    scan <- sprintf("%d GWAS Catalog variant(s) within %d kb%s, %d samples", ld$positions_examined, round(ld$window / 1000),
+      if (isTRUE(ld$truncated)) paste0(" (nearest of ", ld$positions_in_window, ")") else "", ld$samples)
+    if (nrow(tight)) {
+      evidence <- c(evidence, sprintf("LD in this cohort: r2 >= 0.8 with %d other reported variant(s) (%d association(s), %d at p <= 5e-8) for %s",
+        length(unique(tight$rs_id)), nrow(tight), sum(wide(tight)), name(tight)))
+      level <- rank_up(level, if (any(wide(tight))) "Moderate" else "Limited")
+    }
+    if (nrow(loose)) {
+      evidence <- c(evidence, sprintf("LD in this cohort: r2 %.1f-0.8 with %d more reported variant(s) for %s", ld$keep_r2, length(unique(loose$rs_id)), name(loose)))
+      level <- rank_up(level, "Limited")
+    }
+    if (!nrow(x)) evidence <- c(evidence, sprintf("LD in this cohort: no other reported variant with r2 >= %.1f (%s)", ld$keep_r2, scan))
+    sources <- c(sources, "cohort WGS genotypes")
+  }
   if (!is.null(ot) && nrow(ot$pharmacogenomics)) {
     evidence <- c(evidence, paste0("Pharmacogenomics: ", interp_join(ot$pharmacogenomics$drugs, ", ", max = 6)))
     level <- rank_up(level, "Moderate"); sources <- c(sources, "Open Targets")
   }
-  # Without the public lookup only an offline ClinVar snapshot was consulted.
-  if (!ot_queried && is.null(myv) && level == "None found") level <- "Not assessed"
+  consulted <- c(if (!is.null(clinvar_local)) clinvar_local$source else if (!is.null(known)) "ClinVar 2023-10 (VEP cache)",
+    if (!is.null(catalog)) trimws(paste("GWAS Catalog", catalog$release)), if (!is.null(myv)) "ClinVar via MyVariant.info",
+    if (ot_queried) "Open Targets")
+  # ClinVar and published associations are both needed before saying "none".
+  local_complete <- !is.null(catalog) && (!is.null(clinvar_local) || !is.null(myv))
+  if (level == "None found" && !ot_queried && !local_complete) level <- "Not assessed"
+  if (!ot_queried) evidence <- c(evidence, "GWAS fine-mapping (credible sets) not consulted: public query not run")
   finding <- switch(level, Strong = "Reported as disease-causing, or fine-mapped as the likely causal variant of a GWAS signal.",
     Moderate = "Linked to a disease, trait or drug response, without being singled out as causal.",
-    Limited = "Present in ClinVar or in GWAS credible sets with weak support for this variant.",
-    `None found` = "No clinical or GWAS record for this variant.",
-    if (!is.null(known)) "No ClinVar significance in the local snapshot (2023-10); GWAS and curated evidence need the public query." else
+    Limited = "Present in ClinVar or in GWAS records with weak support for this variant.",
+    `None found` = paste0("No clinical record and no published GWAS association for this variant in ", interp_join(consulted, ", "), "."),
+    if (length(consulted)) paste0("Only ", interp_join(consulted, ", "), " could be consulted and reports nothing; run the public query for GWAS and curated evidence.") else
       "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.")
-  rows[[5L]] <- interp_summary_row("Disease and traits", level, finding, evidence, sources)
+  rows[[5L]] <- interp_summary_row("Disease and traits", level, finding, evidence, if (length(evidence) > !ot_queried) sources else consulted)
 
-  # 6. Pathway (context for the genes the variant falls in; not evidence about the variant).
-  genes <- if (interp_ok(public) && interp_ok(public$genes)) public$genes else NULL
-  if (is.null(genes) || !nrow(genes$genes)) {
-    rows[[6L]] <- interp_summary_row("Pathway", "Not assessed", if (nrow(genic)) paste0("Public lookup not run for ",
-      interp_join(genic$gene_name, ", ", max = 4), ".") else "No gene overlaps the variant.")
+  # 6. Pathway (context for the genes the variant acts through; not evidence about the variant).
+  genes <- if (interp_ok(public) && interp_ok(public$genes) && nrow(public$genes$genes)) public$genes else NULL
+  lp <- if (interp_ok(local) && interp_ok(local$pathways) && isTRUE(local$pathways$available) && nrow(local$pathways$genes)) local$pathways else NULL
+  if (is.null(genes) && is.null(lp)) {
+    rows[[6L]] <- interp_summary_row("Pathway", "Not assessed", if (nrow(genic)) paste0("No pathway source was available for ",
+      interp_join(genic$gene_name, ", ", max = 4), "; run the public query.") else "No gene overlaps the variant or is a QTL target of it.")
   } else {
-    per_gene <- vapply(genes$genes$gene, function(g) {
-      top <- unique(genes$pathways$top_level[genes$pathways$gene == g])
-      paste0(g, ": ", if (length(top)) interp_join(top, ", ", max = 5) else "no Reactome pathway")
-    }, character(1))
-    rows[[6L]] <- interp_summary_row("Pathway", "Context", paste(per_gene, collapse = " · "),
-      sprintf("%s: %d Reactome pathway(s), %d GO term(s), %d associated disease(s) in Open Targets", genes$genes$gene,
-        vapply(genes$genes$gene, function(g) sum(genes$pathways$gene == g), integer(1)),
-        vapply(genes$genes$gene, function(g) sum(genes$go$gene == g), integer(1)), genes$genes$associated_diseases),
-      "Reactome and GO via Open Targets")
+    evidence <- character(); sources <- character(); finding <- character()
+    if (!is.null(lp)) {
+      g <- utils::head(lp$genes, 6L); label <- ifelse(nzchar(g$gene), g$gene, g$gene_id)
+      pretty <- function(set) tolower(gsub("_", " ", sub("^[A-Z]+_", "", set)))
+      bare <- character()
+      for (i in seq_len(nrow(g))) {
+        r <- lp$reactome[lp$reactome$gene == label[[i]], , drop = FALSE]
+        m <- lp$gene_sets[lp$gene_sets$gene == label[[i]], , drop = FALSE]
+        top <- r$pathway[r$top_level]
+        # Without a Reactome entry, name the gene's most specific (smallest) gene sets.
+        named <- if (length(top)) interp_join(top, ", ", max = 4) else if (nrow(m))
+          interp_join(pretty(m$gene_set[order(m$genes_in_set)]), ", ", max = 3) else "no pathway annotation"
+        if (!nrow(r) && !nrow(m)) { bare <- c(bare, label[[i]]); next }
+        finding <- c(finding, paste0(label[[i]], " (", g$relation[[i]], "): ", named))
+        evidence <- c(evidence, sprintf("%s: %d Reactome pathway(s), %d gene set(s)", label[[i]], nrow(r), nrow(m)))
+      }
+      if (length(bare)) evidence <- c(evidence, paste0("no pathway annotation: ", interp_join(bare, ", ")))
+      if (!length(finding)) finding <- "None of the linked genes has a pathway annotation in the local sources."
+      if (nrow(lp$genes) > 6L) evidence <- c(evidence, paste0(nrow(lp$genes) - 6L, " more linked gene(s) in the table"))
+      sources <- c(sources, lp$source)
+    }
+    if (!is.null(genes)) {
+      if (is.null(lp)) finding <- vapply(genes$genes$gene, function(gene) {
+        top <- unique(genes$pathways$top_level[genes$pathways$gene == gene])
+        paste0(gene, ": ", if (length(top)) interp_join(top, ", ", max = 5) else "no Reactome pathway")
+      }, character(1))
+      evidence <- c(evidence, sprintf("Open Targets, %s: %d Reactome pathway(s), %d GO term(s), %d associated disease(s)", genes$genes$gene,
+        vapply(genes$genes$gene, function(gene) sum(genes$pathways$gene == gene), integer(1)),
+        vapply(genes$genes$gene, function(gene) sum(genes$go$gene == gene), integer(1)), genes$genes$associated_diseases))
+      sources <- c(sources, "Reactome and GO via Open Targets")
+    }
+    rows[[6L]] <- interp_summary_row("Pathway", "Context", paste(finding, collapse = " · "), evidence, sources)
   }
 
   # 7. Tissue.
@@ -1529,8 +1907,12 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     if (nrow(h)) {
       h <- head(h, 4L)
       what <- ifelse(h$qtl_type == "sQTL", sub("^[^:]+:([0-9]+):([0-9]+):.*$", " intron \\1-\\2", h$phenotype), "")
-      evidence <- c(evidence, sprintf("TOPMed %s %s%s: %s", h$qtl_type, ifelse(nzchar(h$gene), h$gene, h$gene_id), what, h$pattern))
-      sources <- c(sources, "TOPMed cis-QTL (6 contexts)")
+      # The trained cross-context model's reading of the same gene or intron, when a model is available.
+      tissue <- if (interp_ok(local) && interp_ok(local$tissue) && isTRUE(local$tissue$available)) local$tissue$phenotypes else NULL
+      modelled <- if (!is.null(tissue) && nrow(tissue)) tissue$summary[match(paste(h$qtl_type, h$phenotype), paste(tissue$qtl_type, tissue$phenotype))] else rep(NA_character_, nrow(h))
+      evidence <- c(evidence, sprintf("TOPMed %s %s%s: %s%s", h$qtl_type, ifelse(nzchar(h$gene), h$gene, h$gene_id), what, h$pattern,
+        ifelse(is.na(modelled), "", paste0("; model: ", modelled))))
+      sources <- c(sources, "TOPMed cis-QTL (6 contexts)", if (any(!is.na(modelled))) "cross-context model")
     }
   }
   if (!is.null(gtex) && nrow(gtex$qtl)) {
@@ -1550,10 +1932,330 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   out <- do.call(rbind, rows); rownames(out) <- NULL; out
 }
 
+# The summary in a few sentences: the best-supported molecular effect, what else
+# is supported, the disease or trait link, and which optional steps have not
+# been run. It restates the rows above with their levels; it adds no evidence.
+# `done` says which on-request steps were run for this variant.
+interp_overall_reading <- function(summary, done = list(public = FALSE, spliceai = FALSE, ld = FALSE)) {
+  level <- function(q) summary$level[match(q, summary$question)]
+  finding <- function(q) summary$finding[match(q, summary$question)]
+  short <- c(`Protein sequence` = "a change to the protein sequence", `Protein abundance (pQTL)` = "protein abundance",
+    Splicing = "splicing", `Gene expression (eQTL)` = "gene expression")
+  molecular <- intersect(names(short), summary$question)
+  rank <- match(level(molecular), interp_levels())
+  lines <- character()
+  supported <- rank <= 3L & !is.na(rank)
+  if (any(supported)) {
+    best <- min(rank[supported]); top <- molecular[supported & rank == best]
+    lines <- c(lines, sprintf("Best-supported molecular effect: %s (%s). %s", paste(short[top], collapse = " and "), interp_levels()[[best]], finding(top[[1L]])))
+    others <- molecular[supported & rank > best]
+    if (length(others)) lines <- c(lines, paste0("Also supported: ", paste(sprintf("%s (%s)", short[others], level(others)), collapse = ", "), "."))
+  } else lines <- c(lines, "No molecular effect of this variant is supported by the sources consulted so far.")
+  disease <- level("Disease and traits")
+  if (length(disease) && !is.na(disease)) lines <- c(lines, if (disease %in% c("Strong", "Moderate", "Limited"))
+    sprintf("Disease and traits (%s): %s", disease, finding("Disease and traits")) else if (disease == "None found")
+    "Disease and traits: nothing reported for this variant in the sources consulted." else "Disease and traits: not assessed yet.")
+  todo <- c(if (!isTRUE(done$spliceai)) "SpliceAI (splice-site prediction)", if (!isTRUE(done$ld)) "the LD scan (published signals this variant travels with)",
+    if (!isTRUE(done$public)) "the public query (fine-mapping, pQTL credible sets, tissue expression)")
+  if (length(todo)) lines <- c(lines, paste0("Not run yet: ", paste(todo, collapse = "; "), "."))
+  lines
+}
+
 # Fill gene names into TOPMed pairs from a gene_id -> gene_name table.
 interp_name_genes <- function(pairs, names) {
   if (is.null(pairs) || !nrow(pairs) || is.null(names) || !nrow(names)) return(pairs)
   pairs$gene <- names$gene_name[match(interp_bare_gene(pairs$gene_id), interp_bare_gene(names$gene_id))]
   pairs$gene[is.na(pairs$gene)] <- ""
   pairs
+}
+# ---- Cross-context sharing model ---------------------------------------------
+# An empirical-Bayes model of how a cis-QTL effect is shared between contexts,
+# in the manner of multivariate adaptive shrinkage (Urbut et al. 2019). For one
+# variant-phenotype pair with estimates x_hat and standard errors s in the
+# contexts where it was tested,
+#   x_hat ~ N(x, S V S),   x ~ pi_0 * delta_0 + sum_kl pi_kl * N(0, w_l^2 * U_k)
+# S = diag(s). V is the correlation of the estimates between contexts when there
+# is no effect (shared donors); U_k are patterns of sharing (the same in all
+# contexts, one context only, patterns learned from the strongest signals);
+# w_l is a grid of effect sizes. A model works on one of two scales:
+#   "slope": x is the per-allele slope, so contexts share effect sizes;
+#   "z":     x is slope / s and S is the identity, so contexts share z-scores.
+# scripts/train_tissue_model.R learns V, the learned U_k and pi from the TOPMed
+# cis-QTL files and keeps the scale that predicts held-out pairs better; the
+# functions here are used both there and at view time. A context that was not
+# tested is left out of the likelihood.
+
+interp_mash_grid <- function(scale = "z") if (identical(scale, "slope")) 2^(seq(-10, 3) / 2) else 2^(seq(-2, 12) / 2)
+
+# Fixed sharing patterns for R contexts.
+interp_mash_canonical <- function(contexts) {
+  r <- length(contexts)
+  out <- list(identity = diag(r), equal_effects = matrix(1, r, r))
+  for (rho in c(.25, .5, .75)) { u <- matrix(rho, r, r); diag(u) <- 1; out[[paste0("simple_het_", rho)]] <- u }
+  for (i in seq_len(r)) { u <- matrix(0, r, r); u[i, i] <- 1; out[[paste0("only_", contexts[[i]])]] <- u }
+  lapply(out, function(u) { dimnames(u) <- list(contexts, contexts); u })
+}
+
+# Class of a pattern, for reporting which kind carries the posterior weight.
+interp_mash_class <- function(name) ifelse(name == "null", "no effect", ifelse(startsWith(name, "only_"), "one context",
+  ifelse(name %in% c("equal_effects") | startsWith(name, "simple_het_"), "shared", ifelse(name == "identity", "independent", "learned"))))
+
+interp_mash_model <- function(contexts, V, U, pi = NULL, grid = interp_mash_grid(scale), meta = list(), scale = "z") {
+  r <- length(contexts)
+  stopifnot(scale %in% c("z", "slope"), is.matrix(V), all(dim(V) == r), length(U) > 0L,
+    all(vapply(U, function(u) is.matrix(u) && all(dim(u) == r), logical(1))))
+  n <- length(U) * length(grid) + 1L
+  if (is.null(pi)) pi <- rep(1 / n, n)
+  stopifnot(length(pi) == n, all(pi >= 0), abs(sum(pi) - 1) < 1e-6)
+  structure(list(contexts = contexts, scale = scale, V = V, U = U, grid = grid, pi = pi, meta = meta), class = "regshiny_tissue_model")
+}
+
+# Component index: 1 is the null, then every pattern k at every scale l.
+interp_mash_components <- function(model) data.frame(index = seq_along(model$pi),
+  pattern = c("null", rep(names(model$U), each = length(model$grid))), scale = c(0, rep(model$grid, times = length(model$U))),
+  stringsAsFactors = FALSE)
+
+interp_mash_logdmvnorm <- function(X, S) {
+  # Rows of X ~ N(0, S); returns one log density per row.
+  ch <- chol(S)
+  y <- backsolve(ch, t(X), transpose = TRUE)
+  -0.5 * colSums(y^2) - sum(log(diag(ch))) - 0.5 * ncol(X) * log(2 * pi)
+}
+
+# Sampling covariance of the estimates in the tested contexts `o`.
+interp_mash_noise <- function(model, o, se = NULL) {
+  v <- model$V[o, o, drop = FALSE]
+  if (identical(model$scale, "slope")) v * outer(se[o], se[o]) else v
+}
+
+# n x components matrix of log-likelihoods. X is n x R with NA for untested
+# contexts; SE (same shape) is needed by a slope-scale model.
+interp_mash_loglik <- function(X, model, SE = NULL) {
+  X <- as.matrix(X); comps <- interp_mash_components(model); n <- nrow(comps)
+  out <- matrix(NA_real_, nrow(X), n)
+  prior <- lapply(seq_len(n)[-1L], function(j) comps$scale[[j]]^2 * model$U[[comps$pattern[[j]]]])
+  if (identical(model$scale, "slope")) {
+    stopifnot(!is.null(SE), all(dim(SE) == dim(X)))
+    for (i in seq_len(nrow(X))) {
+      o <- which(is.finite(X[i, ]) & is.finite(SE[i, ]))
+      if (!length(o)) { out[i, ] <- 0; next }
+      x <- matrix(X[i, o], 1L); noise <- interp_mash_noise(model, o, SE[i, ])
+      out[i, 1L] <- interp_mash_logdmvnorm(x, noise)
+      for (j in seq_len(n)[-1L]) out[i, j] <- interp_mash_logdmvnorm(x, noise + prior[[j - 1L]][o, o, drop = FALSE])
+    }
+    return(out)
+  }
+  # z scale: the covariance depends only on which contexts were tested.
+  pattern <- apply(is.finite(X), 1L, function(x) paste(which(x), collapse = ","))
+  for (p in unique(pattern)) {
+    rows <- which(pattern == p); o <- as.integer(strsplit(p, ",", fixed = TRUE)[[1L]])
+    if (!length(o)) { out[rows, ] <- 0; next }
+    x <- X[rows, o, drop = FALSE]; noise <- interp_mash_noise(model, o)
+    out[rows, 1L] <- interp_mash_logdmvnorm(x, noise)
+    for (j in seq_len(n)[-1L]) out[rows, j] <- interp_mash_logdmvnorm(x, noise + prior[[j - 1L]][o, o, drop = FALSE])
+  }
+  out
+}
+
+# Mixture weights by EM on a likelihood matrix. null_weight > 1 is a penalty
+# that favours "no effect" when the data do not decide, as in ashr.
+interp_mash_fit_pi <- function(loglik, null_weight = 10, iterations = 500L, tolerance = 1e-7) {
+  lik <- exp(loglik - apply(loglik, 1L, max))
+  k <- ncol(lik); pi <- rep(1 / k, k); prior <- c(null_weight, rep(1, k - 1L)) - 1
+  objective <- -Inf
+  for (i in seq_len(iterations)) {
+    w <- sweep(lik, 2L, pi, `*`); total <- rowSums(w)
+    new <- sum(log(total)) + sum(prior * log(pmax(pi, 1e-300)))
+    pi <- colSums(w / total) + prior; pi <- pi / sum(pi)
+    if (abs(new - objective) < tolerance * abs(new)) break
+    objective <- new
+  }
+  pi
+}
+
+# Posterior of the true effect in every context of the model for one pair, on
+# the model's scale. One row per context: for a tested context the re-estimated
+# effect, for an untested one what the tested contexts imply. lfsr is the local
+# false sign rate: the posterior probability that the effect is absent or has
+# the other sign.
+interp_mash_posterior <- function(x_hat, model, se = NULL) {
+  r <- length(model$contexts); comps <- interp_mash_components(model)
+  slope <- identical(model$scale, "slope")
+  o <- which(is.finite(x_hat) & (if (slope) is.finite(se) & se > 0 else TRUE))
+  out <- data.frame(context = model$contexts, tested = seq_len(r) %in% o, estimate = as.numeric(x_hat), posterior_mean = NA_real_,
+    posterior_sd = NA_real_, p_positive = NA_real_, p_negative = NA_real_, lfsr = NA_real_, stringsAsFactors = FALSE)
+  if (!length(o)) return(list(contexts = out, weights = data.frame(class = character(), weight = numeric(), stringsAsFactors = FALSE),
+    top_single = NULL, log_bf = NA_real_))
+  x <- x_hat[o]; noise <- interp_mash_noise(model, o, se)
+  n <- nrow(comps); ll <- numeric(n); mu <- matrix(0, n, r); va <- matrix(0, n, r)
+  ll[[1L]] <- interp_mash_logdmvnorm(matrix(x, 1L), noise)
+  for (j in seq_len(n)[-1L]) {
+    P <- comps$scale[[j]]^2 * model$U[[comps$pattern[[j]]]]
+    S <- noise + P[o, o, drop = FALSE]
+    ll[[j]] <- interp_mash_logdmvnorm(matrix(x, 1L), S)
+    A <- P[, o, drop = FALSE] %*% solve(S)
+    mu[j, ] <- A %*% x
+    va[j, ] <- pmax(0, diag(P) - rowSums(A * P[, o, drop = FALSE]))
+  }
+  lw <- log(pmax(model$pi, 1e-300)) + ll; w <- exp(lw - max(lw)); w <- w / sum(w)
+  mean <- colSums(w * mu); second <- colSums(w * (va + mu^2))
+  sd <- sqrt(va); positive <- ifelse(sd > 0, stats::pnorm(mu / ifelse(sd > 0, sd, 1)), 0)
+  negative <- ifelse(sd > 0, stats::pnorm(-mu / ifelse(sd > 0, sd, 1)), 0)
+  out$posterior_mean <- mean; out$posterior_sd <- sqrt(pmax(0, second - mean^2))
+  out$p_positive <- colSums(w * positive); out$p_negative <- colSums(w * negative)
+  out$lfsr <- pmin(1, pmax(0, 1 - pmax(out$p_positive, out$p_negative)))
+  class <- interp_mash_class(comps$pattern)
+  weights <- stats::aggregate(weight ~ class, data.frame(class = class, weight = w, stringsAsFactors = FALSE), sum)
+  # The single one-context pattern with the most weight, if any.
+  one <- tapply(w[class == "one context"], comps$pattern[class == "one context"], sum)
+  list(contexts = out, weights = weights[order(-weights$weight), , drop = FALSE],
+    top_single = if (length(one)) list(context = sub("^only_", "", names(one)[[which.max(one)]]), weight = max(one)) else NULL,
+    # Bayes factor of "some effect" against "no effect in any tested context".
+    log_bf = max(lw[-1L]) + log(sum(exp(lw[-1L] - max(lw[-1L])))) - log(max(sum(model$pi[-1L]), 1e-300)) - ll[[1L]])
+}
+
+# What the other contexts predict for the observed estimate of context `leave`
+# (which must be tested). Used to check the model on pairs it was not fitted on.
+interp_mash_predict_left_out <- function(x_hat, model, leave, se = NULL) {
+  slope <- identical(model$scale, "slope")
+  tested <- which(is.finite(x_hat) & (if (slope) is.finite(se) & se > 0 else TRUE))
+  o <- setdiff(tested, leave); comps <- interp_mash_components(model)
+  noise <- interp_mash_noise(model, seq_along(model$contexts), if (slope) ifelse(is.finite(se), se, 1) else NULL)
+  if (!length(o)) return(c(mean = 0, sd = sqrt(noise[leave, leave])))
+  x <- x_hat[o]; n <- nrow(comps); ll <- numeric(n); mu <- numeric(n); va <- numeric(n)
+  for (j in seq_len(n)) {
+    total <- noise + if (j == 1L) 0 else comps$scale[[j]]^2 * model$U[[comps$pattern[[j]]]]
+    S <- total[o, o, drop = FALSE]
+    ll[[j]] <- interp_mash_logdmvnorm(matrix(x, 1L), S)
+    a <- total[leave, o, drop = FALSE] %*% solve(S)
+    mu[[j]] <- a %*% x; va[[j]] <- max(0, total[leave, leave] - sum(a * total[leave, o]))
+  }
+  lw <- log(pmax(model$pi, 1e-300)) + ll; w <- exp(lw - max(lw)); w <- w / sum(w)
+  m <- sum(w * mu)
+  c(mean = m, sd = sqrt(max(0, sum(w * (va + mu^2)) - m^2)))
+}
+
+# Correlation of z between contexts among pairs with no sign of an effect
+# (|z| < 2 in both), from pairs chosen without looking at their p-values.
+interp_mash_null_correlation <- function(Z, threshold = 2, min_pairs = 50L) {
+  r <- ncol(Z); V <- diag(r)
+  for (i in seq_len(r - 1L)) for (j in (i + 1L):r) {
+    keep <- is.finite(Z[, i]) & is.finite(Z[, j]) & abs(Z[, i]) < threshold & abs(Z[, j]) < threshold
+    if (sum(keep) >= min_pairs) V[i, j] <- V[j, i] <- stats::cor(Z[keep, i], Z[keep, j])
+  }
+  interp_mash_nearest_pd(V, keep_diagonal = TRUE)
+}
+
+interp_mash_nearest_pd <- function(M, floor = 1e-6, keep_diagonal = FALSE) {
+  e <- eigen((M + t(M)) / 2, symmetric = TRUE)
+  out <- e$vectors %*% diag(pmax(e$values, floor), nrow(M)) %*% t(e$vectors)
+  if (keep_diagonal) { d <- sqrt(diag(out)); out <- out / outer(d, d) }
+  dimnames(out) <- dimnames(M); out
+}
+
+# Sharing patterns learned from the strongest signals: the second moment of
+# their estimates with the sampling noise removed, and its leading directions.
+# SE is given for slope-scale estimates and left out for z-scores.
+interp_mash_learned <- function(X, V, contexts, SE = NULL, n_directions = 3L) {
+  r <- ncol(X); M <- matrix(0, r, r)
+  for (i in seq_len(r)) for (j in i:r) {
+    keep <- is.finite(X[, i]) & is.finite(X[, j])
+    noise <- if (is.null(SE)) V[i, j] else V[i, j] * mean(SE[keep, i] * SE[keep, j])
+    M[i, j] <- M[j, i] <- if (sum(keep) > 1L) mean(X[keep, i] * X[keep, j]) - noise else 0
+  }
+  e <- eigen(M, symmetric = TRUE); e$values <- pmax(e$values, 0)
+  scale <- function(u) { u <- u / max(diag(u)); dimnames(u) <- list(contexts, contexts); u }
+  out <- list(learned_all = scale(e$vectors %*% diag(e$values, r) %*% t(e$vectors)))
+  k <- min(n_directions, sum(e$values > 0))
+  for (i in seq_len(k)) out[[paste0("learned_direction_", i)]] <- scale(tcrossprod(e$vectors[, i]))
+  if (k > 1L) out$learned_low_rank <- scale(e$vectors[, seq_len(k), drop = FALSE] %*% diag(e$values[seq_len(k)], k) %*% t(e$vectors[, seq_len(k), drop = FALSE]))
+  out
+}
+
+interp_tissue_model_write <- function(model, path) {
+  body <- list(format = "regshiny_tissue_model_v1", scale = model$scale, contexts = model$contexts, V = model$V, patterns = names(model$U),
+    U = unname(model$U), grid = model$grid, pi = model$pi, meta = model$meta)
+  tmp <- paste0(path, ".tmp")
+  writeLines(jsonlite::toJSON(body, digits = NA, auto_unbox = TRUE, pretty = TRUE, na = "null"), tmp)
+  invisible(file.rename(tmp, path))
+}
+
+interp_tissue_model_read <- function(path) {
+  x <- jsonlite::fromJSON(path, simplifyVector = TRUE, simplifyMatrix = TRUE, simplifyDataFrame = TRUE)
+  if (!identical(x$format, "regshiny_tissue_model_v1")) stop("Not a tissue sharing model file: ", path)
+  r <- length(x$contexts)
+  U <- if (is.array(x$U) && length(dim(x$U)) == 3L) lapply(seq_len(dim(x$U)[[1L]]), function(i) x$U[i, , ]) else lapply(x$U, function(u) matrix(unlist(u), r, r, byrow = TRUE))
+  names(U) <- x$patterns
+  interp_mash_model(x$contexts, matrix(unlist(x$V), r, r), U, as.numeric(x$pi), as.numeric(x$grid), x$meta,
+    scale = if (is.null(x$scale)) "z" else x$scale)
+}
+
+# -- The model applied to one variant ---------------------------------------------
+interp_tissue_empty <- function() list(
+  contexts = data.frame(qtl_type = character(), phenotype = character(), gene = character(), context = character(), tested = logical(),
+    slope_alt = numeric(), slope_se = numeric(), z = numeric(), posterior_slope = numeric(), posterior_sd = numeric(), posterior_z = numeric(),
+    lfsr = numeric(), call = character(), stringsAsFactors = FALSE),
+  phenotypes = data.frame(qtl_type = character(), phenotype = character(), gene = character(), contexts_tested = integer(),
+    effect_in = character(), no_clear_effect_in = character(), predicted_in = character(), similar_size_in = character(),
+    leading_pattern = character(), pattern_weight = numeric(), log10_bayes_factor = numeric(), summary = character(), stringsAsFactors = FALSE))
+
+interp_tissue_models <- function(sources = interp_local_sources()) {
+  files <- sources$tissue_model
+  if (!length(files)) return(list())
+  files <- files[vapply(files, interp_readable, logical(1))]
+  out <- lapply(files, function(f) tryCatch(interp_tissue_model_read(f), error = function(e) e))
+  out[!vapply(out, inherits, logical(1), "error")]
+}
+
+# Posterior effect of this variant in every context of the model, for each gene
+# (eQTL) or intron (sQTL) that is significant in at least one context. `lfsr`
+# below `cut` is called an effect. For a context where the pair was not tested
+# the model gives what the tested contexts imply (a slope from a slope-scale model, z units from a z-scale one).
+interp_tissue_sharing <- function(pairs, sources = interp_local_sources(), models = interp_tissue_models(sources), cut = 0.05) {
+  out <- c(list(available = length(models) > 0L, models = lapply(models, function(m) c(m$meta, list(scale = m$scale))), cut = cut), interp_tissue_empty())
+  if (!length(models) || is.null(pairs) || !nrow(pairs)) return(out)
+  pairs$key <- interp_phenotype_key(pairs$qtl_type, pairs$phenotype)
+  ctx_rows <- list(); ph_rows <- list()
+  groups <- split(pairs, paste(pairs$qtl_type, pairs$key))
+  groups <- groups[order(vapply(groups, function(x) min(x$p_nominal, na.rm = TRUE), numeric(1)))]
+  for (x in groups) {
+    model <- models[[x$qtl_type[[1L]]]]
+    x <- x[is.finite(x$slope_alt) & is.finite(x$slope_se) & x$slope_se > 0 & !duplicated(x$context), , drop = FALSE]
+    if (is.null(model) || !nrow(x) || !any(x$significant %in% TRUE)) next
+    k <- match(model$contexts, x$context)
+    if (all(is.na(k))) next
+    z <- x$slope_alt[k] / x$slope_se[k]
+    # A slope-scale model re-estimates the slope itself, also where the pair was not tested;
+    # a z-scale model re-estimates z, which converts to a slope only where a standard error exists.
+    on_slope <- identical(model$scale, "slope")
+    post <- if (on_slope) interp_mash_posterior(x$slope_alt[k], model, x$slope_se[k]) else interp_mash_posterior(z, model)
+    p <- post$contexts
+    effect <- is.finite(p$lfsr) & p$lfsr < cut
+    gene <- if (nzchar(x$gene[[1L]])) x$gene[[1L]] else interp_bare_gene(x$gene_id[[1L]])
+    slope <- if (on_slope) p$posterior_mean else p$posterior_mean * x$slope_se[k]
+    slope_sd <- if (on_slope) p$posterior_sd else p$posterior_sd * x$slope_se[k]
+    ctx_rows[[length(ctx_rows) + 1L]] <- data.frame(qtl_type = x$qtl_type[[1L]], phenotype = x$key[[1L]], gene = gene, context = p$context,
+      tested = p$tested, slope_alt = x$slope_alt[k], slope_se = x$slope_se[k], z = z, posterior_slope = slope, posterior_sd = slope_sd,
+      posterior_z = if (on_slope) slope / x$slope_se[k] else p$posterior_mean, lfsr = p$lfsr,
+      call = ifelse(p$tested, ifelse(effect, "effect", "no clear effect"), ifelse(effect, "predicted effect", "not predicted")), stringsAsFactors = FALSE)
+    # Similar size: tested contexts with an effect whose posterior slope has the sign of the largest and at least half its size.
+    lead <- if (any(effect & p$tested)) max(abs(slope[effect & p$tested])) else NA_real_
+    lead_sign <- if (is.finite(lead)) sign(slope[effect & p$tested][[which.max(abs(slope[effect & p$tested]))]]) else 0
+    similar <- effect & p$tested & is.finite(slope) & sign(slope) == lead_sign & abs(slope) >= lead / 2
+    w <- post$weights
+    leading <- if (nrow(w)) w$class[[1L]] else ""
+    if (identical(leading, "one context") && !is.null(post$top_single)) leading <- paste0("one context (", post$top_single$context, ")")
+    n_tested <- sum(p$tested); n_effect <- sum(effect & p$tested)
+    summary <- if (!n_effect) "no tested context has a confident effect" else if (n_effect == n_tested)
+      paste0("effect in all ", n_tested, " tested contexts", if (sum(similar) < n_effect) paste0(", similar size in ", sum(similar)) else ", similar size") else
+      paste0("effect in ", n_effect, " of ", n_tested, " tested contexts (", paste(p$context[effect & p$tested], collapse = ", "), ")")
+    if (any(effect & !p$tested)) summary <- paste0(summary, "; predicted in ", paste(p$context[effect & !p$tested], collapse = ", "))
+    ph_rows[[length(ph_rows) + 1L]] <- data.frame(qtl_type = x$qtl_type[[1L]], phenotype = x$key[[1L]], gene = gene, contexts_tested = n_tested,
+      effect_in = paste(p$context[effect & p$tested], collapse = ", "), no_clear_effect_in = paste(p$context[!effect & p$tested], collapse = ", "),
+      predicted_in = paste(p$context[effect & !p$tested], collapse = ", "), similar_size_in = paste(p$context[similar], collapse = ", "),
+      leading_pattern = leading, pattern_weight = if (nrow(w)) w$weight[[1L]] else NA_real_, log10_bayes_factor = post$log_bf / log(10),
+      summary = summary, stringsAsFactors = FALSE)
+  }
+  if (length(ph_rows)) { out$contexts <- do.call(rbind, ctx_rows); out$phenotypes <- do.call(rbind, ph_rows); rownames(out$contexts) <- rownames(out$phenotypes) <- NULL }
+  out
 }

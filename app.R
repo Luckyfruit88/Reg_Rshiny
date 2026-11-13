@@ -72,7 +72,8 @@ bundle_annotation <- function(bundle, release) {
 
 ui <- page_navbar(
   title = "Reg_Shiny", id = "workspace", selected = "Data sources", fillable = FALSE,
-  header = tagList(tags$head(tags$link(rel = "stylesheet", href = "frontend.css")),
+  # The version query makes a browser fetch the stylesheet again after an update instead of using its cached copy.
+  header = tagList(tags$head(tags$link(rel = "stylesheet", href = paste0("frontend.css?v=", as.integer(file.info("www/frontend.css")$mtime)))),
     uiOutput("active_data_banner", role = "status", `aria-live` = "polite")),
   nav_panel("Data sources", data_sources_ui("sources")),
   nav_panel("WGS genotype comparison", uiOutput("variant_workspace")),

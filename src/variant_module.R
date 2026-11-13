@@ -578,10 +578,11 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           paste0("No ", gencode_label(), " splice site within ", d, " bp; the ratio will not be computed.") else {
           w <- tryCatch(bin_widths(), error = function(e) NULL)
           check <- if (is.null(w)) rep("", nrow(cand)) else backend$variant_bin_check(cand, w$intron_width, w$exon_width)
-          tags$ul(lapply(seq_len(nrow(cand)), function(i) tags$li(sprintf("%s %s %d · %d bp away%s",
+          tags$ul(class = "regshiny-site-list", lapply(seq_len(nrow(cand)), function(i) tags$li(sprintf("%s %s %d · %d bp away%s",
             cand$splice_site_type[[i]], cand$strand[[i]], cand$splice_site_position[[i]], cand$distance[[i]],
             if (nzchar(check[[i]]) && check[[i]] != "OK") paste0(" · ", check[[i]]) else ""))))
         }
+      if (is.character(body)) body <- helpText(body)
       tagList(helpText(paste0("Every ", gencode_label(), " donor/acceptor within ", d,
         " bp is computed, one row per site. Reads are the retained reads used for depth, junctions and the denominator.")),
         body, helpText(strand_note))

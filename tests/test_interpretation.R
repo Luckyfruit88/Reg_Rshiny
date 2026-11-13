@@ -298,12 +298,18 @@ stopifnot(src$cadd_snv == "/tmp/custom_cadd.tsv.gz", identical(unname(src$fhs_sq
   identical(names(src$fhs_sqtl), c("discovery", "replication")))
 for (n in names(old_env)) if (is.na(old_env[[n]])) Sys.unsetenv(n) else do.call(Sys.setenv, stats::setNames(list(old_env[[n]]), n))
 none <- list(tabix = "", look = "", cadd_snv = "/missing", cadd_indel = "/missing", vep_cache = "/missing", topmed_qtl = "/missing",
-  fhs_sqtl = c(discovery = "/missing", replication = "/missing"), fhs_eqtl = "/missing", spliceai = "/missing")
+  fhs_sqtl = c(discovery = "/missing", replication = "/missing"), fhs_eqtl = "/missing", gwas_catalog = "/missing",
+  clinvar_vcf = "/missing", reactome = "/missing", msigdb = "/missing", tissue_model = c(eQTL = "/missing", sQTL = "/missing"), spliceai = "/missing")
 status <- interp_local_status(none)
-stopifnot(nrow(status) == 6L, !any(status$available))
+stopifnot(nrow(status) == 11L, !any(status$available))
+# A source list written before a source existed simply reports it as unavailable.
+stopifnot(!any(interp_local_status(none[c("tabix", "look", "cadd_snv", "cadd_indel", "vep_cache", "topmed_qtl", "fhs_sqtl", "fhs_eqtl", "spliceai")])$available))
 gone <- interp_local_evidence(v, none)
 stopifnot(!gone$cadd$available, !gone$known$available, !gone$fhs$sqtl_available, !gone$fhs$eqtl_available, !gone$topmed$available,
-  !nrow(gone$topmed$pairs), !nrow(gone$fhs$sqtl))
+  !nrow(gone$topmed$pairs), !nrow(gone$fhs$sqtl), !gone$gwas_catalog$available, !gone$clinvar$available,
+  !nrow(gone$gwas_catalog$associations), !nrow(gone$clinvar$records))
+no_paths <- interp_local_pathways(data.frame(gene_id = "ENSG1", gene = "G", relation = "overlaps", stringsAsFactors = FALSE), none)
+stopifnot(!no_paths$available, !nrow(no_paths$reactome), !nrow(no_paths$gene_sets))
 
 # Replication needs the same transcript and direction in both sets.
 sq <- data.frame(set = c("discovery", "replication", "discovery", "replication", "discovery"), feature = c("T1", "T1", "T2", "T2", "T3"),
@@ -423,6 +429,140 @@ s4 <- interp_evidence_summary(intronic, broken, list(open_targets = simpleError(
 stopifnot(level(s4, "Protein abundance (pQTL)") == "Not assessed", level(s4, "Gene expression (eQTL)") == "Not assessed",
   level(s4, "Disease and traits") == "Not assessed", level(s4, "Tissue") == "Not assessed")
 
+# The reading in a few sentences restates the rows and names what was not run.
+reading_rows <- data.frame(question = c("Protein sequence", "Protein abundance (pQTL)", "Splicing", "Gene expression (eQTL)", "Disease and traits"),
+  level = c("None found", "Moderate", "Strong", "Moderate", "Moderate"), finding = c("no change", "pqtl finding", "splicing finding", "eqtl finding", "trait finding"),
+  stringsAsFactors = FALSE)
+reading <- interp_overall_reading(reading_rows)
+stopifnot(length(reading) == 4L, reading[[1L]] == "Best-supported molecular effect: splicing (Strong). splicing finding",
+  reading[[2L]] == "Also supported: protein abundance (Moderate), gene expression (Moderate).", reading[[3L]] == "Disease and traits (Moderate): trait finding",
+  grepl("^Not run yet: SpliceAI", reading[[4L]]), grepl("the LD scan", reading[[4L]], fixed = TRUE), grepl("the public query", reading[[4L]], fixed = TRUE))
+all_done <- interp_overall_reading(reading_rows, list(public = TRUE, spliceai = TRUE, ld = TRUE))
+stopifnot(length(all_done) == 3L, !any(grepl("Not run yet", all_done)))
+tied <- reading_rows; tied$level <- c("Strong", "Not assessed", "Strong", "None found", "None found")
+stopifnot(grepl("a change to the protein sequence and splicing (Strong)", interp_overall_reading(tied)[[1L]], fixed = TRUE),
+  interp_overall_reading(tied)[[2L]] == "Disease and traits: nothing reported for this variant in the sources consulted.")
+blank <- reading_rows; blank$level <- c("None found", "Not assessed", "None found", "Not assessed", "Not assessed")
+stopifnot(interp_overall_reading(blank)[[1L]] == "No molecular effect of this variant is supported by the sources consulted so far.",
+  interp_overall_reading(blank)[[2L]] == "Disease and traits: not assessed yet.")
+
+# Genes the variant can act through: overlapped genes first, QTL targets after, one row per gene.
+lg_pairs <- rbind(pair("sQTL", "Lung", "chr1:10:90:clu_5_+:ENSGPLUS.1", 2, .1, 1e-50, TRUE, "ENSGPLUS.1"), pair("eQTL", "Lung", "ENSG9.2", .5, .05, 1e-20, TRUE, "ENSG9.2"),
+  pair("eQTL", "PBMC", "ENSG9.2", .5, .05, 1e-20, TRUE, "ENSG9.2"), pair("eQTL", "Lung", "ENSG8.1", .1, .05, .04, FALSE, "ENSG8.1"))
+lg_pairs$gene[lg_pairs$gene_id == "ENSG9.2"] <- "NINE"
+lg <- interp_linked_genes(missense, list(topmed = list(available = TRUE, pairs = lg_pairs)))
+stopifnot(nrow(lg) == 3L, identical(lg$gene, c("PARTIAL", "PLUS", "NINE")), lg$gene_id[[2L]] == "ENSGPLUS",
+  lg$relation[[1L]] == "overlaps", lg$relation[[2L]] == "overlaps; sQTL target (TOPMed)", lg$relation[[3L]] == "eQTL target (TOPMed)",
+  !"ENSG8" %in% lg$gene_id, nrow(interp_linked_genes(interp_empty_consequences())) == 0L, nrow(interp_linked_genes(missense)) == 2L)
+
+# ---- Cross-context sharing model -----------------------------------------------
+set.seed(11)
+mctx <- c("A", "B", "C"); mV <- matrix(.3, 3L, 3L); diag(mV) <- 1
+canon <- interp_mash_canonical(mctx)
+stopifnot(identical(names(canon), c("identity", "equal_effects", "simple_het_0.25", "simple_het_0.5", "simple_het_0.75", "only_A", "only_B", "only_C")),
+  canon$only_B["B", "B"] == 1, sum(canon$only_B) == 1, all(canon$equal_effects == 1), canon$simple_het_0.5["A", "C"] == .5,
+  identical(interp_mash_class(c("null", "only_B", "equal_effects", "simple_het_0.5", "identity", "learned_all")),
+    c("no effect", "one context", "shared", "shared", "independent", "learned")))
+expect_error(interp_mash_model(mctx, mV, canon, pi = c(.5, .6)), "length")
+# Simulated pairs: 70% no effect, 20% the same effect everywhere, 10% in B only; 15% of the z missing.
+simulate <- function(n) {
+  kind <- sample(c("null", "shared", "onlyB"), n, TRUE, c(.7, .2, .1)); z <- matrix(0, n, 3L)
+  z[kind == "shared", ] <- stats::rnorm(sum(kind == "shared"), 0, 4); z[kind == "onlyB", 2L] <- stats::rnorm(sum(kind == "onlyB"), 0, 5)
+  zh <- z + matrix(stats::rnorm(n * 3L), n, 3L) %*% chol(mV); zh[sample(length(zh), round(length(zh) * .15))] <- NA
+  list(z = z, zh = zh[rowSums(is.finite(zh)) > 0L, , drop = FALSE])
+}
+sim <- simulate(1500L)
+vh <- interp_mash_null_correlation(sim$zh)
+# Estimated among |z| < 2 only, so somewhat below the true 0.3.
+stopifnot(all(vh[upper.tri(vh)] > .12 & vh[upper.tri(vh)] < .4), all(abs(diag(vh) - 1) < 1e-12))
+learned <- interp_mash_learned(sim$zh[apply(abs(sim$zh), 1L, max, na.rm = TRUE) > 4, ], vh, mctx)
+stopifnot("learned_all" %in% names(learned), max(diag(learned$learned_all)) == 1, isSymmetric(unname(learned$learned_all)))
+mm <- interp_mash_model(mctx, vh, c(canon, learned))
+ll <- interp_mash_loglik(sim$zh, mm)
+# The null column is the plain multivariate normal density of the tested contexts.
+one_row <- which(rowSums(is.finite(sim$zh)) == 1L)[[1L]]
+stopifnot(dim(ll) == c(nrow(sim$zh), length(mm$pi)), all(is.finite(ll)),
+  abs(ll[one_row, 1L] - stats::dnorm(sim$zh[one_row, is.finite(sim$zh[one_row, ])], log = TRUE)) < 1e-10)
+mm$pi <- interp_mash_fit_pi(ll)
+by_class <- tapply(mm$pi, interp_mash_class(interp_mash_components(mm)$pattern), sum)
+stopifnot(abs(sum(mm$pi) - 1) < 1e-8, abs(by_class[["no effect"]] - .7) < .1, by_class[["shared"]] + by_class[["learned"]] > .12,
+  by_class[["one context"]] > .04, by_class[["independent"]] < .05)
+# Same effect in two contexts: confident there, and predicted in the untested third.
+shared <- interp_mash_posterior(c(5, NA, 5.5), mm)
+stopifnot(all(shared$contexts$lfsr < .01), !shared$contexts$tested[[2L]], shared$contexts$posterior_mean[[2L]] > 3, shared$weights$class[[1L]] %in% c("shared", "learned"),
+  shared$log_bf > 5, all(shared$contexts$posterior_mean[c(1L, 3L)] < c(5, 5.5) + .5), identical(shared$contexts$estimate, c(5, NA, 5.5)))
+# One context only: the others stay at zero.
+single <- interp_mash_posterior(c(.3, 6, -.5), mm)
+stopifnot(single$contexts$lfsr[[2L]] < .01, all(single$contexts$lfsr[c(1L, 3L)] > .5), single$weights$class[[1L]] == "one context", single$top_single$context == "B")
+# Nothing: no context is called, the Bayes factor favours no effect.
+quiet <- interp_mash_posterior(c(1.2, -.8, .5), mm)
+stopifnot(all(quiet$contexts$lfsr > .5), quiet$log_bf < 0, all(is.na(interp_mash_posterior(c(NA, NA, NA), mm)$contexts$lfsr)))
+# A left-out context is predicted from the others, with an interval that covers about 95% of fresh pairs.
+fresh <- simulate(600L)$zh; fresh <- fresh[is.finite(fresh[, 2L]) & rowSums(is.finite(fresh)) > 1L, ]
+pred <- t(vapply(seq_len(nrow(fresh)), function(i) interp_mash_predict_left_out(fresh[i, ], mm, 2L), numeric(2)))
+stopifnot(stats::cor(pred[, 1L], fresh[, 2L]) > .5, abs(mean(abs(fresh[, 2L] - pred[, 1L]) <= 1.96 * pred[, 2L]) - .95) < .04)
+model_file <- tempfile(fileext = ".json"); mm$meta <- list(qtl_type = "eQTL", trained_at = "then", strong_pairs_fitted = 5L)
+interp_tissue_model_write(mm, model_file); back <- interp_tissue_model_read(model_file)
+stopifnot(identical(back$contexts, mctx), back$scale == "z", all.equal(unname(back$V), unname(mm$V)), all.equal(back$pi, mm$pi), identical(names(back$U), names(mm$U)),
+  all.equal(unname(back$U$learned_all), unname(mm$U$learned_all)), back$meta$trained_at == "then",
+  all.equal(interp_mash_posterior(c(5, NA, 5.5), back)$contexts$lfsr, shared$contexts$lfsr))
+writeLines("{\"format\": \"other\"}", model_file); expect_error(interp_tissue_model_read(model_file), "Not a tissue sharing model")
+# Slope scale: contexts share the effect size, and each estimate counts by its own standard error.
+sim_slope <- function(n) {
+  se <- cbind(stats::runif(n, .03, .06), stats::runif(n, .1, .2), stats::runif(n, .05, .1))
+  kind <- sample(c("null", "shared", "onlyB"), n, TRUE, c(.6, .3, .1)); b <- matrix(0, n, 3L)
+  b[kind == "shared", ] <- stats::rnorm(sum(kind == "shared"), 0, .5); b[kind == "onlyB", 2L] <- stats::rnorm(sum(kind == "onlyB"), 0, .8)
+  bh <- b + (matrix(stats::rnorm(n * 3L), n, 3L) %*% chol(mV)) * se; bh[sample(length(bh), round(length(bh) * .15))] <- NA
+  keep <- rowSums(is.finite(bh)) > 0L
+  list(b = bh[keep, , drop = FALSE], se = se[keep, , drop = FALSE])
+}
+ss <- sim_slope(900L)
+big <- apply(abs(ss$b / ss$se), 1L, max, na.rm = TRUE) > 4
+sm <- interp_mash_model(mctx, vh, c(canon, interp_mash_learned(ss$b[big, ], vh, mctx, SE = ss$se[big, ])), scale = "slope")
+stopifnot(identical(sm$grid, interp_mash_grid("slope")), max(sm$grid) < 4, min(sm$grid) < .05)
+expect_error(interp_mash_loglik(ss$b, sm), "is.null")
+sl <- interp_mash_loglik(ss$b, sm, ss$se)
+# One tested context: the null density is a normal with that context's own standard error.
+one_row <- which(rowSums(is.finite(ss$b)) == 1L)[[1L]]; col <- which(is.finite(ss$b[one_row, ]))
+stopifnot(all(is.finite(sl)), abs(sl[one_row, 1L] - stats::dnorm(ss$b[one_row, col], 0, ss$se[one_row, col], log = TRUE)) < 1e-10)
+sm$pi <- interp_mash_fit_pi(sl)
+s_class <- tapply(sm$pi, interp_mash_class(interp_mash_components(sm)$pattern), sum)
+stopifnot(abs(s_class[["no effect"]] - .6) < .12, s_class[["one context"]] > .03)
+# A precise estimate in A and a noisy one in C: B, untested, is predicted on the slope scale with A's size.
+sp <- interp_mash_posterior(c(.5, NA, .7), sm, c(.04, NA, .3))
+stopifnot(abs(sp$contexts$posterior_mean[[2L]] - .5) < .1, sp$contexts$lfsr[[2L]] < .05, !sp$contexts$tested[[2L]],
+  abs(sp$contexts$posterior_mean[[3L]] - .5) < .1, sp$contexts$posterior_sd[[1L]] < .05,
+  # Without a standard error a context does not count as tested.
+  !interp_mash_posterior(c(.5, .4, .7), sm, c(.04, NA, .3))$contexts$tested[[2L]])
+fresh <- sim_slope(500L); ok <- is.finite(fresh$b[, 1L]) & rowSums(is.finite(fresh$b)) > 1L
+pred <- t(vapply(which(ok), function(i) interp_mash_predict_left_out(fresh$b[i, ], sm, 1L, fresh$se[i, ]), numeric(2)))
+stopifnot(stats::cor(pred[, 1L], fresh$b[ok, 1L]) > .5, abs(mean(abs(fresh$b[ok, 1L] - pred[, 1L]) <= 1.96 * pred[, 2L]) - .95) < .05)
+interp_tissue_model_write(sm, model_file); stopifnot(interp_tissue_model_read(model_file)$scale == "slope")
+slope_ts <- interp_tissue_sharing(rbind(pair("eQTL", "A", "ENSG1.1", .5, .04, 1e-30, TRUE), pair("eQTL", "C", "ENSG1.1", .7, .3, .02, FALSE)), models = list(eQTL = sm))
+stopifnot(identical(slope_ts$contexts$call, c("effect", "predicted effect", "effect")), abs(slope_ts$contexts$posterior_slope[[2L]] - .5) < .1,
+  is.na(slope_ts$contexts$posterior_z[[2L]]), slope_ts$models$eQTL$scale == "slope",
+  # C alone is not significant, but with A it is called: the small context borrows strength.
+  slope_ts$phenotypes$summary == "effect in all 2 tested contexts, similar size; predicted in B")
+# Applied to a variant's pairs: one row per context of the model, calls from the lfsr, slopes back on the slope scale.
+tp <- rbind(pair("eQTL", "A", "ENSG1.1", .5, .1, 1e-7, TRUE), pair("eQTL", "C", "ENSG1.1", .55, .1, 1e-8, TRUE),
+  pair("eQTL", "A", "ENSG2.1", .03, .1, .7, FALSE, "ENSG2.1"), pair("eQTL", "B", "ENSG2.1", .6, .1, 1e-9, TRUE, "ENSG2.1"), pair("eQTL", "C", "ENSG2.1", -.05, .1, .6, FALSE, "ENSG2.1"),
+  pair("eQTL", "A", "ENSG3.1", .1, .1, .3, FALSE, "ENSG3.1"), pair("sQTL", "A", "chr1:10:90:clu_1_+:ENSG1.1", 2, .1, 1e-50, TRUE))
+ts <- interp_tissue_sharing(tp, models = list(eQTL = mm))
+first <- ts$contexts[ts$contexts$phenotype == "ENSG1.1", ]
+stopifnot(ts$available, nrow(ts$phenotypes) == 2L, nrow(ts$contexts) == 6L, identical(first$context, mctx), identical(first$call, c("effect", "predicted effect", "effect")),
+  is.na(first$posterior_slope[[2L]]), abs(first$posterior_slope[[1L]] - first$posterior_z[[1L]] * .1) < 1e-12, first$z[[1L]] == 5,
+  ts$phenotypes$summary[ts$phenotypes$phenotype == "ENSG1.1"] == "effect in all 2 tested contexts, similar size; predicted in B",
+  ts$phenotypes$summary[ts$phenotypes$phenotype == "ENSG2.1"] == "effect in 1 of 3 tested contexts (B)",
+  ts$phenotypes$leading_pattern[ts$phenotypes$phenotype == "ENSG2.1"] == "one context (B)", ts$phenotypes$no_clear_effect_in[ts$phenotypes$phenotype == "ENSG2.1"] == "A, C",
+  # Not significant anywhere, or no model for that QTL type: left out.
+  !"ENSG3.1" %in% ts$phenotypes$phenotype, !"sQTL" %in% ts$phenotypes$qtl_type, ts$models$eQTL$trained_at == "then")
+none_model <- interp_tissue_sharing(tp, none)
+stopifnot(!none_model$available, !nrow(none_model$phenotypes), !nrow(interp_tissue_sharing(tp[0, ], models = list(eQTL = mm))$phenotypes))
+# The Tissue line carries the model's reading next to the comparison of the contexts.
+tissue_line <- interp_evidence_summary(missense, list(topmed = list(available = TRUE, pairs = tp, contexts = data.frame()), tissue = ts))
+stopifnot(grepl("model: effect in 1 of 3 tested contexts (B)", tissue_line$evidence[tissue_line$question == "Tissue"], fixed = TRUE),
+  grepl("cross-context model", tissue_line$sources[tissue_line$question == "Tissue"], fixed = TRUE))
+
 # ---- Sorted-file lookup and tabix-backed sources ----------------------------
 work <- tempfile("regshiny_interp_"); dir.create(work, mode = "0700")
 if (nzchar(Sys.which("look"))) {
@@ -435,6 +575,34 @@ if (nzchar(Sys.which("look"))) {
   stopifnot(f$sqtl_available, f$eqtl_available, nrow(f$sqtl) == 4L, nrow(f$eqtl) == 2L, f$eqtl$gene[[1L]] == "GENEA", f$eqtl$cis[[1L]],
     !f$eqtl$cis[[2L]], f$eqtl$beta_alt[[1L]] == .2, f$eqtl$alt_frequency[[1L]] == .1, f$eqtl$n[[1L]] == 2622L,
     !nrow(interp_fhs_qtl(interp_variant("chr1", 10L, "G", "A"), srcs)$eqtl), !nrow(interp_fhs_qtl(interp_variant("chr1", 100L, "G", "T"), srcs)$eqtl))
+  # Reactome mapping through its build script, and MSigDB gene sets.
+  raw <- file.path(work, "Ensembl2Reactome_All_Levels.txt")
+  writeLines(c("ENSG00000000002\tR-HSA-9\turl\tSignal Transduction\tIEA\tHomo sapiens", "ENSMUSG00000000001\tR-MMU-1\turl\tMetabolism\tIEA\tMus musculus",
+    "ENSG00000000001\tR-HSA-2\turl\tSphingolipid metabolism\tTAS\tHomo sapiens", "ENSG00000000001\tR-HSA-1\turl\tMetabolism\tTAS\tHomo sapiens",
+    "ENSG00000000001\tR-HSA-1\turl\tMetabolism\tIEA\tHomo sapiens", "P12345\tR-HSA-1\turl\tMetabolism\tTAS\tHomo sapiens"), raw)
+  reactome <- file.path(work, "pathway", "reactome.tsv")
+  built <- system2("bash", c("scripts/build_pathway_index.sh", shQuote(raw), shQuote(reactome)), stdout = TRUE, stderr = TRUE)
+  stopifnot(file.exists(reactome), length(readLines(reactome)) == 4L, grepl("genes: 2", built[[length(built)]], fixed = TRUE),
+    grepl("up to date", system2("bash", c("scripts/build_pathway_index.sh", shQuote(raw), shQuote(reactome)), stdout = TRUE), fixed = TRUE))
+  msig <- file.path(work, "msigdb"); dir.create(msig)
+  writeLines(c("HALLMARK_ONE\turl\tGENEA\tGENEB\tGENEC", "HALLMARK_TWO\turl\tGENEB"), file.path(msig, "h.all.v2099.1.Hs.symbols.gmt"))
+  writeLines(c("WP_SMALL\turl\tGENEA\tX1", "REACTOME_DROPPED\turl\tGENEA", "KEGG_BIG\turl\tGENEA\tX1\tX2\tX3"), file.path(msig, "c2.cp.v2099.1.Hs.symbols.gmt"))
+  srcs$reactome <- reactome; srcs$msigdb <- msig
+  linked <- data.frame(gene_id = c("ENSG00000000001", "ENSG00000000003", "ENSG00000000002"), gene = c("GENEA", "", "GENEAB"),
+    relation = c("overlaps", "eQTL target (TOPMed)", "sQTL target (TOPMed)"), stringsAsFactors = FALSE)
+  lp <- interp_local_pathways(linked, srcs)
+  stopifnot(lp$available, lp$reactome_available, lp$msigdb_available, nrow(lp$reactome) == 3L,
+    # Top-level pathways first; the two evidence codes of one pathway are merged.
+    identical(lp$reactome$pathway[lp$reactome$gene == "GENEA"], c("Metabolism", "Sphingolipid metabolism")), lp$reactome$top_level[[1L]],
+    !lp$reactome$top_level[[2L]], lp$reactome$evidence[[1L]] == "IEA, TAS", lp$reactome$gene[[3L]] == "GENEAB",
+    # Whole-symbol match only, Reactome sets left to the mapping, smaller sets first within a collection.
+    identical(lp$gene_sets$gene_set, c("HALLMARK_ONE", "WP_SMALL", "KEGG_BIG")), identical(lp$gene_sets$genes_in_set, c(3L, 2L, 4L)),
+    identical(lp$gene_sets$collection, c("Hallmark", "Canonical pathways", "Canonical pathways")), grepl("MSigDB 2099.1", lp$source[[2L]], fixed = TRUE))
+  st <- interp_local_status(srcs)
+  stopifnot(st$available[st$source == "Reactome gene-to-pathway mapping"], st$available[st$source == "MSigDB gene sets"])
+  sp <- interp_evidence_summary(interp_empty_consequences(), list(pathways = lp))
+  stopifnot(level(sp, "Pathway") == "Context", grepl("GENEA (overlaps): Metabolism", sp$finding[sp$question == "Pathway"], fixed = TRUE),
+    grepl("no pathway annotation: ENSG00000000003", sp$evidence[sp$question == "Pathway"], fixed = TRUE))
 } else if (native) stop("--native needs look")
 tabix <- interp_local_sources()$tabix; bgzip <- file.path(dirname(tabix), "bgzip")
 if (nzchar(tabix) && file.exists(bgzip)) {
@@ -508,8 +676,125 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   hh <- interp_context_heterogeneity(t$pairs)
   stopifnot(hh$contexts_tested[hh$qtl_type == "eQTL"] == 3L, hh$contexts_significant[hh$qtl_type == "eQTL"] == "Lung, Whole blood")
   stopifnot(!nrow(interp_topmed_qtl(interp_variant("chr1", 100L, "G", "T"), srcs)$pairs))
+  # GWAS Catalog through its build script: columns found by name, multi-variant rows split, unmapped rows dropped.
+  catalog_cols <- c("PUBMEDID", "FIRST AUTHOR", "DATE", "DISEASE/TRAIT", "INITIAL SAMPLE SIZE", "CHR_ID", "CHR_POS", "MAPPED_GENE",
+    "STRONGEST SNP-RISK ALLELE", "SNPS", "RISK ALLELE FREQUENCY", "P-VALUE", "PVALUE_MLOG", "OR or BETA", "95% CI (TEXT)", "MAPPED_TRAIT", "STUDY ACCESSION")
+  catalog_row <- function(chr, pos, allele, snp, trait, p, mlog, effect = "") paste("1", "Author A", "2020-01-01", trait, "1,000 cases", chr, pos, "GENEA",
+    allele, snp, "0.1", p, mlog, effect, "[1.1-1.3]", tolower(trait), "GCST1", sep = "\t")
+  raw <- file.path(work, "gwas.tsv")
+  writeLines(c(paste(catalog_cols, collapse = "\t"), catalog_row("1", "100", "rs1-A", "rs1", "Weak trait", "3E-6", "5.52"),
+    catalog_row("1", "100", "rs1-G", "rs1", "Strong trait", "1E-400", "400", "1.2"), catalog_row("1", "100", "rs1-?", "rs1", "Middle trait", "2E-9", "8.7"),
+    catalog_row("1;2", "100;300", "rs1-A; rs5-T", "rs1; rs5", "Pair trait", "5E-8", "7.3"), catalog_row("", "", "rs7-A", "rs7", "Unmapped", "1E-9", "9"),
+    catalog_row("X", "50", "rs8-C", "rs8", "Other place", "1E-9", "9")), raw)
+  catalog <- file.path(work, "disease", "gwas_catalog_e999_r2099-01-01.b38.tsv.gz")
+  built <- system2("bash", c("scripts/build_gwas_index.sh", shQuote(raw), shQuote(catalog)), stdout = TRUE, stderr = TRUE,
+    env = c(paste0("BGZIP=", bgzip), paste0("TABIX=", tabix)))
+  stopifnot(file.exists(catalog), file.exists(paste0(catalog, ".tbi")), grepl("rows: 6", built[[length(built)]], fixed = TRUE))
+  srcs$gwas_catalog <- catalog
+  g <- interp_gwas_catalog(v, srcs)
+  stopifnot(g$available, g$found, g$release == "e999_r2099-01-01", nrow(g$associations) == 4L,
+    # Strongest first by the stored -log10 p; a p-value below double precision is kept as 0.
+    identical(g$associations$trait, c("Strong trait", "Middle trait", "Pair trait", "Weak trait")), g$associations$p_value[[1L]] == 0,
+    identical(g$associations$risk_allele_is, c("REF", "not reported", "ALT", "ALT")), g$associations$effect[[1L]] == 1.2,
+    g$associations$rs_id[[3L]] == "rs1", g$associations$mapped_gene[[1L]] == "GENEA", g$associations$pubmed[[1L]] == "1")
+  far <- interp_gwas_catalog(interp_variant("chr1", 101L, "G", "A"), srcs)
+  stopifnot(far$available, !far$found, interp_gwas_catalog(interp_variant("chr2", 300L, "C", "T"), srcs)$associations$rs_id == "rs5",
+    interp_gwas_catalog(interp_variant("chrX", 50L, "A", "C"), srcs)$associations$risk_allele_is == "ALT")
+  # ClinVar VCF: this exact allele only; other alleles at the position are counted, not shown.
+  clinvar <- file.path(work, "disease", "clinvar.vcf.gz")
+  index(c("##fileformat=VCFv4.1", "##fileDate=2099-02-03", "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+    "1\t100\t11\tG\tA\t.\t.\tCLNDN=Disease_one|not_provided;CLNREVSTAT=criteria_provided,_single_submitter;CLNSIG=Pathogenic/Likely_pathogenic;GENEINFO=GENEA:1;MC=SO:0001583|missense_variant;RS=1",
+    "1\t100\t12\tG\tC\t.\t.\tCLNDN=Disease_two;CLNREVSTAT=no_assertion_criteria_provided;CLNSIG=Benign",
+    "1\t100\t13\tGT\tG\t.\t.\tCLNSIG=Uncertain_significance"), clinvar, c("-p", "vcf"))
+  srcs$clinvar_vcf <- clinvar
+  cv <- interp_clinvar_local(v, srcs)
+  stopifnot(cv$available, cv$found, nrow(cv$records) == 1L, cv$records$variation_id == "11", cv$records$clinical_significance == "Pathogenic/Likely pathogenic",
+    cv$records$conditions == "Disease one; not provided", cv$records$review_status == "criteria provided, single submitter", cv$records$gene == "GENEA",
+    cv$records$molecular_consequence == "missense variant", cv$records$rs_id == "rs1", cv$other_alleles == 2L, cv$file_date == "2099-02-03",
+    cv$source == "ClinVar VCF 2099-02-03 (local)")
+  none_here <- interp_clinvar_local(interp_variant("chr1", 100L, "G", "T"), srcs)
+  stopifnot(none_here$available, !none_here$found, none_here$other_alleles == 3L, interp_clinvar_local(interp_variant("chr1", 100L, "GT", "G"), srcs)$found)
+  # Disease level from local sources alone.
+  disease <- function(local) { s <- interp_evidence_summary(missense, local); s[s$question == "Disease and traits", ] }
+  d1 <- disease(list(clinvar = cv, gwas_catalog = g))
+  stopifnot(d1$level == "Strong", grepl("ClinVar: pathogenic, likely pathogenic for Disease one", d1$evidence, fixed = TRUE),
+    grepl("GWAS Catalog: 4 association(s) reported at this position, 3 at p <= 5e-8, 4 distinct trait(s)", d1$evidence, fixed = TRUE),
+    grepl("not consulted: public query not run", d1$evidence, fixed = TRUE), grepl("ClinVar VCF 2099-02-03 (local); GWAS Catalog e999_r2099-01-01", d1$sources, fixed = TRUE))
+  # A published association at the variant is Moderate; below genome-wide significance, Limited.
+  stopifnot(disease(list(clinvar = none_here, gwas_catalog = g))$level == "Moderate")
+  weak_only <- g; weak_only$associations <- g$associations[g$associations$trait == "Weak trait", ]
+  stopifnot(disease(list(clinvar = none_here, gwas_catalog = weak_only))$level == "Limited")
+  # Both local sources consulted and empty: None found, naming what was read. One of them missing: Not assessed.
+  d0 <- disease(list(clinvar = none_here, gwas_catalog = far))
+  stopifnot(d0$level == "None found", grepl("ClinVar VCF 2099-02-03 (local), GWAS Catalog e999_r2099-01-01", d0$finding, fixed = TRUE),
+    disease(list(clinvar = none_here))$level == "Not assessed", disease(list(gwas_catalog = far))$level == "Not assessed",
+    grepl("Only GWAS Catalog", disease(list(gwas_catalog = far))$finding, fixed = TRUE))
   st <- interp_local_status(srcs)
-  stopifnot(st$available[st$source == "CADD v1.7"], st$available[st$source == "TOPMed multi-tissue cis-QTL"], !st$available[st$source == "SpliceAI 1.3.1"])
+  stopifnot(st$available[st$source == "CADD v1.7"], st$available[st$source == "TOPMed multi-tissue cis-QTL"], !st$available[st$source == "SpliceAI 1.3.1"],
+    st$available[st$source == "GWAS Catalog"], st$available[st$source == "ClinVar VCF"])
+  # LD with nearby reported variants, from a small VCF: twelve samples, the target's ALT dosage 0,0,0,0,1,1,1,1,2,2,2,2.
+  stopifnot(identical(interp_gt_dosage(c("0/0", "0|1", "1/1", "./.", "1", "0", "1/2", "2|2", "./1"), 1L), c(0, 1, 2, NA, 1, 0, 1, 0, NA)),
+    identical(interp_gt_dosage(c("1/2", "2|2", "0/0"), 2L), c(1, 2, 0)))
+  bcftools <- unname(Sys.which("bcftools"))
+  if (nzchar(bcftools)) {
+    gt <- function(d) c("0/0", "0|1", "1/1")[d + 1L]
+    own <- c(0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2); vcf_row <- function(pos, id, ref, alt, calls) paste(c("chr1", pos, id, ref, alt, ".", "PASS", ".", "GT", calls), collapse = "\t")
+    partial <- gt(own); partial[[3L]] <- "./."
+    third <- rep("0/0", 12L); third[own == 1] <- "0/2"; third[own == 2] <- "2/2"; third[[1L]] <- "0/1"
+    ld_vcf <- file.path(work, "disease", "cohort.vcf.gz")
+    index(c("##fileformat=VCFv4.2", "##contig=<ID=chr1,length=100000>", "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">",
+      paste(c("#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", paste0("S", 1:12)), collapse = "\t"),
+      vcf_row(100, "rs1", "G", "A", gt(own)), vcf_row(150, "rs150", "C", "T", gt(own)), vcf_row(180, "rs180", "A", "G", gt(2 - own)),
+      vcf_row(220, "rs220", "T", "C", gt(rep(0:2, 4L))), vcf_row(260, "rs260", "G", "A", partial), vcf_row(260, ".", "G", "T", gt(rep(c(0, 1), 6L))),
+      vcf_row(300, "rs300", "A", "C,T", third), vcf_row(350, "rs350", "C", "G", rep("0/0", 12L))), ld_vcf, c("-p", "vcf"))
+    raw <- file.path(work, "gwas_ld.tsv")
+    writeLines(c(paste(catalog_cols, collapse = "\t"), catalog_row("1", "100", "rs1-A", "rs1", "Own trait", "1E-20", "20"),
+      catalog_row("1", "150", "rs150-T", "rs150", "Level of protein X in blood", "1E-30", "30"), catalog_row("1", "180", "rs180-G", "rs180", "Opposite trait", "2E-9", "8.7"),
+      catalog_row("1", "220", "rs220-C", "rs220", "Unlinked trait", "1E-12", "12"), catalog_row("1", "260", "rs260-?", "rs260", "Partial trait", "3E-6", "5.5"),
+      catalog_row("1", "300", "rs300-T", "rs300", "Third allele trait", "1E-9", "9"), catalog_row("1", "350", "rs350-G", "rs350", "Monomorphic", "1E-9", "9"),
+      catalog_row("1", "400", "rs400-A", "rs400", "Absent from the VCF", "1E-9", "9"), catalog_row("1", "90000", "rs9-A", "rs9", "Far away", "1E-9", "9")), raw)
+    ld_catalog <- file.path(work, "disease", "gwas_catalog_e998_r2099-01-02.b38.tsv.gz")
+    stopifnot(!is.null(system2("bash", c("scripts/build_gwas_index.sh", shQuote(raw), shQuote(ld_catalog)), stdout = TRUE, stderr = TRUE,
+      env = c(paste0("BGZIP=", bgzip), paste0("TABIX=", tabix)))), file.exists(ld_catalog))
+    ld_src <- srcs; ld_src$gwas_catalog <- ld_catalog
+    ld <- interp_gwas_ld(v, ld_vcf, ld_src, window = 1000L)
+    row_of <- function(id, alt = NULL) ld$ld[ld$ld$rs_id == id & (is.null(alt) | ld$ld$alt == (if (is.null(alt)) "" else alt)), ]
+    stopifnot(ld$available, ld$found, ld$samples == 12L, ld$positions_in_window == 7L, ld$positions_examined == 7L, !ld$truncated, ld$release == "e998_r2099-01-02",
+      # The variant's own catalog row is not an LD partner; unlinked, monomorphic and absent variants give no row.
+      !any(c("rs1", "rs220", "rs350", "rs400", "rs9") %in% ld$ld$rs_id),
+      abs(row_of("rs150")$r2 - 1) < 1e-12, row_of("rs150")$r > 0, row_of("rs150")$risk_allele_travels_with == "ALT", row_of("rs150")$distance == 50L, row_of("rs150")$n == 12L,
+      # Opposite phase: r2 is 1 and the reported risk allele is found with this variant's REF.
+      abs(row_of("rs180")$r2 - 1) < 1e-12, row_of("rs180")$r < 0, row_of("rs180")$risk_allele_travels_with == "REF",
+      # A missing call drops that sample; the unnamed second record at the position is not used for rs260.
+      nrow(row_of("rs260")) == 1L, row_of("rs260")$alt == "A", row_of("rs260")$n == 11L, row_of("rs260")$risk_allele_travels_with == "",
+      # Multi-allelic record: each ALT has its own dosage; the T allele follows the target apart from one sample.
+      row_of("rs300", "T")$r2 > .8, row_of("rs300", "T")$risk_allele_travels_with == "ALT", !nrow(row_of("rs300", "C")),
+      # Strongest LD first, then the smaller p-value.
+      ld$ld$rs_id[[1L]] == "rs150", all(diff(round(ld$ld$r2, 6)) <= 0))
+    near <- interp_gwas_ld(v, ld_vcf, ld_src, window = 1000L, max_positions = 2L)
+    stopifnot(near$truncated, near$positions_examined == 2L, near$positions_in_window == 7L, identical(sort(unique(near$ld$rs_id)), c("rs150", "rs180")))
+    expect_error(interp_gwas_ld(interp_variant("chr1", 150L, "C", "G"), ld_vcf, ld_src, window = 1000L), "own record was not found")
+    expect_error(interp_gwas_ld(interp_variant("chr1", 350L, "C", "G"), ld_vcf, ld_src, window = 1000L), "does not vary")
+    expect_error(interp_gwas_ld(v, "/missing.vcf.gz", ld_src), "VCF for this chromosome is not readable")
+    expect_error(interp_gwas_ld(v, ld_vcf, none), "GWAS Catalog copy is not readable")
+    alone <- interp_gwas_ld(interp_variant("chr1", 100L, "G", "A"), ld_vcf, ld_src, window = 10L)
+    stopifnot(alone$available, !alone$found, alone$positions_examined == 0L)
+    # Disease: LD with a genome-wide significant reported variant is an association (Moderate), named with its traits.
+    dl <- interp_evidence_summary(missense, list(clinvar = none_here, gwas_catalog = far), ld = ld)
+    dline <- dl[dl$question == "Disease and traits", ]
+    stopifnot(dline$level == "Moderate", grepl("r2 >= 0.8 with 4 other reported variant(s) (4 association(s), 3 at p <= 5e-8)", dline$evidence, fixed = TRUE),
+      !any(ld$ld$r2 < .8), !grepl("r2 0.2-0.8 with", dline$evidence, fixed = TRUE), grepl("cohort WGS genotypes", dline$sources, fixed = TRUE))
+    quiet_ld <- interp_evidence_summary(missense, list(clinvar = none_here, gwas_catalog = far), ld = alone)
+    stopifnot(level(quiet_ld, "Disease and traits") == "None found",
+      grepl("no other reported variant with r2 >= 0.2", quiet_ld$evidence[quiet_ld$question == "Disease and traits"], fixed = TRUE))
+    # Protein abundance: a published protein-level association at a variant in tight LD counts; clinical traits do not.
+    pl <- dl[dl$question == "Protein abundance (pQTL)", ]
+    stopifnot(pl$level == "Moderate", grepl("through LD (r2 >= 0.8 in this cohort): protein x (rs150, r2 1.00)", pl$evidence, fixed = TRUE),
+      grepl("blood level of 1 protein(s)", pl$finding, fixed = TRUE), level(quiet_ld, "Protein abundance (pQTL)") == "Not assessed",
+      identical(interp_is_protein_trait(c("level of liver carboxylesterase 1 in blood", "Level of X in blood serum", "protein measurement",
+        "high density lipoprotein cholesterol measurement", "apolipoprotein A 1 measurement")), c(TRUE, TRUE, FALSE, FALSE, FALSE)),
+      interp_protein_name("level of liver carboxylesterase 1 in blood") == "liver carboxylesterase 1")
+  } else if (native) stop("--native needs bcftools")
 } else if (native) stop("--native needs tabix and bgzip") else cat("tabix/bgzip not found: indexed-source checks skipped\n")
 unlink(work, recursive = TRUE)
 cat("interpretation backend tests passed\n")
