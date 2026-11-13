@@ -3250,3 +3250,51 @@ interp_tissue_sharing <- function(pairs, sources = interp_local_sources(), model
   if (length(ph_rows)) { out$contexts <- do.call(rbind, ctx_rows); out$phenotypes <- do.call(rbind, ph_rows); rownames(out$contexts) <- rownames(out$phenotypes) <- NULL }
   out
 }
+
+# ---- One variant, every local step --------------------------------------------
+# The local part of the tab in one call, for use outside the app (scripts/interpret_variants.R): consequences,
+# local sources, cross-context model, linked genes with their pathways and disease genes, the predicted splice
+# outcome, colocalisation, the evidence summary and its reading. `annotation` is a query_annotation() result
+# around the variant, `fetch(chrom, start1, end1)` returns reference sequence, `gene_names(ids)` (optional)
+# returns a gene_id / gene_name table. No public source, no SpliceAI, no genotype is read.
+interp_local_report <- function(variant, annotation, fetch, sources = interp_local_sources(), gene_names = NULL) {
+  attempt <- function(expr) tryCatch(expr, error = function(e) e)
+  consequences <- interp_consequences(variant, annotation, fetch)
+  local <- interp_local_evidence(variant, sources)
+  pairs <- if (interp_ok(local$topmed)) local$topmed$pairs else NULL
+  if (!is.null(pairs) && nrow(pairs) && is.function(gene_names)) {
+    names <- attempt(gene_names(pairs$gene_id))
+    if (interp_ok(names)) { local$topmed$pairs <- interp_name_genes(pairs, names); pairs <- local$topmed$pairs }
+  }
+  if (!is.null(pairs)) local$tissue <- attempt(interp_tissue_sharing(pairs, sources))
+  genes <- interp_linked_genes(consequences, local)
+  local$pathways <- attempt(interp_local_pathways(genes, sources))
+  local$gene_disease <- attempt(interp_gene_disease(genes, sources))
+  splice_protein <- attempt(interp_splice_protein(variant, annotation, fetch, interp_splice_events(pairs)))
+  coloc <- attempt(interp_colocalise(variant, local, sources))
+  summary <- interp_evidence_summary(consequences, local, splice_protein = if (interp_ok(splice_protein)) splice_protein else NULL,
+    coloc = if (interp_ok(coloc)) coloc else NULL)
+  failed <- c(names(local)[vapply(local, inherits, logical(1), "error")], if (!interp_ok(splice_protein)) "splice_protein", if (!interp_ok(coloc)) "colocalisation")
+  list(variant = variant, consequences = consequences, gene_summary = interp_gene_summary(consequences), local = local, linked_genes = genes,
+    splice_protein = splice_protein, colocalisation = coloc, summary = summary, reading = interp_overall_reading(summary, list(public = FALSE, spliceai = FALSE, ld = FALSE)),
+    mechanism = interp_mechanism(local, if (interp_ok(splice_protein)) splice_protein else NULL, if (interp_ok(coloc)) coloc else NULL), failed = failed)
+}
+
+# One table row of a report: the levels of the seven questions with the main findings.
+interp_report_row <- function(report) {
+  s <- report$summary; level <- function(q) { v <- s$level[match(q, s$question)]; if (is.na(v)) "" else v }
+  finding <- function(q) { v <- s$finding[match(q, s$question)]; if (is.na(v)) "" else v }
+  known <- if (interp_ok(report$local$known) && isTRUE(report$local$known$found)) report$local$known$rs_id else ""
+  top <- if (nrow(report$gene_summary)) report$gene_summary[1L, ] else NULL
+  sp <- if (interp_ok(report$splice_protein) && nrow(report$splice_protein)) report$splice_protein[1L, ] else NULL
+  co <- if (interp_ok(report$colocalisation)) report$colocalisation$pairs else interp_coloc_empty()
+  data.frame(variant = report$variant$id, rs_id = known, gene = if (is.null(top)) "" else top$gene_name, most_severe = if (is.null(top)) "" else top$most_severe,
+    protein_sequence = level("Protein sequence"), protein_abundance = level("Protein abundance (pQTL)"), splicing = level("Splicing"),
+    gene_expression = level("Gene expression (eQTL)"), disease_and_traits = level("Disease and traits"),
+    linked_genes = paste(ifelse(nzchar(report$linked_genes$gene), report$linked_genes$gene, report$linked_genes$gene_id), collapse = "; "),
+    splice_outcome = if (is.null(sp)) "" else paste0(sp$gene, " ", sp$transcript_id, ": ", sp$coding_effect, " (", sp$basis, ")", if (nzchar(sp$nmd)) paste0("; NMD ", sub(":.*$", "", sp$nmd)) else ""),
+    shared_cause_pairs = sum(co$reading == "one shared causal variant"), distinct_cause_pairs = sum(co$reading == "two different causal variants"),
+    mechanism = paste(report$mechanism, collapse = " "), protein_sequence_finding = finding("Protein sequence"), protein_abundance_finding = finding("Protein abundance (pQTL)"),
+    splicing_finding = finding("Splicing"), gene_expression_finding = finding("Gene expression (eQTL)"), disease_finding = finding("Disease and traits"),
+    sources_failed = paste(report$failed, collapse = "; "), stringsAsFactors = FALSE)
+}

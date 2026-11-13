@@ -1206,5 +1206,25 @@ if (nzchar(tabix) && file.exists(bgzip)) {
       interp_protein_name("level of liver carboxylesterase 1 in blood") == "liver carboxylesterase 1")
   } else if (native) stop("--native needs bcftools")
 } else if (native) stop("--native needs tabix and bgzip") else cat("tabix/bgzip not found: indexed-source checks skipped\n")
+# ---- One variant, every local step ----------------------------------------------
+# Without any local source the report still gives the consequences, the splice outcome and seven summary rows.
+report <- interp_local_report(interp_variant("chrS", 161L, "G", "A"), annotation_S, fetch, none)
+row <- interp_report_row(report)
+stopifnot(identical(report$summary$question, c("Protein sequence", "Protein abundance (pQTL)", "Splicing", "Gene expression (eQTL)", "Disease and traits", "Pathway", "Tissue")),
+  nrow(report$consequences) == 1L, report$consequences$consequence == "splice_donor_variant", nrow(report$splice_protein) == 1L, !length(report$failed),
+  !length(report$mechanism), length(report$reading) >= 2L, nrow(row) == 1L, row$variant == "chrS:161:G:A", row$gene == "SPL", row$most_severe == "splice_donor_variant",
+  row$protein_sequence == "Strong", row$splicing == "Moderate", row$protein_abundance == "Not assessed", row$linked_genes == "SPL",
+  row$splice_outcome == "SPL SP: frameshift (assumed outcome); NMD predicted", row$shared_cause_pairs == 0L, row$sources_failed == "",
+  # Gene names are filled through the caller's lookup when TOPMed pairs exist; a failing lookup is not fatal.
+  !length(interp_local_report(interp_variant("chrS", 180L, "A", "G"), annotation_S, fetch, none, gene_names = function(ids) stop("no index"))$failed),
+  nrow(interp_report_row(interp_local_report(interp_variant("chrT", 6000L, "A", "G"), annotation_T, fetch, none))) == 1L)
+# The batch script checks its input before it reads any resource.
+rscript <- file.path(R.home("bin"), "Rscript")
+help <- suppressWarnings(system2(rscript, c("scripts/interpret_variants.R", "--help"), stdout = TRUE, stderr = TRUE))
+bad_list <- file.path(work, "bad_variants.txt"); writeLines(c("chr1:100:G:A", "rs123"), bad_list)
+bad <- suppressWarnings(system2(rscript, c("scripts/interpret_variants.R", "--variants", shQuote(bad_list), "--annotation-db", "/missing.sqlite", "--reference", "/missing.fa",
+  "--out", shQuote(file.path(work, "never.csv"))), stdout = TRUE, stderr = TRUE))
+stopifnot(any(grepl("--variants FILE --annotation-db", help, fixed = TRUE)), is.null(attr(help, "status")), any(grepl("not chrom:pos:REF:ALT: rs123", bad, fixed = TRUE)),
+  identical(attr(bad, "status"), 1L), !file.exists(file.path(work, "never.csv")))
 unlink(work, recursive = TRUE)
 cat("interpretation backend tests passed\n")

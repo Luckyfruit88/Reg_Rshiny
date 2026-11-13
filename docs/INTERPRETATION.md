@@ -197,6 +197,16 @@ Rules:
 
 What the levels are not: a clinical classification, a causal proof, or a replacement for reading the tables. A QTL association can be carried by a neighbour in linkage disequilibrium, which is why association alone stops at Moderate. Fine-mapping probabilities depend on the reference panel and the study. Model 1 is unadjusted for covariates and relatedness.
 
+## Many variants at once
+
+`scripts/interpret_variants.R` runs the local part of the tab for a list of variants outside the app and writes one row per variant: the level of the five graded questions, the linked genes, the best-supported splice outcome, the numbers of colocalisation pairs with a shared and with distinct causes, the mechanism sentences and each finding.
+
+```bash
+Rscript scripts/interpret_variants.R --variants variants.txt --annotation-db annotation.sqlite --reference genome.fa --out interpretation.csv [--json-dir DIR]
+```
+
+`variants.txt` holds one `chrom:pos:REF:ALT` per line (GRCh38). `--annotation-db` is a GENCODE index the app has prepared (`.reg_shiny/<user>/resources/gencode<release>-*/annotation.sqlite`) and `--reference` its indexed FASTA. It reads the annotation, the reference and the local reference copies only: no BAM, no genotype, no saved result, no network, so SpliceAI, the LD scan, the public query and the open result's own junctions are not part of it. Rows are appended as they are computed and variants already in the output are skipped, so an interrupted run can be continued. A variant takes about 10 to 30 seconds; on SCC run a long list as a batch job, because login nodes stop a process after 15 minutes of CPU time.
+
 ## Exports
 
 **Interpretation JSON** holds everything shown (consequences, the predicted splice outcomes with the splice changes they were computed from, the colocalisation of the variant's molecular traits, every local and public table, SpliceAI, the LD table, the cohort RNA evidence used, the summary). **Evidence summary CSV** and **Consequences CSV** hold those two tables. Public and local reference content keeps its own terms of use; cite the sources.
