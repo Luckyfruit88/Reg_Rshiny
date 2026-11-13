@@ -2930,7 +2930,12 @@ interp_mechanism <- function(local = NULL, splice_protein = NULL, coloc = NULL, 
         gsub("_", " ", sub("^.*\\((.*)\\).*$", "\\1", strsplit(best$annotated_in, ", ", fixed = TRUE)[[1L]][[1L]]))) else "", "."))
   }
   pairs <- if (interp_ok(coloc) && is.data.frame(coloc$pairs) && nrow(coloc$pairs)) coloc$pairs else NULL
-  bare <- function(label) sub(" \\([^()]*\\)$", "", label)
+  # "eQTL DEGS1 (Lung)" -> "the expression of DEGS1"; an intron keeps its coordinates.
+  bare <- function(label) {
+    x <- sub(" \\([^()]*\\)$", "", label)
+    x <- sub("^sQTL (\\S+) (intron [0-9]+-[0-9]+)$", "the splicing of \\1 (\\2)", x)
+    x <- sub("^eQTL ", "the expression of ", x); sub("^pQTL ", "the plasma level of ", x)
+  }
   if (!is.null(pairs)) {
     same <- pairs[pairs$reading == "one shared causal variant", , drop = FALSE]
     if (nrow(same)) lines <- c(lines, paste0("One causal variant is shared by ", interp_join(sprintf("%s and %s (posterior %.2f)", bare(same$trait_1), bare(same$trait_2),

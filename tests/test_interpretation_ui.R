@@ -237,7 +237,7 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
     # The reading box ends with what fine-mapping and colocalisation add; the assumed splice outcome is left out of it.
     grepl("What fine-mapping, the splice prediction and colocalisation add", html_text(output$reading), fixed = TRUE),
     grepl("likely cause of the plasma level of PLUS (posterior 0.90); the expression of PLUS (posterior 0.70).", html_text(output$reading), fixed = TRUE),
-    grepl("One causal variant is shared by eQTL PLUS and pQTL PLUS (posterior 0.93).", html_text(output$reading), fixed = TRUE),
+    grepl("One causal variant is shared by the expression of PLUS and the plasma level of PLUS (posterior 0.93).", html_text(output$reading), fixed = TRUE),
     !grepl("The splice change it is tied to", html_text(output$reading), fixed = TRUE), length(isolate(mechanism_now())) == 2L)
   stopifnot(grepl("regshiny-level-strong", html_text(output$summary), fixed = TRUE), !length(readLines(request_log)))
   # The reading names the best-supported effect and the steps that have not been run.

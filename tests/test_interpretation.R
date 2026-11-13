@@ -1093,8 +1093,8 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   stopifnot(length(mech) == 4L,
     mech[[1L]] == "Fine-mapping places this variant itself as the likely cause of the expression of GA (posterior 1.00); the plasma level of PA (posterior 1.00).",
     mech[[2L]] == "The splice change it is tied to (observed and predicted) would give SPL transcripts a premature stop, on an mRNA expected to be degraded.",
-    mech[[3L]] == "One causal variant is shared by eQTL GA and pQTL PA (posterior 1.00).",
-    mech[[4L]] == "Another causal variant is behind eQTL ENSGB: this variant is associated with it through linkage disequilibrium.",
+    mech[[3L]] == "One causal variant is shared by the expression of GA and the plasma level of PA (posterior 1.00).",
+    mech[[4L]] == "Another causal variant is behind the expression of ENSGB: this variant is associated with it through linkage disequilibrium.",
     # An annotated intron is named with its transcript type; an assumed outcome is not turned into a mechanism.
     grepl("; the intron it favours belongs to SNC, annotated as retained intron.", interp_mechanism(NULL, splice_named, NULL), fixed = TRUE),
     !length(interp_mechanism(NULL, splice_assumed, NULL)), !length(interp_mechanism()),
