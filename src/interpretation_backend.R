@@ -2295,7 +2295,7 @@ interp_local_evidence <- function(variant, sources = interp_local_sources()) {
 #   Limited     weak or indirect support only
 #   None found  the sources were consulted and report nothing
 #   Not assessed  the sources needed were unavailable or not queried
-# The rules are listed in docs/METRICS.md. They rank evidence; they are not a
+# The rules are listed in docs/INTERPRETATION.md. They rank evidence; they are not a
 # clinical classification.
 interp_levels <- function() c("Strong", "Moderate", "Limited", "None found", "Not assessed")
 
