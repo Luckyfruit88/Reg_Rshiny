@@ -20,12 +20,12 @@ interpretation_ui <- function(id) {
     shiny::uiOutput(ns("summary")),
     shiny::tags$details(class = "regshiny-definitions", shiny::tags$summary("How the levels are assigned"),
       shiny::tags$ul(
-        shiny::tags$li(shiny::strong("Strong"), ": direct or fine-mapped evidence that this variant is responsible (a protein-truncating or essential splice-site change on the reference transcript; an RNA association together with a prediction or a posterior probability of at least 0.5; ClinVar pathogenic without a benign assertion; a GWAS credible set with posterior probability of at least 0.5)."),
+        shiny::tags$li(shiny::strong("Strong"), ": direct or fine-mapped evidence that this variant is responsible (a protein-truncating or essential splice-site change on the reference transcript; an RNA association together with a prediction or a posterior probability of at least 0.5; a splice change that is both observed and predicted and alters the protein of the reference transcript; a cis-pQTL with a posterior probability of at least 0.5, or for the protein of a gene the variant itself changes; ClinVar pathogenic without a benign assertion; a GWAS credible set with posterior probability of at least 0.5)."),
         shiny::tags$li(shiny::strong("Moderate"), ": an association or a prediction, but not both. A QTL alone can be a neighbour in linkage disequilibrium."),
         shiny::tags$li(shiny::strong("Limited"), ": weak or indirect support only."),
         shiny::tags$li(shiny::strong("None found"), ": the sources were consulted and report nothing. ", shiny::strong("Not assessed"), ": the sources needed were unavailable or not queried."),
         shiny::tags$li(shiny::strong("Context"), ": describes the gene or tissue, not evidence about the variant.")),
-      shiny::p("The levels rank evidence for follow-up. They are not a clinical classification, and a QTL p-value is not a causal claim. Full rules: docs/METRICS.md.")),
+      shiny::p("The levels rank evidence for follow-up. They are not a clinical classification, and a QTL p-value is not a causal claim. Full rules: docs/INTERPRETATION.md.")),
     shiny::div(class = "regshiny-interp-detail", bslib::navset_card_tab(id = ns("detail"),
       bslib::nav_panel("Transcripts and protein",
         shiny::h5("Most severe consequence per gene"),
@@ -33,6 +33,10 @@ interpretation_ui <- function(id) {
         shiny::h5("Every transcript"),
         interpretation_table_output(ns("consequences")),
         shiny::downloadButton(ns("download_consequences"), "Consequences CSV"),
+        shiny::h5("Protein consequence of the splice change (predicted)"),
+        shiny::uiOutput(ns("splice_protein_status"), role = "status", `aria-live` = "polite"),
+        interpretation_table_output(ns("splice_protein")),
+        shiny::p("For every splice change tied to this variant, the coding transcripts it fits are re-spliced from the reference sequence and translated from their annotated start codon. Changes come from three places: an intron that a TOPMed sQTL or a junction of the open result shows is used more with the ALT allele; a splice site SpliceAI predicts to appear (paired with the annotated site it would splice to) or to weaken; and an essential splice site the variant itself changes. basis says what supports the change: observed (RNA association), predicted (SpliceAI of at least 0.5, or an essential site), both, weakly predicted (SpliceAI 0.2 to 0.5), or assumed outcome, used when a site is lost and nothing shows what replaces it, in which case exon skipping and intron retention are both listed. coding_effect and protein_change compare the product with the annotated protein; nmd says whether the new stop codon lies more than 50 nt before the last exon junction, the usual condition for nonsense-mediated decay. annotated_in names transcripts of the selected GENCODE release that already contain the intron. The table says what the changed splice would encode. It does not say how much of the gene's RNA is spliced that way: read that from the RNA evidence. Transcripts longer than 2.5 Mb and changes that would keep more than 300 nt of intron are left out."),
         shiny::p("Consequences are computed here from the selected GENCODE release and the reference sequence, with Sequence Ontology terms and Ensembl VEP's severity order. donor_distance and acceptor_distance count into the intron from its 5' and 3' ends (1 = first or last intronic base); negative values are exonic bases counted from the exon edge. Insertions, deletions and multi-base changes are classified by what they overlap and get no protein change."),
         shiny::uiOutput(ns("predictors"))),
       bslib::nav_panel("Splicing",
@@ -52,12 +56,23 @@ interpretation_ui <- function(id) {
         interpretation_table_output(ns("tissue_phenotypes")),
         interpretation_table_output(ns("tissue_contexts")),
         shiny::p("A model trained on TOPMed lead cis-QTLs across the six contexts (scripts/train_tissue_model.R) re-estimates this variant's effect in each context from all of them together. posterior_slope is the re-estimated per-ALT-allele effect; lfsr is the local false sign rate, the probability that the effect is absent or has the other sign, and below 0.05 is called an effect. A small context borrows strength from the others, so it can show an effect without passing its own significance threshold. For a context where the pair was not tested the row is a prediction from the tested contexts (call \"predicted effect\" or \"not predicted\"), not a measurement. Diamonds in the plot are the model's estimates: filled for an effect, pale for a predicted one, empty otherwise. The model describes sharing among these six blood, airway and lung contexts; it says nothing about other tissues."),
+        shiny::h5("Do the signals share a cause? (colocalisation)"),
+        shiny::uiOutput(ns("coloc_status"), role = "status", `aria-live` = "polite"),
+        interpretation_table_output(ns("coloc_table")),
+        shiny::p("When the variant is associated with more than one molecular trait (per gene its strongest sQTL intron and its eQTL, each in the TOPMed context where it is strongest, and the proteins of the cis-pQTL scans), each pair of traits is compared over the variants within 1 Mb that both were tested on, from their full summary statistics (Giambartolomei et al. 2014, as in coloc). shared_cause is the posterior probability that one variant causes both signals, distinct_causes that each has its own; the remaining columns are the probabilities that only one trait, or neither, has a signal there. this_variant_share is this variant's part of the shared signal, and leading_variant the variant with the largest part. A shared cause links the traits, for instance expression and protein level; distinct causes for a signal this variant leads and another one say that the other association is probably reached through linkage disequilibrium. The method assumes at most one causal variant per trait in the region, uses no LD reference, and takes prior probabilities of 1e-4 for each trait and 1e-5 for a shared variant; cohorts of different ancestry or several independent signals push it towards distinct causes. Two introns of one gene are not compared: their ratios move against each other by construction."),
         shiny::h5("Tested pairs"),
         interpretation_table_output(ns("topmed_pairs")),
         shiny::p("Kept: every significant pair, every pair in a SuSiE credible set (pip), pairs with nominal p below 0.001, the three smallest p per context, and every context's row of a phenotype that is significant somewhere. n_estimated is derived from the minor-allele count and frequency."),
         shiny::h5("FHS whole blood"),
         shiny::uiOutput(ns("fhs_status")),
         interpretation_table_output(ns("fhs_table")),
+        shiny::h5("GTEx cis-eQTL across tissues (local)"),
+        shiny::uiOutput(ns("gtex_local_status")),
+        shiny::uiOutput(ns("gtex_gene_choice")),
+        shiny::uiOutput(ns("gtex_local_plot_box")),
+        interpretation_table_output(ns("gtex_local_genes")),
+        interpretation_table_output(ns("gtex_local_pairs")),
+        shiny::p("Read from the local copy of the GTEx significant variant-gene pairs; nothing is sent. One row per gene in the first table and per gene and tissue in the second. Slopes are per ALT allele on GTEx's normalised expression. tissues_tested counts the tissues in which GTEx tested the gene at all, so a tissue missing from the list is either not significant there or did not test the gene; a tissue with few donors can miss an effect. lead_variant marks tissues where this variant is the gene's most significant variant, which is a hint, not fine-mapping. GTEx tissues differ in donors and sample size, so a count of tissues is descriptive."),
         shiny::h5("GTEx v10 (public query)"),
         interpretation_table_output(ns("gtex_qtl")),
         shiny::plotOutput(ns("expression_plot"), height = 900)),
@@ -69,6 +84,10 @@ interpretation_ui <- function(id) {
         shiny::uiOutput(ns("catalog_status")),
         interpretation_table_output(ns("catalog")),
         shiny::p("Read from the local copy of the GWAS Catalog; nothing is sent. The catalog lists the variant each study reported, by rsID and position. risk_allele_is says whether the reported risk allele is this variant's ALT or REF. A reported association shows that the variant, or one in linkage disequilibrium with it, is associated with the trait; fine-mapping (below) is what singles a variant out."),
+        shiny::h5("Disease genes among the linked genes (ClinVar, gene level)"),
+        shiny::uiOutput(ns("gene_disease_status")),
+        interpretation_table_output(ns("gene_disease")),
+        shiny::p("For each gene the variant overlaps or is a QTL for (see Protein, genes and pathways), the number of ClinVar variants classified pathogenic or likely pathogenic and the conditions they are reported for, most variants first. This is context about the gene: it shows which diseases a damaging change in that gene can cause; how they are inherited is not stated. It is not evidence that this variant causes them, and it does not change the level above."),
         shiny::h5("Linkage disequilibrium with nearby GWAS Catalog variants"),
         shiny::uiOutput(ns("ld_status"), role = "status", `aria-live` = "polite"),
         interpretation_table_output(ns("ld_table")),
@@ -82,9 +101,13 @@ interpretation_ui <- function(id) {
         shiny::h5("Pharmacogenomics"),
         interpretation_table_output(ns("pgx"))),
       bslib::nav_panel("Protein, genes and pathways",
+        shiny::h5("Plasma protein levels: cis-pQTL at this variant (local)"),
+        shiny::uiOutput(ns("pqtl_status")),
+        interpretation_table_output(ns("pqtl_table")),
+        shiny::p("Read from local copies of cis-pQTL summary statistics; nothing is sent. Each row is this variant tested against the plasma level of one protein encoded nearby, whatever the p-value, so a variant that was tested and is not associated is told apart from one that was not tested. beta_alt is the change per ALT allele in the scan's normalised protein level. significance: experiment-wide is p <= 1.7e-11 (5e-8 divided by the 2,923 proteins of UKB-PPP), genome-wide p <= 5e-8, suggestive p <= 1e-5. gene_distance is the distance from the variant to the protein's gene (0 inside it). An association shows that this variant, or one in linkage disequilibrium with it, goes with the protein level; a variant that changes the protein's sequence can also change how well the assay binds it. The FHS scan is a project file whose analysis model is not recorded with it."),
         shiny::h5("Genes linked to this variant"),
         interpretation_table_output(ns("linked_genes")),
-        shiny::p("overlaps: the variant lies in the gene. sQTL / eQTL target: the gene's splicing or expression is significantly associated with the variant in a TOPMed context. Pathways below are listed for each of these genes."),
+        shiny::p("overlaps: the variant lies in the gene. sQTL / eQTL target: the gene's splicing or expression is significantly associated with the variant in a TOPMed context or a GTEx tissue. cis-pQTL protein: the plasma level of the gene's protein is associated with the variant at p <= 5e-8. Pathways below are listed for each of these genes."),
         shiny::h5("Reactome pathways of the linked genes (local)"),
         interpretation_table_output(ns("local_reactome")),
         shiny::h5("Gene sets of the linked genes (MSigDB, local)"),
@@ -112,15 +135,20 @@ interpretation_ui <- function(id) {
 interpretation_level_class <- function(level) switch(level, Strong = "regshiny-level-strong", Moderate = "regshiny-level-moderate",
   Limited = "regshiny-level-limited", `None found` = "regshiny-level-none", Context = "regshiny-level-context", "regshiny-level-unknown")
 
-interpretation_summary_cards <- function(summary) {
+# One card per question. The first `shown` evidence lines are visible; the rest open on request, so a
+# variant with many sources still fits on a screen.
+interpretation_summary_cards <- function(summary, shown = 4L) {
   shiny::div(class = "regshiny-evidence", lapply(seq_len(nrow(summary)), function(i) {
     evidence <- strsplit(summary$evidence[[i]], " | ", fixed = TRUE)[[1L]]
+    first <- utils::head(evidence, shown); rest <- evidence[-seq_len(shown)]
     shiny::div(class = "regshiny-evidence-row",
       shiny::div(class = "regshiny-evidence-head",
         shiny::strong(summary$question[[i]]),
         shiny::span(class = paste("regshiny-level", interpretation_level_class(summary$level[[i]])), summary$level[[i]])),
       shiny::p(summary$finding[[i]]),
-      if (length(evidence)) shiny::tags$ul(lapply(evidence, shiny::tags$li)),
+      if (length(first)) shiny::tags$ul(lapply(first, shiny::tags$li)),
+      if (length(rest)) shiny::tags$details(class = "regshiny-evidence-more",
+        shiny::tags$summary(paste0(length(rest), " more evidence line", if (length(rest) > 1L) "s" else "")), shiny::tags$ul(lapply(rest, shiny::tags$li))),
       if (nzchar(summary$sources[[i]])) shiny::p(class = "regshiny-evidence-source", paste("Sources:", summary$sources[[i]])))
   }))
 }
@@ -194,6 +222,28 @@ interpretation_plot_contexts <- function(pairs, heterogeneity, max_panels = 4L, 
       side = 3, line = .5, cex = .76, col = "#555555")
   }
   invisible(h)
+}
+
+# Slope of one gene's GTEx eQTL in every tissue where it is significant, with 95% intervals.
+interpretation_plot_gtex <- function(pairs, gene_id, release = "") {
+  x <- if (is.data.frame(pairs)) pairs[pairs$gene_id == gene_id & is.finite(pairs$slope_alt), , drop = FALSE] else NULL
+  if (is.null(x) || !nrow(x)) { graphics::plot.new(); graphics::text(.5, .5, "Not a significant GTEx cis-eQTL in any tissue"); return(invisible(NULL)) }
+  x <- x[order(x$slope_alt), , drop = FALSE]; y <- seq_len(nrow(x))
+  lo <- x$slope_alt - 1.96 * x$slope_se; hi <- x$slope_alt + 1.96 * x$slope_se
+  lim <- range(c(0, lo, hi), na.rm = TRUE)
+  size <- if (nrow(x) > 36L) .68 else if (nrow(x) > 24L) .8 else .92
+  old <- graphics::par(mar = c(4.4, 19, 3.6, 1), cex = 1, cex.axis = size, mgp = c(2.3, .7, 0)); on.exit(graphics::par(old))
+  graphics::plot(NA, xlim = lim + c(-.05, .05) * diff(lim), ylim = c(.5, nrow(x) + .5), yaxt = "n", ylab = "", xlab = "Slope per ALT allele")
+  graphics::axis(2, at = y, labels = x$tissue, las = 1)
+  graphics::abline(h = y, col = "#EEEEEE"); graphics::abline(v = 0, lty = 2, col = "#888888")
+  blood <- x$tissue == "Whole Blood"
+  graphics::segments(lo, y, hi, y, col = ifelse(blood, "#B7410E", "#1F4E79"), lwd = 2)
+  graphics::points(x$slope_alt, y, pch = ifelse(x$lead_variant %in% TRUE, 23, 19), col = ifelse(blood, "#B7410E", "#1F4E79"),
+    bg = ifelse(blood, "#B7410E", "#1F4E79"), cex = 1.2)
+  name <- if (nzchar(x$gene[[1L]])) x$gene[[1L]] else sub("\\..*$", "", gene_id)
+  graphics::title(main = trimws(paste0("GTEx ", release, " eQTL \u00b7 ", name, " \u00b7 ", nrow(x), " significant tissue(s)")), cex.main = 1, line = 2)
+  graphics::mtext("bar: 95% CI; whole blood in orange; diamond: the gene's lead variant in that tissue", side = 3, line = .5, cex = .76, col = "#555555")
+  invisible(x)
 }
 
 interpretation_plot_expression <- function(expression, gene) {
@@ -271,6 +321,8 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
             e$interp_tissue_sharing(out$local$topmed$pairs), error = function(err) err)
           if (!is.null(out$local)) out$local$pathways <- tryCatch(
             e$interp_local_pathways(e$interp_linked_genes(out$consequences, out$local)), error = function(err) err)
+          if (!is.null(out$local)) out$local$gene_disease <- tryCatch(
+            e$interp_gene_disease(e$interp_linked_genes(out$consequences, out$local)), error = function(err) err)
           out
         }, error = function(err) err)
         list(key = key, value = value)
@@ -370,13 +422,76 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     ld_now <- shiny::reactive(ld_store()[[variant_key()]])
 
     backend <- new.env(parent = globalenv()); sys.source(interpretation_file, envir = backend)
+    # Protein consequence of the splice changes tied to the variant. Recomputed when SpliceAI or the open result
+    # adds a change; reads the annotation and the reference sequence, nothing else.
+    splice_events_now <- shiny::reactive({
+      x <- local_ready(); shiny::req(!is.null(x))
+      pairs <- if (!is.null(x$local) && !inherits(x$local$topmed, "error")) x$local$topmed$pairs else NULL
+      sites <- tryCatch(spliceai_sites(), error = function(e) NULL)
+      observed <- if (is.null(junctions)) NULL else tryCatch(junctions(), error = function(e) NULL)
+      backend$interp_splice_events(pairs, sites, observed)
+    })
+    protein_key <- shiny::reactive({
+      ev <- splice_events_now()
+      paste(key(), nrow(ev), paste(ev$source, ev$effect, ev$start1, ev$end1, ev$position, signif(ev$score, 4), collapse = "|"))
+    })
+    protein_store <- shiny::reactiveVal(list())
+    protein_task <- shiny::ExtendedTask$new(function(key, allele, events, annotation, annotation_file, reference, splice_file, interpretation_file) {
+      promises::future_promise({
+        value <- tryCatch({
+          if (is.null(annotation) || inherits(annotation, "error") || is.null(annotation_file)) stop("the GENCODE annotation is unavailable.")
+          if (is.null(reference) || inherits(reference, "error") || is.null(splice_file)) stop("the reference sequence is unavailable.")
+          e <- new.env(parent = globalenv()); sys.source(interpretation_file, envir = e)
+          a <- new.env(parent = globalenv()); sys.source(annotation_file, envir = a)
+          s <- new.env(parent = globalenv()); sys.source(splice_file, envir = s)
+          v <- e$interp_variant(allele$chrom, allele$pos1, allele$ref, allele$alt)
+          q <- a$query_annotation(annotation, v$chrom, max(1L, v$pos1 - 5000L), v$pos1 + 5000L, allele$build)
+          list(table = e$interp_splice_protein(v, q, function(chrom, start1, end1) s$splice_fetch_reference(reference, chrom, start1, end1)$sequence, events),
+            events = events)
+        }, error = function(err) err)
+        list(key = key, value = value)
+      }, seed = TRUE)
+    })
+    shiny::observeEvent(protein_key(), {
+      a <- alleles()
+      protein_task$invoke(protein_key(), list(chrom = a$chrom, pos1 = a$pos1, ref = a$ref, alt = selected_alt(), build = a$build), splice_events_now(),
+        current_annotation(), annotation_file, reference, splice_file, interpretation_file)
+    })
+    shiny::observeEvent(protein_task$status(), {
+      if (protein_task$status() != "success") return()
+      r <- protein_task$result(); store <- protein_store(); store[[r$key]] <- r$value; protein_store(store)
+    }, ignoreInit = TRUE)
+    protein_now <- shiny::reactive({
+      k <- tryCatch(protein_key(), error = function(e) NULL)
+      if (is.null(k)) NULL else protein_store()[[k]]
+    })
+    splice_protein_table <- shiny::reactive({ p <- protein_now(); if (is.null(p) || inherits(p, "error")) NULL else p$table })
+    # Colocalisation of the variant's molecular traits: once per variant, after the local sources, from local files only.
+    coloc_store <- shiny::reactiveVal(list())
+    coloc_task <- shiny::ExtendedTask$new(function(key, variant, local, interpretation_file) {
+      promises::future_promise({
+        e <- new.env(parent = globalenv()); sys.source(interpretation_file, envir = e)
+        list(key = key, value = tryCatch(e$interp_colocalise(variant, local), error = function(err) err))
+      }, seed = TRUE)
+    })
+    shiny::observe({
+      x <- local_ready(); shiny::req(!is.null(x), !is.null(x$local))
+      k <- shiny::isolate(key())
+      if (!is.null(shiny::isolate(coloc_store())[[k]]) || nrow(backend$interp_coloc_traits(x$local)) < 2L) return()
+      coloc_task$invoke(k, x$variant, x$local[c("topmed", "pqtl")], interpretation_file)
+    })
+    shiny::observeEvent(coloc_task$status(), {
+      if (coloc_task$status() != "success") return()
+      r <- coloc_task$result(); store <- coloc_store(); store[[r$key]] <- r$value; coloc_store(store)
+    }, ignoreInit = TRUE)
+    coloc_now <- shiny::reactive({ k <- tryCatch(key(), error = function(e) NULL); if (is.null(k)) NULL else coloc_store()[[k]] })
     rna_now <- shiny::reactive({
       get_table <- function(f) if (is.null(f)) NULL else tryCatch(f(), error = function(e) NULL)
       backend$interp_rna_evidence(get_table(bin_ratio), get_table(junctions))
     })
     summary_now <- shiny::reactive({
       x <- local_now()
-      backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now(), ld_now())
+      backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now(), ld_now(), splice_protein_table(), coloc_now())
     })
 
     show_table <- function(expr, digits = 3L, empty = "No rows.") DT::renderDT({
@@ -425,12 +540,33 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     output$summary <- shiny::renderUI(interpretation_summary_cards(summary_now()))
     reading_now <- shiny::reactive(backend$interp_overall_reading(summary_now(), list(public = !is.null(public_now()),
       spliceai = !is.null(spliceai_now()) && !inherits(spliceai_now(), "error"), ld = !is.null(ld_now()) && !inherits(ld_now(), "error"))))
-    output$reading <- shiny::renderUI(shiny::div(class = "regshiny-context regshiny-reading", lapply(reading_now(), shiny::p)))
+    mechanism_now <- shiny::reactive({ x <- local_now(); backend$interp_mechanism(x$local, splice_protein_table(), coloc_now()) })
+    output$reading <- shiny::renderUI({
+      mechanism <- mechanism_now()
+      shiny::div(class = "regshiny-context regshiny-reading", lapply(reading_now(), shiny::p),
+        if (length(mechanism)) shiny::tagList(shiny::p(shiny::strong("What fine-mapping, the splice prediction and colocalisation add")),
+          shiny::tags$ul(lapply(mechanism, shiny::tags$li))))
+    })
     output$gene_summary <- show_table(function() local_now()$gene_summary, empty = "No transcript within 5 kb of the variant.")
     output$consequences <- show_table(function() {
       x <- local_now()$consequences
       x[, setdiff(names(x), "most_severe"), drop = FALSE]
     }, empty = "No transcript within 5 kb of the variant.")
+    output$splice_protein_status <- shiny::renderUI({
+      p <- protein_now(); ev <- tryCatch(splice_events_now(), error = function(e) NULL)
+      if (inherits(p, "error")) return(shiny::p(paste0("Not computed: ", conditionMessage(p))))
+      if (is.null(p)) return(shiny::p(if (is.null(ev)) "Waiting for the local sources." else "Re-splicing the transcripts this change fits..."))
+      ev <- p$events; seen <- ev$source != "SpliceAI"
+      shiny::p(paste0("Splice changes considered: ", sum(seen & ev$effect == "gain"), " intron(s) used more and ", sum(seen & ev$effect == "loss"),
+        " used less with ALT (", sum(ev$source == "TOPMed sQTL"), " from TOPMed sQTL, ", sum(ev$source == "this cohort"), " from the open result), ",
+        sum(!seen), " SpliceAI site(s)", if (!any(!seen) && is.null(spliceai_now())) " (SpliceAI not run)" else "",
+        "; plus the variant's own essential splice sites. ", nrow(p$table), " outcome(s) on coding transcripts."))
+    })
+    # The outcome before its long justification.
+    splice_protein_columns <- c("gene", "transcript_id", "transcript_flags", "event", "basis", "coding_effect", "protein_change", "nmd", "mrna_change",
+      "annotated_in", "support", "protein_length_ref", "protein_length_new")
+    output$splice_protein <- show_table(function() { x <- splice_protein_table(); if (is.null(x)) NULL else x[, intersect(splice_protein_columns, names(x)), drop = FALSE] },
+      empty = "No splice change tied to this variant fits a coding transcript here.")
     output$predictors <- shiny::renderUI({
       p <- public_now()
       if (is.null(p) || inherits(p$open_targets, "error") || !nrow(p$open_targets$predictors)) return(NULL)
@@ -486,6 +622,23 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
         " tested context-and-type combinations.", if (length(untested)) paste0(" Not tested (absent or below the frequency cut-off): ",
           paste(untested, collapse = ", "), ".") else ""))
     })
+    output$coloc_status <- shiny::renderUI({
+      x <- local_now(); traits <- if (is.null(x$local)) NULL else backend$interp_coloc_traits(x$local); co <- coloc_now()
+      if (is.null(traits) || nrow(traits) < 2L) return(shiny::p(paste0("Not applicable: the variant is associated with ", if (is.null(traits)) 0L else nrow(traits),
+        " molecular trait(s) in the local sources, and a comparison needs two.")))
+      if (inherits(co, "error")) return(shiny::div(class = "alert alert-danger", paste("Colocalisation failed:", conditionMessage(co))))
+      if (is.null(co)) return(shiny::p(paste0("Comparing ", nrow(traits), " traits: ", paste(traits$label, collapse = "; "), "...")))
+      share <- co$traits$this_variant_posterior
+      shiny::p(paste0(nrow(co$traits), " trait(s), with this variant's posterior probability within each trait's own signal: ", paste0(co$traits$label,
+        ifelse(is.finite(share), sprintf(" %.2f", share), " not tested there"), collapse = "; "), ". ", nrow(co$pairs), " pair(s) compared within ", round(co$window / 1e6, 1),
+        " Mb; ", sum(co$pairs$reading == "one shared causal variant"), " with one shared causal variant, ", sum(co$pairs$reading == "two different causal variants"),
+        " with different ones. Computed at ", co$ran_at, "."))
+    })
+    # The reading before the five probabilities it comes from.
+    coloc_columns <- c("trait_1", "trait_2", "reading", "shared_cause", "distinct_causes", "this_variant_share", "leading_variant", "variants",
+      "only_trait_1", "only_trait_2", "neither")
+    output$coloc_table <- show_table(function() { co <- coloc_now(); if (is.null(co) || inherits(co, "error")) NULL else co$pairs[, intersect(coloc_columns, names(co$pairs)), drop = FALSE] },
+      empty = "No pair of traits to compare, or too few variants tested on both.")
     tissue_now <- shiny::reactive({ t <- local_part("tissue"); if (is.null(t) || !isTRUE(t$available)) NULL else t })
     output$context_plot <- shiny::renderPlot(interpretation_plot_contexts(topmed_now()$pairs, heterogeneity_now(),
       model = if (is.null(tissue_now())) NULL else tissue_now()$contexts), res = 96)
@@ -520,6 +673,54 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       rbind(if (nrow(f$sqtl)) cbind(qtl_type = "sQTL (isoform ratio)", f$sqtl) else NULL,
             if (nrow(f$eqtl)) cbind(qtl_type = "eQTL (gene)", f$eqtl) else NULL)
     }, empty = "No FHS whole-blood QTL row for this variant at the stored thresholds.")
+    gtex_local_now <- shiny::reactive({ g <- local_part("gtex"); if (is.null(g) || !isTRUE(g$available)) NULL else g })
+    output$gtex_local_status <- shiny::renderUI({
+      g <- gtex_local_now()
+      if (is.null(g)) return(shiny::p("The local GTEx copy is not readable from this session (see scripts/build_gtex_index.py)."))
+      if (!nrow(g$genes)) return(shiny::p(paste0("GTEx ", g$release, ": this variant is not a significant cis-eQTL of any gene in any tissue (or GTEx did not test it).")))
+      shiny::p(paste0("GTEx ", g$release, ": significant cis-eQTL of ", nrow(g$genes), " gene(s) in ", length(unique(g$pairs$tissue)), " tissue(s); ",
+        nrow(g$pairs), " gene-tissue pair(s).", if (!isTRUE(g$gene_table)) " The table of genes tested per tissue is not readable, so tissues_tested is empty." else ""))
+    })
+    gtex_gene <- shiny::reactive({
+      g <- gtex_local_now(); shiny::req(!is.null(g), nrow(g$genes) > 0L)
+      if (length(input$gtex_gene) == 1L && input$gtex_gene %in% g$genes$gene_id) input$gtex_gene else g$genes$gene_id[[1L]]
+    })
+    output$gtex_gene_choice <- shiny::renderUI({
+      g <- gtex_local_now()
+      if (is.null(g) || nrow(g$genes) < 2L) return(NULL)
+      label <- ifelse(nzchar(g$genes$gene), g$genes$gene, g$genes$gene_id)
+      shiny::selectInput(session$ns("gtex_gene"), "Gene shown in the plot", choices = stats::setNames(g$genes$gene_id,
+        paste0(label, " (", g$genes$tissues_significant, " tissue(s))")), selected = g$genes$gene_id[[1L]])
+    })
+    # The plot is as tall as its tissues need: two tissues do not get the space of fifty.
+    output$gtex_local_plot_box <- shiny::renderUI({
+      g <- gtex_local_now()
+      n <- if (is.null(g) || !nrow(g$genes)) 0L else sum(g$pairs$gene_id == gtex_gene())
+      shiny::plotOutput(session$ns("gtex_local_plot"), height = if (n) 150L + 24L * max(n, 3L) else 120L)
+    })
+    output$gtex_local_plot <- shiny::renderPlot({
+      g <- gtex_local_now()
+      if (is.null(g) || !nrow(g$genes)) return(interpretation_plot_gtex(NULL, ""))
+      interpretation_plot_gtex(g$pairs, gtex_gene(), g$release)
+    }, res = 96)
+    output$gtex_local_genes <- show_table(function() { g <- gtex_local_now(); if (is.null(g)) NULL else g$genes },
+      empty = "No significant GTEx cis-eQTL for this variant in the local copy.")
+    output$gtex_local_pairs <- show_table(function() { g <- gtex_local_now(); if (is.null(g)) NULL else g$pairs },
+      empty = "No significant GTEx gene-tissue pair for this variant.")
+    pqtl_now <- shiny::reactive({ q <- local_part("pqtl"); if (is.null(q) || !isTRUE(q$available)) NULL else q })
+    output$pqtl_status <- shiny::renderUI({
+      q <- pqtl_now()
+      if (is.null(q)) return(shiny::p("No local cis-pQTL copy is readable from this session (see scripts/build_pqtl_index.sh)."))
+      st <- q$studies[q$studies$available, , drop = FALSE]
+      shiny::tags$ul(lapply(seq_len(nrow(st)), function(i) shiny::tags$li(paste0(st$study[[i]], " (", st$label[[i]], "): ",
+        if (st$variant_tested[[i]]) paste0("this variant was tested against ", st$proteins_tested[[i]], " nearby protein(s); smallest p ",
+          backend$interp_fmt_p(st$min_p[[i]]), ".") else "this variant is not in the scan (no measured protein is encoded within its window, or the variant was not tested)."))))
+    })
+    # What is read first comes first: effect, p-value, and whether fine-mapping points at this variant.
+    pqtl_columns <- c("study", "protein", "beta_alt", "se", "p_value", "significance", "posterior_probability", "credible_set_size", "lead_variant",
+      "alt_frequency", "n", "gene", "gene_distance", "gene_id", "assay_id", "rs_id", "info", "window_variants", "log10_p")
+    output$pqtl_table <- show_table(function() { q <- pqtl_now(); if (is.null(q)) NULL else q$associations[, intersect(pqtl_columns, names(q$associations)), drop = FALSE] },
+      empty = "This variant is not in the local cis-pQTL scans.")
     public_part <- function(source, field, message = "Run the public query to fill this table.") function() {
       p <- public_now()
       shiny::validate(shiny::need(!is.null(p), message))
@@ -565,6 +766,13 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     })
     output$catalog <- show_table(function() { g <- local_part("gwas_catalog"); if (is.null(g)) NULL else g$associations },
       empty = "No GWAS Catalog association is reported at this position.")
+    output$gene_disease_status <- shiny::renderUI({
+      g <- local_part("gene_disease")
+      if (is.null(g) || !isTRUE(g$available)) return(shiny::p("The gene-level ClinVar table is not readable from this session (see scripts/build_gene_disease_index.py)."))
+      shiny::p(paste0(g$source, ": ", nrow(g$genes), " of ", g$genes_checked, " linked gene(s) with a name have a pathogenic or likely pathogenic variant on record."))
+    })
+    output$gene_disease <- show_table(function() { g <- local_part("gene_disease"); if (is.null(g)) NULL else g$genes },
+      empty = "None of the linked genes has a pathogenic or likely pathogenic ClinVar variant on record.")
     output$ld_status <- shiny::renderUI({
       s <- ld_task$status(); r <- ld_now()
       if (s == "running") return(shiny::div(class = "alert alert-info", "Reading genotypes at the nearby GWAS Catalog positions. This takes about half a minute; the rest of the app stays usable."))
@@ -607,7 +815,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       x <- local_now(); p <- public_store()[[variant_key()]]; s <- spliceai_now()
       cat("Variant:", x$variant$id, "\nGENCODE release:", if (is.null(x$release)) "unavailable" else x$release, "\n")
       cat("Reference base(s) at the variant:", x$reference_base, "\n")
-      if (!is.null(x$local)) for (n in c("cadd", "known", "fhs", "topmed", "tissue", "gwas_catalog", "clinvar", "pathways")) if (inherits(x$local[[n]], "error"))
+      if (!is.null(x$local)) for (n in c("cadd", "known", "fhs", "topmed", "tissue", "gwas_catalog", "clinvar", "pqtl", "gtex", "pathways", "gene_disease")) if (inherits(x$local[[n]], "error"))
         cat("Local source", n, "failed:", conditionMessage(x$local[[n]]), "\n")
       cat("Public query:", if (is.null(p)) "not run" else if (inherits(p, "error")) conditionMessage(p) else
         paste0("run at ", p$queried_at, "; sent variant ", p$variant, " and gene IDs ", paste(p$gene_ids, collapse = ", ")), "\n")
@@ -619,10 +827,11 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     export <- function() {
       x <- local_now(); p <- public_now(); s <- spliceai_now()
       plain <- function(v) if (inherits(v, "error")) list(error = conditionMessage(v)) else v
-      list(variant = x$variant, gencode_release = x$release, reading = reading_now(), summary = summary_now(), gene_summary = x$gene_summary,
+      list(variant = x$variant, gencode_release = x$release, reading = reading_now(), mechanism = mechanism_now(), summary = summary_now(), gene_summary = x$gene_summary,
         consequences = x$consequences, local = if (is.null(x$local)) NULL else lapply(x$local, plain),
         public = if (is.null(p)) NULL else lapply(p, plain), spliceai = if (is.null(s)) NULL else plain(s),
-        gwas_ld = if (is.null(ld_now())) NULL else plain(ld_now()), rna_evidence = rna_now())
+        gwas_ld = if (is.null(ld_now())) NULL else plain(ld_now()), rna_evidence = rna_now(),
+        splice_protein = if (is.null(protein_now())) NULL else plain(protein_now()), colocalisation = if (is.null(coloc_now())) NULL else plain(coloc_now()))
     }
     output$download_json <- shiny::downloadHandler(function() paste0("interpretation_", gsub(":", "_", local_now()$variant$id), ".json"),
       function(file) writeLines(jsonlite::toJSON(export(), dataframe = "rows", auto_unbox = TRUE, na = "null", null = "null", digits = NA, pretty = TRUE), file))
@@ -630,7 +839,8 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       utils::write.csv(summary_now(), file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8"))
     output$download_consequences <- shiny::downloadHandler("transcript_consequences.csv", function(file)
       utils::write.csv(local_now()$consequences, file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8"))
-    invisible(list(summary = summary_now, local = local_now, public = public_now, spliceai = spliceai_now, ld = ld_now,
-      tasks = list(local = local_task, public = public_task, spliceai = spliceai_task, ld = ld_task)))
+    invisible(list(summary = summary_now, local = local_now, public = public_now, spliceai = spliceai_now, ld = ld_now, splice_protein = protein_now,
+      colocalisation = coloc_now,
+      tasks = list(local = local_task, public = public_task, spliceai = spliceai_task, ld = ld_task, splice_protein = protein_task, colocalisation = coloc_task)))
   })
 }

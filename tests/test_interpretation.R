@@ -148,6 +148,162 @@ x <- csq(annotation_T, "chrT", 170L, "A", "AT", "TP"); stopifnot(x$consequence =
 x <- csq(annotation_T, "chrT", 109L, "AA", "A", "TP"); stopifnot(x$consequence == "5_prime_UTR_variant")
 stopifnot(!nrow(interp_consequences(v, list(transcripts = NULL), fetch)), !nrow(interp_gene_summary(interp_empty_consequences())))
 
+# ---- Protein consequence of a changed splice ----------------------------------
+# chrS carries one plus-strand transcript with the exons and CDS of TP; chrR is its reverse complement with the
+# mirrored transcript, so every outcome must come out the same on both strands.
+genome$chrS <- rep("A", 400L)
+put("chrS", 121L, "ATG"); put("chrS", 124L, "GCTTGG"); put("chrS", 161L, "GT"); put("chrS", 166L, "TAA"); put("chrS", 199L, "AG")
+put("chrS", 204L, "TGA"); put("chrS", 318L, "TAA")
+genome$chrR <- strsplit(interp_revcomp(paste(genome$chrS, collapse = "")), "")[[1L]]
+mirror <- function(x) 401L - x
+annotation_S <- list(transcripts = tx_row("SP", "SPL", "chrS", "+", 101L, 360L, "basic;Ensembl_canonical;MANE_Select"),
+  exons = exon_rows("SP", "SPL", "chrS", "+", c(101L, 201L, 301L), c(160L, 260L, 360L)),
+  features = feature_rows("SP", "SPL", "chrS", "+", c("CDS", "CDS", "CDS", "stop_codon"), c(121L, 201L, 301L, 318L), c(160L, 260L, 317L, 320L), c(0, 2, 2, 0)))
+annotation_R <- list(transcripts = tx_row("SM", "SPL", "chrR", "-", mirror(360L), mirror(101L), "basic;Ensembl_canonical"),
+  exons = exon_rows("SM", "SPL", "chrR", "-", mirror(c(360L, 260L, 160L)), mirror(c(301L, 201L, 101L))),
+  features = feature_rows("SM", "SPL", "chrR", "-", c("CDS", "CDS", "CDS", "stop_codon"), mirror(c(160L, 260L, 317L, 320L)), mirror(c(121L, 201L, 301L, 318L)), c(0, 2, 2, 0)))
+model_of <- function(a) interp_transcript_model(a$transcripts, a$exons, a$features)
+ms <- model_of(annotation_S); mr <- model_of(annotation_R)
+stopifnot(interp_revcomp("AACG") == "CGTT", identical(interp_intron_set(ms)$start1, c(161L, 261L)), identical(interp_intron_set(ms)$end1, c(200L, 300L)),
+  identical(interp_merge_intervals(data.frame(start1 = c(10L, 1L, 6L), end1 = c(12L, 5L, 8L)))$end1, c(8L, 12L)),
+  identical(interp_subtract_interval(data.frame(start1 = 1L, end1 = 10L), 4L, 6L)$start1, c(1L, 7L)),
+  interp_interval_bases(interp_outside(data.frame(start1 = 1L, end1 = 10L), data.frame(start1 = c(2L, 9L), end1 = c(3L, 20L)))) == 6L,
+  # mRNA coordinates on both strands: the first coding base and its way back.
+  interp_mrna_index(interp_exon_set(ms), "+", 121L) == 21L, interp_mrna_index(interp_exon_set(mr), "-", mirror(121L)) == 21L,
+  interp_mrna_to_genome(interp_exon_set(ms), "+", 61L) == 201L, interp_mrna_to_genome(interp_exon_set(mr), "-", 61L) == mirror(201L),
+  is.na(interp_mrna_index(interp_exon_set(ms), "+", 170L)),
+  interp_spliced_mrna(interp_exon_set(ms), "+", "chrS", fetch) == interp_spliced_mrna(interp_exon_set(mr), "-", "chrR", fetch))
+outcome <- function(model, chrom, use = NULL, retain = NULL, variant = NULL) interp_spliced_outcome(model, interp_respliced(model, use = use, retain = retain), chrom, fetch, variant)
+both <- function(use = NULL, retain = NULL) {
+  plus <- outcome(ms, "chrS", use, retain)
+  minus <- outcome(mr, "chrR", if (is.null(use)) NULL else rev(mirror(use)), if (is.null(retain)) NULL else rev(mirror(retain)))
+  stopifnot(identical(plus, minus))
+  plus
+}
+# The annotated transcript itself: 39 residues, nothing changes.
+same <- both()
+stopifnot(same$coding_effect == "none: the coding sequence is unchanged", !same$changes_protein, same$protein_length_ref == 39L, same$protein_length_new == 39L)
+# Exon 2 skipped: 60 nt, in frame.
+skip <- both(use = c(161L, 300L))
+stopifnot(skip$coding_effect == "in-frame deletion", skip$protein_length_new == 19L, skip$changes_protein, skip$nmd == "",
+  skip$protein_change == "Residues 15 to 34 (20 residues) are removed; the rest of the protein is unchanged (19 instead of 39 residues).")
+# Donor moved 10 nt into exon 1: the next codon is a stop, 54 nt before the last junction.
+early <- both(use = c(151L, 200L))
+stopifnot(early$coding_effect == "premature stop", early$protein_length_new == 11L, isTRUE(early$nmd_predicted),
+  early$protein_change == "A stop codon follows residue 11: the protein ends there (11 instead of 39 residues).",
+  grepl("ends 54 nt before the last exon junction", early$nmd, fixed = TRUE))
+# Donor moved 10 nt into the intron: the frame changes and its stop codon (TAA at 166-168) is read.
+late <- both(use = c(171L, 200L))
+stopifnot(late$coding_effect == "frameshift", late$protein_length_new == 15L, isTRUE(late$nmd_predicted),
+  late$protein_change == "After residue 13 the sequence differs from the annotated protein: 2 residues, then a stop codon (15 instead of 39 residues).")
+# Intron 1 retained: the same stop inside the intron; exons 1 and 2 are now one exon.
+kept <- both(retain = c(161L, 200L))
+stopifnot(kept$coding_effect == "frameshift", kept$protein_length_new == 15L, isTRUE(kept$nmd_predicted), grepl("ends 92 nt before", kept$nmd, fixed = TRUE))
+# Acceptor moved 5 nt into exon 2: the new frame has no stop before the transcript ends.
+open_end <- both(use = c(161L, 205L))
+stopifnot(open_end$coding_effect == "no stop codon", grepl("no stop codon follows before the end of the transcript", open_end$protein_change, fixed = TRUE), open_end$nmd == "")
+# Acceptor moved 6 nt into exon 3 (in frame): two residues lost. A stop in the last exon is not a target of decay.
+stopifnot(both(use = c(261L, 306L))$coding_effect == "in-frame deletion", both(use = c(261L, 306L))$protein_length_new == 37L)
+last_exon <- outcome(ms, "chrS", use = c(261L, 304L))
+stopifnot(last_exon$coding_effect %in% c("frameshift", "no stop codon"))
+# The start codon spliced out; a transcript without CDS.
+stopifnot(both(use = c(111L, 200L))$coding_effect == "start codon removed",
+  interp_spliced_outcome(model_of(list(transcripts = annotation_T$transcripts[2L, ], exons = annotation_T$exons[annotation_T$exons$transcript_id == "TNC", ],
+    features = annotation_T$features[0, ])), data.frame(start1 = 101L, end1 = 160L), "chrT", fetch)$coding_effect == "no annotated coding sequence")
+# The ALT allele is read where it ends up in the mRNA: G>A at the first intron base turns the retained codon AGT (Ser) into AAT (Asn).
+alt_kept <- outcome(ms, "chrS", retain = c(161L, 200L), variant = interp_variant("chrS", 161L, "G", "A"))
+stopifnot(alt_kept$protein_length_new == 15L, identical(alt_kept$protein_change, kept$protein_change))
+ref_mrna <- interp_spliced_mrna(interp_respliced(ms, retain = c(161L, 200L)), "+", "chrS", fetch)
+alt_mrna <- interp_spliced_mrna(interp_respliced(ms, retain = c(161L, 200L)), "+", "chrS", fetch, interp_variant("chrS", 161L, "G", "A"))
+stopifnot(substr(ref_mrna, 60L, 62L) == "AGT", substr(alt_mrna, 60L, 62L) == "AAT", nchar(ref_mrna) == nchar(alt_mrna),
+  nchar(interp_spliced_mrna(interp_exon_set(ms), "+", "chrS", fetch, interp_variant("chrS", 130L, "A", "ATT"))) == 182L,
+  nchar(interp_spliced_mrna(interp_exon_set(ms), "+", "chrS", fetch, interp_variant("chrS", 130L, "AAA", "A"))) == 178L)
+
+# Events: a TOPMed intron used more with ALT, a junction of the open result, SpliceAI sites.
+sp_pair <- function(type, context, phenotype, slope, p, significant) data.frame(qtl_type = type, context = context, phenotype = phenotype, gene_id = "ENSGSPL.1",
+  gene = "SPL", slope_alt = slope, slope_se = .1, p_nominal = p, significant = significant, stringsAsFactors = FALSE)
+sp_pairs <- rbind(sp_pair("sQTL", "Lung", "chrS:150:201:clu_1_+:ENSGSPL.1", 1.2, 1e-30, TRUE), sp_pair("sQTL", "PBMC", "chrS:150:201:clu_9_+:ENSGSPL.1", .8, 1e-9, TRUE),
+  sp_pair("sQTL", "Lung", "chrS:160:201:clu_1_+:ENSGSPL.1", -1.2, 1e-30, TRUE), sp_pair("sQTL", "Lung", "chrS:140:201:clu_1_+:ENSGSPL.1", .5, .01, FALSE),
+  sp_pair("eQTL", "Lung", "ENSGSPL.1", .5, 1e-30, TRUE))
+sp_junctions <- data.frame(chrom = "chrS", intron_start1 = c(161L, 161L, 261L), intron_end1 = c(300L, 200L, 300L), status = "OK", beta = c(2.5, -2, .1),
+  p_permutation = c(1e-4, 1e-4, .5), n = 900L, stringsAsFactors = FALSE)
+sp_sites <- data.frame(gene = "SPL", effect = c("donor gain", "donor loss", "acceptor gain", "acceptor loss"), delta = c(.6, .7, .3, .05), exon_boundary_pos1 = c(150L, 160L, 206L, 201L),
+  site_type = c("donor", "donor", "acceptor", "acceptor"), site_position = c(151L, 161L, 205L, 200L), annotated_site = c("no", "yes", "no", "yes"), stringsAsFactors = FALSE)
+ev <- interp_splice_events(sp_pairs, sp_sites, sp_junctions)
+stopifnot(nrow(ev) == 7L, identical(ev$source, c("TOPMed sQTL", "TOPMed sQTL", "this cohort", "this cohort", "SpliceAI", "SpliceAI", "SpliceAI")),
+  # Leafcutter's exon-boundary coordinates become the first and last intronic base; contexts of one intron are merged.
+  ev$start1[[1L]] == 151L, ev$end1[[1L]] == 200L, grepl("used more with ALT in 2 context(s), strongest Lung (slope +1.20", ev$detail[[1L]], fixed = TRUE),
+  # An intron used less with ALT is kept as such, from TOPMed and from the open result.
+  identical(ev$effect[1:4], c("gain", "loss", "gain", "loss")), ev$start1[[2L]] == 161L, ev$end1[[2L]] == 200L, grepl("used less with ALT", ev$detail[[2L]], fixed = TRUE),
+  ev$start1[[3L]] == 161L, ev$end1[[3L]] == 300L, ev$start1[[4L]] == 161L, ev$end1[[4L]] == 200L, grepl("junction used less with ALT (-2.00", ev$detail[[4L]], fixed = TRUE),
+  identical(ev$effect[5:7], c("gain", "loss", "gain")), identical(ev$position[5:7], c(151L, 161L, 205L)),
+  !nrow(interp_splice_events()), !nrow(interp_splice_events(sp_pairs[5L, ])))
+far_variant <- interp_variant("chrS", 180L, "A", "G")
+sp <- interp_splice_protein(far_variant, annotation_S, fetch, ev)
+row_for <- function(x, text) x[grepl(text, x$event, fixed = TRUE), , drop = FALSE]
+stopifnot(nrow(sp) == 3L, all(sp$transcript_id == "SP"), all(sp$gene == "SPL"),
+  # The observed alternative donor stands in for the annotated donor that SpliceAI predicts to weaken: observed and predicted, listed first.
+  sp$event[[1L]] == "alternative donor: intron chrS:151-200 in place of intron 1", sp$basis[[1L]] == "observed and predicted", sp$coding_effect[[1L]] == "premature stop",
+  grepl("TOPMed sQTL: intron used more with ALT", sp$support[[1L]], fixed = TRUE), grepl("SpliceAI donor gain 0.60", sp$support[[1L]], fixed = TRUE),
+  grepl("SpliceAI donor loss 0.70", sp$support[[1L]], fixed = TRUE), sp$mrna_change[[1L]] == "10 exonic nt removed", grepl("^predicted", sp$nmd[[1L]]),
+  # The annotated intron it stands in for is itself seen to fall with ALT, in TOPMed and in the open result.
+  grepl("the annotated intron it replaces: TOPMed sQTL: intron used less with ALT in 1 context(s), strongest Lung (slope -1.20", sp$support[[1L]], fixed = TRUE),
+  grepl("the annotated intron it replaces: this cohort: junction used less with ALT", sp$support[[1L]], fixed = TRUE),
+  row_for(sp, "exon skipping")$basis == "observed", row_for(sp, "exon skipping")$coding_effect == "in-frame deletion",
+  row_for(sp, "exon skipping")$event == "exon skipping: 1 exon(s) left out (60 nt)", row_for(sp, "exon skipping")$mrna_change == "60 exonic nt removed",
+  # A new acceptor predicted at 0.3 pairs with the donor upstream of it.
+  row_for(sp, "alternative acceptor")$basis == "weakly predicted", row_for(sp, "alternative acceptor")$event == "alternative acceptor: intron chrS:161-205 in place of intron 1",
+  row_for(sp, "alternative acceptor")$mrna_change == "5 exonic nt removed")
+# Without any event, a variant on an essential site gives the usual outcomes as assumptions.
+donor_hit <- interp_splice_protein(interp_variant("chrS", 161L, "G", "A"), annotation_S, fetch)
+stopifnot(nrow(donor_hit) == 1L, donor_hit$event == "if the intron is retained (40 nt)", donor_hit$basis == "assumed outcome",
+  donor_hit$support == "the variant changes the essential donor site", donor_hit$mrna_change == "40 intronic nt kept", donor_hit$coding_effect == "frameshift")
+acceptor_hit <- interp_splice_protein(interp_variant("chrS", 200L, "G", "A"), annotation_S, fetch)
+stopifnot(nrow(acceptor_hit) == 2L, acceptor_hit$event[[1L]] == "if the exon next to the lost acceptor is skipped (60 nt)", acceptor_hit$coding_effect[[1L]] == "in-frame deletion",
+  acceptor_hit$event[[2L]] == "if the intron is retained (40 nt)", all(acceptor_hit$basis == "assumed outcome"))
+# With an observed replacement the assumptions are not listed; the essential site makes it observed and predicted.
+replaced <- interp_splice_protein(interp_variant("chrS", 161L, "G", "A"), annotation_S, fetch, interp_splice_events(sp_pairs))
+stopifnot(nrow(replaced) == 1L, replaced$basis == "observed and predicted", grepl("the variant changes the essential donor site", replaced$support, fixed = TRUE))
+# A predicted new donor that is the donor of an intron seen to rise with ALT supports that intron instead of being paired
+# with the nearest annotated acceptor: here the observed intron skips an exon, and a weak prediction leaves it "observed".
+long_intron <- transform(ev[1L, ], start1 = 151L, end1 = 300L)
+joined <- interp_splice_protein(far_variant, annotation_S, fetch, rbind(long_intron, transform(ev[5L, ], score = .42, detail = "SpliceAI donor gain 0.42")))
+stopifnot(nrow(joined) == 1L, joined$basis == "observed", grepl("SpliceAI donor gain 0.42", joined$support, fixed = TRUE), grepl("1 exon(s) left out", joined$event, fixed = TRUE),
+  interp_splice_protein(far_variant, annotation_S, fetch, rbind(long_intron, ev[5L, ]))$basis == "observed and predicted")
+# The mirrored transcript gives the mirrored events the same reading; a change that fits no transcript gives no row.
+mirror_events <- transform(ev, start1 = ifelse(is.na(ev$end1), NA_integer_, mirror(ev$end1)), end1 = ifelse(is.na(ev$start1), NA_integer_, mirror(ev$start1)),
+  position = ifelse(is.na(ev$position), NA_integer_, mirror(ev$position)))
+sm <- interp_splice_protein(interp_variant("chrR", mirror(180L), "T", "C"), annotation_R, fetch, mirror_events)
+stopifnot(nrow(sm) == 3L, identical(sm$coding_effect, sp$coding_effect), identical(sm$protein_change, sp$protein_change), identical(sm$basis, sp$basis),
+  sm$event[[1L]] == paste0("alternative donor: intron chrR:", mirror(200L), "-", mirror(151L), " in place of intron 1"), all(sp$annotated_in == ""),
+  !nrow(interp_splice_protein(far_variant, annotation_S, fetch, transform(ev[1L, ], start1 = 171L, end1 = 190L))),
+  # An intron that would keep more than 300 nt of intron in the transcript is not placed on it.
+  !nrow(interp_splice_protein(far_variant, annotation_S, fetch, transform(ev[1L, ], start1 = 195L, end1 = 200L), max_kept_intron = 30L)),
+  !nrow(interp_splice_protein(far_variant, annotation_T, fetch)), !nrow(interp_splice_protein(far_variant, list(transcripts = NULL), fetch)))
+# An intron that another transcript of the query already has is named, whatever that transcript's type.
+annotation_S2 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC", "SPL", "chrS", "+", 101L, 360L, "", "retained_intron")),
+  exons = rbind(annotation_S$exons, exon_rows("SNC", "SPL", "chrS", "+", c(101L, 301L), c(150L, 360L))), features = annotation_S$features)
+named <- interp_splice_protein(far_variant, annotation_S2, fetch, transform(ev[1L, ], start1 = 151L, end1 = 300L))
+stopifnot(nrow(named) == 1L, named$annotated_in == "SNC (retained_intron)", named$event == "alternative donor: intron chrS:151-300 in place of intron 2, 1 exon(s) left out",
+  named$mrna_change == "70 exonic nt removed")
+splice_outcomes <- sp; splice_named <- named; splice_assumed <- donor_hit   # kept for the mechanism lines further down
+# In the summary the splice outcome speaks for the protein when the variant itself changes nothing.
+intron_only <- csq(annotation_S, "chrS", 180L, "A", "G")
+ps <- interp_evidence_summary(intron_only, splice_protein = sp)
+stopifnot(interp_evidence_summary(intron_only)$level[[1L]] == "None found", ps$question[[1L]] == "Protein sequence", ps$level[[1L]] == "Strong",
+  grepl("The variant itself does not change the protein sequence. Through the splice change (observed and predicted): a stop codon follows residue 11", ps$finding[[1L]], fixed = TRUE),
+  grepl("Nonsense-mediated decay of that mRNA is predicted.", ps$finding[[1L]], fixed = TRUE),
+  grepl("through splicing (observed and predicted), SP: alternative donor: intron chrS:151-200 in place of intron 1; 10 exonic nt removed; premature stop; nonsense-mediated decay predicted", ps$evidence[[1L]], fixed = TRUE),
+  grepl("2 more splice outcome(s) in the table", ps$evidence[[1L]], fixed = TRUE), grepl("splice outcome prediction", ps$sources[[1L]], fixed = TRUE),
+  # Observed alone, or on a transcript that is not the reference one, stops at Moderate; an assumed outcome at Limited.
+  interp_evidence_summary(intron_only, splice_protein = sp[sp$basis == "observed", ])$level[[1L]] == "Moderate",
+  interp_evidence_summary(intron_only, splice_protein = transform(sp[1L, ], transcript_flags = "basic"))$level[[1L]] == "Moderate",
+  interp_evidence_summary(intron_only, splice_protein = sp[sp$basis == "weakly predicted", ])$level[[1L]] == "Limited",
+  interp_evidence_summary(intron_only, splice_protein = donor_hit)$level[[1L]] == "Limited",
+  # An outcome that leaves the protein as it is changes nothing; a level that is already higher is kept.
+  interp_evidence_summary(intron_only, splice_protein = transform(sp[1L, ], coding_effect = "none: the coding sequence is unchanged"))$level[[1L]] == "None found",
+  interp_evidence_summary(csq(annotation_S, "chrS", 129L, "G", "A"), splice_protein = sp[sp$basis == "observed", ])$level[[1L]] == "Strong")
+
 # ---- Nested JSON helpers ----------------------------------------------------
 stopifnot(interp_get(list(a = list(b = list(1, 2))), "a", "b", 2L) == 2, is.na(interp_get(list(a = NULL), "a", "b")),
   interp_get(list(), "x", default = "d") == "d", interp_join(c("a", "", NA, "a", "b")) == "a; b",
@@ -299,9 +455,10 @@ stopifnot(src$cadd_snv == "/tmp/custom_cadd.tsv.gz", identical(unname(src$fhs_sq
 for (n in names(old_env)) if (is.na(old_env[[n]])) Sys.unsetenv(n) else do.call(Sys.setenv, stats::setNames(list(old_env[[n]]), n))
 none <- list(tabix = "", look = "", cadd_snv = "/missing", cadd_indel = "/missing", vep_cache = "/missing", topmed_qtl = "/missing",
   fhs_sqtl = c(discovery = "/missing", replication = "/missing"), fhs_eqtl = "/missing", gwas_catalog = "/missing",
-  clinvar_vcf = "/missing", reactome = "/missing", msigdb = "/missing", tissue_model = c(eQTL = "/missing", sQTL = "/missing"), spliceai = "/missing")
+  clinvar_vcf = "/missing", reactome = "/missing", msigdb = "/missing", tissue_model = c(eQTL = "/missing", sQTL = "/missing"), spliceai = "/missing",
+  pqtl = c(`UKB-PPP` = "/missing", FHS = "/missing"), pqtl_map = "/missing", gtex_pairs = "/missing", gtex_genes = "/missing", gene_disease = "/missing")
 status <- interp_local_status(none)
-stopifnot(nrow(status) == 11L, !any(status$available))
+stopifnot(nrow(status) == 14L, !any(status$available))
 # A source list written before a source existed simply reports it as unavailable.
 stopifnot(!any(interp_local_status(none[c("tabix", "look", "cadd_snv", "cadd_indel", "vep_cache", "topmed_qtl", "fhs_sqtl", "fhs_eqtl", "spliceai")])$available))
 gone <- interp_local_evidence(v, none)
@@ -600,6 +757,29 @@ if (nzchar(Sys.which("look"))) {
     identical(lp$gene_sets$collection, c("Hallmark", "Canonical pathways", "Canonical pathways")), grepl("MSigDB 2099.1", lp$source[[2L]], fixed = TRUE))
   st <- interp_local_status(srcs)
   stopifnot(st$available[st$source == "Reactome gene-to-pathway mapping"], st$available[st$source == "MSigDB gene sets"])
+  # ClinVar conditions per gene through the build script: pathogenic and likely pathogenic only, conflicting left out,
+  # one row per gene of a variant that names several, conditions by number of variants.
+  gene_vcf <- file.path(work, "gene_clinvar.vcf")
+  writeLines(c("##fileformat=VCFv4.1", "##fileDate=2099-02-03", "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+    "1\t100\t1\tG\tA\t.\t.\tCLNDN=Disease_one|not_provided;CLNSIG=Pathogenic;GENEINFO=GENEA:1",
+    "1\t101\t2\tG\tA\t.\t.\tCLNDN=Disease_one;CLNSIG=Likely_pathogenic;GENEINFO=GENEA:1|GENEAB:2",
+    "1\t102\t3\tG\tA\t.\t.\tCLNDN=Disease_two;CLNSIG=Pathogenic/Likely_pathogenic;GENEINFO=GENEA:1",
+    "1\t103\t4\tG\tA\t.\t.\tCLNDN=Disease_three;CLNSIG=Conflicting_classifications_of_pathogenicity;GENEINFO=GENEA:1",
+    "1\t104\t5\tG\tA\t.\t.\tCLNDN=Disease_four;CLNSIG=Benign;GENEINFO=GENEB:3", "1\t105\t6\tG\tA\t.\t.\tCLNDN=Disease_five;CLNSIG=Pathogenic"), gene_vcf)
+  gene_table <- file.path(work, "disease_genes", "clinvar_gene_disease_2099-02-03.tsv")
+  built <- system2(unname(Sys.which("python3")), c("scripts/build_gene_disease_index.py", "--clinvar", shQuote(gene_vcf), "--out", shQuote(gene_table)), stdout = TRUE, stderr = TRUE)
+  stopifnot(file.exists(gene_table), grepl("genes: 2  ClinVar file date: 2099-02-03", built[[length(built)]], fixed = TRUE),
+    identical(readLines(gene_table), c("GENEA\t3\t2\tDisease one (2); Disease two (1)", "GENEAB\t1\t1\tDisease one (1)")))
+  srcs$gene_disease <- gene_table
+  gd <- interp_gene_disease(linked, srcs)
+  stopifnot(gd$available, gd$genes_checked == 2L, nrow(gd$genes) == 2L, identical(gd$genes$gene, c("GENEA", "GENEAB")), identical(gd$genes$pathogenic_variants, c(3L, 1L)),
+    gd$genes$conditions[[1L]] == "Disease one (2); Disease two (1)", gd$genes$relation[[2L]] == "sQTL target (TOPMed)", gd$source == "ClinVar pathogenic variants per gene (2099-02-03) (local)",
+    # A gene whose name is the start of another gene's name is not mixed up with it; no gene, no file: nothing.
+    !nrow(interp_gene_disease(linked[2L, ], srcs)$genes), !interp_gene_disease(linked, none)$available, interp_gene_disease(NULL, srcs)$available)
+  sgd <- interp_evidence_summary(interp_empty_consequences(), list(gene_disease = gd))
+  stopifnot(sgd$level[sgd$question == "Disease and traits"] == "Not assessed",
+    grepl("gene-level context, not evidence about this variant: ClinVar has pathogenic variants in GENEA (overlaps; 3 variants; Disease one); GENEAB (sQTL target (TOPMed); 1 variants; Disease one)",
+      sgd$evidence[sgd$question == "Disease and traits"], fixed = TRUE), grepl("ClinVar pathogenic variants per gene", sgd$sources[sgd$question == "Disease and traits"], fixed = TRUE))
   sp <- interp_evidence_summary(interp_empty_consequences(), list(pathways = lp))
   stopifnot(level(sp, "Pathway") == "Context", grepl("GENEA (overlaps): Metabolism", sp$finding[sp$question == "Pathway"], fixed = TRUE),
     grepl("no pathway annotation: ENSG00000000003", sp$evidence[sp$question == "Pathway"], fixed = TRUE))
@@ -729,9 +909,238 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   stopifnot(d0$level == "None found", grepl("ClinVar VCF 2099-02-03 (local), GWAS Catalog e999_r2099-01-01", d0$finding, fixed = TRUE),
     disease(list(clinvar = none_here))$level == "Not assessed", disease(list(gwas_catalog = far))$level == "Not assessed",
     grepl("Only GWAS Catalog", disease(list(gwas_catalog = far))$finding, fixed = TRUE))
+  # cis-pQTL scans through their build script: one file per protein (REGENIE layout) and one table.
+  acting <- missense$gene_name[missense$most_severe == "missense_variant"][[1L]]
+  regenie <- file.path(work, "ukb"); dir.create(regenie)
+  regenie_header <- "ID,CHROM,GENPOS,ALLELE0,ALLELE1,A1FREQ,INFO,N,TEST,BETA,SE,CHISQ,LOG10P,EXTRA,REF,ALT,rsid,POS19,POS38"
+  gz_lines <- function(lines, path) { con <- gzfile(path, "w"); on.exit(close(con)); writeLines(lines, con) }
+  gz_lines(c(regenie_header, "1:90:G:A:imp:v1,1,90,G,A,0.2,0.99,30000,ADD,0.5,0.02,100,40,NA,G,A,rs1,90,100",
+    "1:90:G:C:imp:v1,1,90,G,C,0.1,0.99,30000,ADD,0.9,0.02,100,60,NA,G,C,rs1b,90,100", "1:95:T:C:imp:v1,1,95,T,C,0.1,0.99,30000,ADD,0.9,0.02,100,60,NA,T,C,rs3,95,NA",
+    "23:40:A:C:imp:v1,23,40,A,C,0.3,0.9,30000,ADD,0.2,0.02,100,12,NA,A,C,rs8,40,50"), file.path(regenie, paste0(acting, ".csv.gz")))
+  # ALLELE1 (the effect allele) is this variant's REF here: the effect and the frequency are turned to ALT.
+  gz_lines(c(regenie_header, "1:90:A:G:imp:v1,1,90,A,G,0.8,0.98,30000,ADD,-0.1,0.02,25,6.2,NA,A,G,rs1,90,100"), file.path(regenie, "PROTB.csv.gz"))
+  gz_lines(c(regenie_header, "1:90:G:A:imp:v1,1,90,G,A,0.2,0.99,30000,ADD,0.01,0.02,0.2,0.3,NA,G,A,rs1,90,100"), file.path(regenie, "PROTC.csv.gz"))
+  ukb <- file.path(work, "protein", "ukb.tsv.gz"); tool_env <- c(paste0("BGZIP=", bgzip), paste0("TABIX=", tabix))
+  built <- system2("bash", c("scripts/build_pqtl_index.sh", "regenie", shQuote(regenie), shQuote(ukb)), stdout = TRUE, stderr = TRUE, env = tool_env)
+  stopifnot(file.exists(ukb), file.exists(paste0(ukb, ".tbi")), grepl("rows: 5  proteins: 3", built[[length(built)]], fixed = TRUE))
+  fhs_table <- file.path(work, "fhs_pqtl.txt.gz")
+  gz_lines(c("SNP\tEA\tOA\tCHR\tBP\tEAF\tOlinkID\tGene\tBETA\tSE\tP", paste("rs1", "A", "G", 1, 100, 0.21, "OID1", acting, 0.4, 0.05, 1e-9, sep = "\t"),
+    paste("rs1", "G", "A", 1, 100, 0.79, "OID2", "PROTD", 0.3, 0.05, 0, sep = "\t"), paste("rs2", "A", "G", 1, 200, 0.5, "OID1", acting, "NA", 0.05, "NA", sep = "\t")), fhs_table)
+  fhs_pqtl <- file.path(work, "protein", "fhs.tsv.gz")
+  built <- system2("bash", c("scripts/build_pqtl_index.sh", "table", shQuote(fhs_table), shQuote(fhs_pqtl)), stdout = TRUE, stderr = TRUE, env = tool_env)
+  stopifnot(file.exists(fhs_pqtl), grepl("rows: 2  proteins: 2", built[[length(built)]], fixed = TRUE))
+  # The assay table through its build script, from both source layouts.
+  ukb_map <- file.path(work, "ukb_map.tsv"); ht_annot <- file.path(work, "ht_annot.csv")
+  writeLines(c("UKBPPP_ProteinID\tolink_target_fullname\tOlinkID\tUniProt\tAssay\tPanel\tHGNC.symbol\tensembl_id\tchr\tgene_start\tgene_end",
+    paste("a", "Acting protein", "OID9", "P1", acting, "Panel", acting, "ENSGACT", "1", 50, 150, sep = "\t"),
+    paste("b", "Protein B", "OID3", "P2", "PROTB", "Panel", "PROTB", "ENSGB", "1", 5000, 6000, sep = "\t"),
+    paste("x", "Protein X", "OID4", "P3", "PROTX", "Panel", "PROTX", "ENSGX", "2", 10, 20, sep = "\t")), ukb_map)
+  writeLines(c("OlinkID,UniProtID,Assay,Protein name,Gene name,Chr,Start,End,ENSG", "OID2,P4,PROTD,\"Protein D, long form\",GENED,chr1,300,400,ENSGD",
+    "OID7,AMP1,Amplification control 1,,,,,,"), ht_annot)
+  protein_map <- file.path(work, "protein", "map.tsv")
+  built <- system2(unname(Sys.which("python3")), c("scripts/build_protein_map.py", "--ukbppp", shQuote(ukb_map), "--olink-ht", shQuote(ht_annot), "--out", shQuote(protein_map)),
+    stdout = TRUE, stderr = TRUE)
+  stopifnot(file.exists(protein_map), grepl("assay rows: 4", built[[length(built)]], fixed = TRUE), nrow(interp_pqtl_map(list(pqtl_map = protein_map))) == 4L,
+    !nrow(interp_pqtl_map(none)))
+  srcs$pqtl <- c(`UKB-PPP` = ukb, FHS = fhs_pqtl); srcs$pqtl_map <- protein_map
+  pq <- interp_pqtl(v, srcs)
+  pa <- pq$associations; one_row <- function(study, protein) pa[pa$study == study & pa$protein == protein, ]
+  stopifnot(pq$available, pq$found, identical(pq$studies$variant_tested, c(TRUE, TRUE)), identical(pq$studies$proteins_tested, c(3L, 2L)),
+    # Strongest first; a p-value of zero is kept and ranks first.
+    identical(pa$protein, c("PROTD", acting, acting, "PROTB", "PROTC")), pa$p_value[[1L]] == 0, pa$log10_p[[1L]] == -400,
+    one_row("FHS", "PROTD")$beta_alt == -0.3, abs(one_row("FHS", "PROTD")$alt_frequency - 0.21) < 1e-12, one_row("FHS", "PROTD")$assay_id == "OID2",
+    one_row("UKB-PPP", acting)$beta_alt == 0.5, one_row("UKB-PPP", acting)$n == 30000L, one_row("UKB-PPP", acting)$significance == "experiment-wide",
+    one_row("UKB-PPP", acting)$gene_id == "ENSGACT", one_row("UKB-PPP", acting)$gene_distance == 0L, one_row("FHS", acting)$significance == "genome-wide",
+    one_row("UKB-PPP", "PROTB")$beta_alt == 0.1, abs(one_row("UKB-PPP", "PROTB")$alt_frequency - 0.2) < 1e-12, one_row("UKB-PPP", "PROTB")$significance == "suggestive",
+    one_row("UKB-PPP", "PROTB")$gene_distance == 4900L, one_row("UKB-PPP", "PROTC")$significance == "", one_row("UKB-PPP", "PROTC")$gene == "",
+    # The second scan names its assay: the gene comes from the assay ID, here under another symbol.
+    one_row("FHS", "PROTD")$gene == "GENED", one_row("FHS", "PROTD")$gene_id == "ENSGD", one_row("FHS", "PROTD")$gene_distance == 200L,
+    # Another allele at the position has its own row; chromosome 23 is read as chrX; an untested position is told apart.
+    interp_pqtl(interp_variant("chr1", 100L, "G", "C"), srcs)$associations$beta_alt == 0.9,
+    interp_pqtl(interp_variant("chrX", 50L, "A", "C"), srcs)$associations$log10_p == -12)
+  # Single-signal fine-mapping. The UKB window of the acting protein holds this variant (z 25) and chr1:100 G>C (z 45):
+  # the stronger neighbour takes the posterior.
+  stopifnot(abs(sum(interp_abf_posterior(c(.5, .1, 0), c(.02, .02, .02))) - 1) < 1e-12, which.max(interp_abf_posterior(c(.5, .1, 0), c(.02, .02, .02))) == 1L,
+    all(abs(interp_abf_posterior(c(.1, .1), c(.02, .02)) - .5) < 1e-12),
+    one_row("UKB-PPP", acting)$posterior_probability < 1e-6, one_row("UKB-PPP", acting)$credible_set_size == 1L, one_row("UKB-PPP", acting)$window_variants == 2L,
+    grepl("^rs1b \\(posterior 1.00, 0 bp away\\)$", one_row("UKB-PPP", acting)$lead_variant),
+    # A protein with one variant in its window cannot be fine-mapped; suggestive rows are not attempted.
+    is.na(one_row("FHS", "PROTD")$posterior_probability), is.na(one_row("UKB-PPP", "PROTB")$posterior_probability),
+    is.na(one_row("FHS", acting)$posterior_probability))
+  untested <- interp_pqtl(interp_variant("chr1", 101L, "G", "A"), srcs)
+  stopifnot(untested$available, !untested$found, !any(untested$studies$variant_tested), !interp_pqtl(v, none)$available)
+  # Protein abundance from the scans: association plus a predicted change to that gene is Strong; association alone Moderate.
+  protein_row <- function(consequences, local, ...) { s <- interp_evidence_summary(consequences, local, ...); s[s$question == "Protein abundance (pQTL)", ] }
+  p_strong <- protein_row(missense, list(pqtl = pq))
+  stopifnot(p_strong$level == "Strong", grepl(paste0("plasma level of ", acting, ", and this variant is itself predicted"), p_strong$finding, fixed = TRUE),
+    grepl(paste0("seen in both scans in the same direction: ", acting), p_strong$evidence, fixed = TRUE),
+    grepl("tested against 3 nearby protein(s) in UKB-PPP and 2 nearby protein(s) in FHS", p_strong$evidence, fixed = TRUE),
+    grepl("UKB-PPP cis-pQTL; FHS cis-pQTL", p_strong$sources, fixed = TRUE), grepl("p < 1e-300", p_strong$evidence, fixed = TRUE))
+  p_moderate <- protein_row(intronic, list(pqtl = pq))
+  stopifnot(p_moderate$level == "Moderate", grepl("not fine-mapped to this variant", p_moderate$finding, fixed = TRUE),
+    grepl("posterior 0.00, 95% credible set of 1 of 2 variant(s), lead rs1b", p_moderate$evidence, fixed = TRUE))
+  # A posterior of at least 0.5 is what singles the variant out: Strong without any predicted consequence.
+  led <- pq; led$associations$posterior_probability[led$associations$study == "UKB-PPP" & led$associations$protein == acting] <- .83
+  led$associations$lead_variant[led$associations$study == "UKB-PPP" & led$associations$protein == acting] <- "this variant"
+  p_pinned <- protein_row(intronic, list(pqtl = led))
+  stopifnot(p_pinned$level == "Strong", grepl("single-signal fine-mapping gives this variant a posterior probability of 0.83", p_pinned$finding, fixed = TRUE),
+    grepl("posterior 0.83, 95% credible set of 1 of 2 variant(s), this variant leads", p_pinned$evidence, fixed = TRUE))
+  only <- function(keep) { x <- pq; x$associations <- pa[pa$protein %in% keep, , drop = FALSE]; x }
+  stopifnot(protein_row(intronic, list(pqtl = only(c("PROTB", "PROTC"))))$level == "Limited",
+    protein_row(intronic, list(pqtl = only("PROTC")))$level == "None found",
+    grepl("No cis-pQTL at this variant: tested against", protein_row(intronic, list(pqtl = only("PROTC")))$finding, fixed = TRUE),
+    protein_row(intronic, list(pqtl = untested))$level == "Not assessed",
+    grepl("not in the local cis-pQTL scans", protein_row(intronic, list(pqtl = untested))$finding, fixed = TRUE),
+    # A published protein-level association still counts next to an empty scan.
+    protein_row(missense, list(pqtl = only("PROTC"), clinvar = none_here, gwas_catalog = far))$level == "None found")
+  # cis or trans for a published protein-level trait, from the assay table.
+  locus <- interp_protein_locus(c("protein x", "Acting protein", "unknown protein"), v, srcs)
+  stopifnot(identical(locus$locus, c("trans, PROTX is on chr2", "cis", "")), identical(locus$gene, c("PROTX", acting, "")),
+    identical(interp_trait_protein_locus(c("level of protein X in blood", "body height"), v, srcs), c("trans, PROTX is on chr2", "")),
+    identical(interp_protein_locus("protein x", v, none)$locus, ""))
+  published <- g; published$associations <- transform(g$associations[1:2, ], mapped_trait = c("level of protein X in blood", "level of acting protein in blood"),
+    p_value = 1e-20, protein_locus = c("trans, PROTX is on chr2", "cis"))
+  p_published <- protein_row(intronic, list(gwas_catalog = published))
+  stopifnot(p_published$level == "Moderate", grepl("blood level of 2 protein(s) in published GWAS", p_published$finding, fixed = TRUE),
+    grepl("1 encoded near the variant, cis; 1 encoded elsewhere, trans", p_published$finding, fixed = TRUE),
+    grepl("protein X (trans, PROTX is on chr2)", p_published$evidence, fixed = TRUE))
+  # GTEx significant pairs across tissues, with the table of genes tested per tissue.
+  gtex_file <- file.path(work, "gtex", "gtex_v11_eqtl_signif_pairs.b38.tsv.gz"); dir.create(dirname(gtex_file))
+  gtex_row <- function(pos, alt, gene, tissue, slope, se, p) paste("chr1", pos, "G", alt, gene, tissue, slope, se, p, 0.2, 1e-4, 500, sep = "\t")
+  index(c("#chrom\tpos\tref\talt\tgene_id\ttissue\tslope\tslope_se\tpval_nominal\taf\tpval_nominal_threshold\tstart_distance",
+    gtex_row(100, "A", "ENSG00000000001.5", "Brain_Cortex", .2, .05, 1e-4), gtex_row(100, "A", "ENSG00000000001.5", "Lung", .25, .05, 1e-6),
+    gtex_row(100, "A", "ENSG00000000001.5", "Whole_Blood", .3, .03, 1e-20), gtex_row(100, "A", "ENSG00000000002.1", "Liver", -.5, .1, 1e-7),
+    gtex_row(100, "A", "ENSG00000000002.1", "Lung", .4, .1, 1e-5), gtex_row(100, "C", "ENSG00000000009.1", "Lung", .9, .1, 1e-30),
+    gtex_row(101, "A", "ENSG00000000009.1", "Lung", .9, .1, 1e-30)), gtex_file, c("-s", "1", "-b", "2", "-e", "2", "-c", shQuote("#")))
+  gtex_gene <- function(gene, name, biotype, tissue, lead) paste(sub("\\..*$", "", gene), gene, name, biotype, tissue, 0.01, 1e-4, lead, .3, .03, 1e-20, .2, .5, sep = "\t")
+  gtex_genes <- file.path(work, "gtex", "genes.tsv")
+  writeLines(c(gtex_gene("ENSG00000000001.5", "GENEA", "protein_coding", "Brain_Cortex", "chr1_100_G_A_b38"),
+    gtex_gene("ENSG00000000001.5", "GENEA", "protein_coding", "Liver", "chr1_300_T_C_b38"), gtex_gene("ENSG00000000001.5", "GENEA", "protein_coding", "Lung", "chr1_300_T_C_b38"),
+    gtex_gene("ENSG00000000001.5", "GENEA", "protein_coding", "Whole_Blood", "chr1_100_G_A_b38"), gtex_gene("ENSG00000000002.1", "GENEB", "lncRNA", "Liver", "chr1_300_T_C_b38"),
+    gtex_gene("ENSG00000000002.1", "GENEB", "lncRNA", "Lung", "chr1_300_T_C_b38")), gtex_genes)
+  srcs$gtex_pairs <- gtex_file; srcs$gtex_genes <- gtex_genes; srcs$look <- unname(Sys.which("look"))
+  gt <- interp_gtex_local(v, srcs)
+  stopifnot(gt$available, gt$found, gt$release == "v11", nrow(gt$pairs) == 5L, identical(gt$genes$gene_id, c("ENSG00000000001.5", "ENSG00000000002.1")),
+    identical(gt$genes$tissues_significant, c(3L, 2L)), gt$genes$strongest_tissue[[1L]] == "Whole Blood", gt$genes$strongest_slope[[1L]] == .3,
+    gt$genes$direction[[1L]] == "ALT raises expression in every significant tissue", gt$genes$direction[[2L]] == "mixed: raises in 1, lowers in 1",
+    gt$genes$tissues[[1L]] == "Whole Blood, Lung, Brain Cortex", !nrow(interp_gtex_local(interp_variant("chr1", 100L, "G", "T"), srcs)$pairs),
+    interp_gtex_local(interp_variant("chr1", 100L, "G", "T"), srcs)$available, !interp_gtex_local(v, none)$available)
+  if (nzchar(srcs$look)) stopifnot(gt$gene_table, identical(gt$genes$gene, c("GENEA", "GENEB")), identical(gt$genes$tissues_tested, c(4L, 2L)),
+    identical(gt$genes$lead_variant_in, c(2L, 0L)), identical(gt$genes$whole_blood, c("significant", "not tested")), gt$genes$biotype[[2L]] == "lncRNA",
+    identical(gt$pairs$lead_variant[gt$pairs$gene == "GENEA"], c(TRUE, FALSE, TRUE)), identical(gt$pairs$gene, rep(c("GENEA", "GENEB"), c(3L, 2L))))
+  bare <- srcs; bare$gtex_genes <- "/missing"; gt_bare <- interp_gtex_local(v, bare)
+  stopifnot(!gt_bare$gene_table, all(is.na(gt_bare$genes$tissues_tested)), identical(gt_bare$genes$whole_blood, c("significant", "")), all(gt_bare$genes$gene == ""))
+  sg <- interp_evidence_summary(intronic, list(gtex = gt))
+  stopifnot(level(sg, "Gene expression (eQTL)") == "Moderate", level(sg, "Tissue") == "Context",
+    grepl("strongest GENEA in Whole Blood, slope +0.30", sg$evidence[sg$question == "Gene expression (eQTL)"], fixed = TRUE) || !nzchar(srcs$look),
+    grepl("GTEx v11 eQTL (local)", sg$evidence[sg$question == "Gene expression (eQTL)"], fixed = TRUE),
+    grepl("ALT raises expression in every significant tissue; whole blood: significant", sg$evidence[sg$question == "Tissue"], fixed = TRUE))
+  quiet_gtex <- interp_evidence_summary(intronic, list(gtex = interp_gtex_local(interp_variant("chr1", 100L, "G", "T"), srcs)))
+  stopifnot(level(quiet_gtex, "Gene expression (eQTL)") == "None found",
+    grepl("not a significant cis-eQTL in any tissue", quiet_gtex$evidence[quiet_gtex$question == "Tissue"], fixed = TRUE))
+  # Genes reached through GTEx and through the pQTL scans join the linked genes.
+  lg2 <- interp_linked_genes(interp_empty_consequences(), list(gtex = gt, pqtl = pq))
+  stopifnot("ENSG00000000001" %in% lg2$gene_id, lg2$relation[lg2$gene_id == "ENSG00000000001"] == "eQTL target (GTEx)",
+    lg2$relation[lg2$gene_id == "ENSGACT"] == "cis-pQTL protein", !"ENSGB" %in% lg2$gene_id)
+  # Colocalisation. Two traits that peak at the same variant share a cause; peaks at different variants do not; flat traits have no signal.
+  flat <- rep(0, 60L); peak <- function(at, size) { b <- flat; b[[at]] <- size; b }
+  shared <- interp_coloc_abf(peak(10L, .6), rep(.05, 60L), peak(10L, .5), rep(.05, 60L))
+  apart <- interp_coloc_abf(peak(10L, .6), rep(.05, 60L), peak(40L, .5), rep(.05, 60L))
+  nothing <- interp_coloc_abf(flat, rep(.05, 60L), flat, rep(.05, 60L))
+  stopifnot(abs(sum(shared$posterior) - 1) < 1e-12, identical(names(shared$posterior), c("H0", "H1", "H2", "H3", "H4")), shared$posterior[["H4"]] > .99,
+    which.max(shared$variant_h4) == 10L, abs(sum(shared$variant_h4) - 1) < 1e-12, apart$posterior[["H3"]] > .99, nothing$posterior[["H0"]] > .9,
+    interp_coloc_abf(peak(10L, .6), rep(.05, 60L), flat, rep(.05, 60L))$posterior[["H1"]] > .9, is.null(interp_coloc_abf(.5, .05, .5, .05)),
+    interp_variant_key("100", "G", "A") == interp_variant_key(100L, "A", "G"), interp_variant_key(100L, "G", "A") != interp_variant_key(100L, "G", "T"))
+  # From files: an eQTL and a protein that peak at this variant, and a second eQTL that peaks 300 bases away.
+  co_root <- file.path(work, "coloc"); dir.create(file.path(co_root, "cis-eqtl", "nominal"), recursive = TRUE)
+  spots <- c(100L, 200L, 300L, 400L, 500L, 600L)
+  nominal_rows <- function(gene, betas) paste("chr1", spots - 1L, spots, gene, paste("chr1", spots, "G", "A", sep = "_"), 500, .2, 300, 300,
+    signif(2 * stats::pnorm(-abs(betas / .05)), 4), betas, .05, 1, sep = "\t")
+  body <- c(nominal_rows("ENSGA.1", c(.8, .1, 0, 0, 0, 0)), nominal_rows("ENSGB.1", c(0, 0, .1, .8, 0, 0)))
+  index(c(header, body[order(rep(spots, 2L))]), file.path(co_root, "cis-eqtl", "nominal", "Lung.maf001.tsv.gz"), args)
+  co_pqtl <- file.path(work, "protein", "coloc.tsv.gz")
+  # The scan names the other allele as its effect allele: the same variants all the same.
+  index(c("#chrom\tpos\tother_allele\teffect_allele\trsid\tprotein\tassay_id\teffect_af\tinfo\tn\tbeta\tse\tp_mlog",
+    paste("chr1", spots, "A", "G", paste0("rs", spots), "PA", ".", .8, 1, 30000, c(-.9, -.1, 0, 0, 0, 0), .05, 10, sep = "\t")), co_pqtl,
+    c("-s", "1", "-b", "2", "-e", "2", "-c", shQuote("#")))
+  co_src <- srcs; co_src$topmed_qtl <- co_root; co_src$pqtl <- c(`UKB-PPP` = co_pqtl)
+  co_pairs <- rbind(pair("eQTL", "Lung", "ENSGA.1", .8, .05, 1e-50, TRUE, "ENSGA.1"), pair("eQTL", "Lung", "ENSGB.1", 0, .05, 1e-9, TRUE, "ENSGB.1"),
+    pair("eQTL", "PBMC", "ENSGA.1", .5, .05, 1e-20, TRUE, "ENSGA.1"), pair("eQTL", "Lung", "ENSGC.1", .1, .05, .04, FALSE, "ENSGC.1"))
+  co_pairs$gene[co_pairs$gene_id == "ENSGA.1"] <- "GA"
+  co_protein <- interp_pqtl_empty()[1L, ]; co_protein$study <- "UKB-PPP"; co_protein$protein <- "PA"; co_protein$gene <- "PA"; co_protein$significance <- "experiment-wide"
+  co_protein$log10_p <- -70; co_protein$p_value <- 1e-70
+  co_local <- list(topmed = list(available = TRUE, pairs = co_pairs), pqtl = list(available = TRUE, found = TRUE, associations = co_protein))
+  traits <- interp_coloc_traits(co_local)
+  stopifnot(nrow(traits) == 3L, identical(traits$kind, c("eQTL", "eQTL", "pQTL")),
+    # One row per gene, in its strongest context; a gene without a name keeps its ID.
+    identical(traits$label, c("eQTL GA (Lung)", "eQTL ENSGB (Lung)", "pQTL PA (UKB-PPP)")), !nrow(interp_coloc_traits(NULL)),
+    nrow(interp_coloc_traits(list(topmed = list(available = TRUE, pairs = co_pairs[4L, ])))) == 0L)
+  co <- interp_colocalise(v, co_local, co_src, window = 1000L, min_variants = 3L)
+  pair_of <- function(a, b) co$pairs[co$pairs$trait_1 == a & co$pairs$trait_2 == b, ]
+  stopifnot(co$available, nrow(co$pairs) == 3L, identical(co$traits$variants, c(6L, 6L, 6L)), co$traits$this_variant_posterior[[1L]] > .99,
+    co$traits$this_variant_posterior[[2L]] < 1e-6, co$traits$this_variant_posterior[[3L]] > .99,
+    pair_of("eQTL GA (Lung)", "pQTL PA (UKB-PPP)")$reading == "one shared causal variant", pair_of("eQTL GA (Lung)", "pQTL PA (UKB-PPP)")$shared_cause > .99,
+    pair_of("eQTL GA (Lung)", "pQTL PA (UKB-PPP)")$leading_variant == "this variant", pair_of("eQTL GA (Lung)", "pQTL PA (UKB-PPP)")$this_variant_share > .99,
+    pair_of("eQTL GA (Lung)", "pQTL PA (UKB-PPP)")$variants == 6L, pair_of("eQTL GA (Lung)", "eQTL ENSGB (Lung)")$reading == "two different causal variants",
+    pair_of("eQTL ENSGB (Lung)", "pQTL PA (UKB-PPP)")$distinct_causes > .99, co$pairs$trait_2[[1L]] == "pQTL PA (UKB-PPP)",
+    # Too few variants in common, a single trait, or unreadable files: no pair, no failure.
+    !nrow(interp_colocalise(v, co_local, co_src, window = 1000L)$pairs), !nrow(interp_colocalise(v, list(topmed = list(available = TRUE, pairs = co_pairs[1L, ])), co_src)$pairs),
+    !nrow(interp_colocalise(v, co_local, none, min_variants = 3L)$pairs), !interp_colocalise(v, co_local, none)$available)
+  # In the summary: the shared cause is named under both traits, and an expression signal with another cause than
+  # a signal this variant leads is said to be reached through LD.
+  # The mechanism lines: what the variant leads, what is shared, what has another cause; with the splice outcome when there is one.
+  mech <- interp_mechanism(co_local, splice_outcomes, co)
+  stopifnot(length(mech) == 4L,
+    mech[[1L]] == "Fine-mapping places this variant itself as the likely cause of the expression of GA (posterior 1.00); the plasma level of PA (posterior 1.00).",
+    mech[[2L]] == "The splice change it is tied to (observed and predicted) would give SPL transcripts a premature stop, on an mRNA expected to be degraded.",
+    mech[[3L]] == "One causal variant is shared by the expression of GA and the plasma level of PA (posterior 1.00).",
+    mech[[4L]] == "Another causal variant is behind the expression of ENSGB: this variant is associated with it through linkage disequilibrium.",
+    # An annotated intron is named with its transcript type; an assumed outcome is not turned into a mechanism.
+    grepl("; the intron it favours belongs to SNC, annotated as retained intron.", interp_mechanism(NULL, splice_named, NULL), fixed = TRUE),
+    !length(interp_mechanism(NULL, splice_assumed, NULL)), !length(interp_mechanism()),
+    # Associations without any posterior of at least 0.5 are said to be unresolved; a SuSiE or pQTL posterior counts as a lead.
+    interp_mechanism(list(topmed = list(available = TRUE, pairs = co_pairs)))[[1L]] ==
+      "Fine-mapping does not single this variant out for any of its molecular associations; a neighbour in linkage disequilibrium may carry them.",
+    grepl("likely cause of the expression of GA (posterior 0.90)", interp_mechanism(list(topmed = list(available = TRUE, pairs = transform(co_pairs, pip = c(.9, NA, .6, NA)))))[[1L]], fixed = TRUE),
+    grepl(paste0("the plasma level of ", acting, " (posterior 0.83)"), interp_mechanism(list(pqtl = led))[[1L]], fixed = TRUE))
+  sc <- interp_evidence_summary(intronic, co_local, coloc = co)
+  stopifnot(grepl("colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant (posterior 1.00; this variant's share of the shared signal 1.00)",
+      sc$evidence[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
+    grepl("colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant", sc$evidence[sc$question == "Protein abundance (pQTL)"], fixed = TRUE),
+    grepl("colocalisation (computed here)", sc$sources[sc$question == "Protein abundance (pQTL)"], fixed = TRUE),
+    grepl("Colocalisation gives the expression of ENSGB a different causal variant from the plasma level of PA, which this variant leads", sc$finding[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
+    interp_trait_words("sQTL CNIH4 intron 10-90 (Whole blood)") == "the splicing of CNIH4 (intron 10-90)",
+    !grepl("colocalisation", sc$evidence[sc$question == "Splicing"], fixed = TRUE),
+    !grepl("Colocalisation", interp_evidence_summary(intronic, co_local)$finding[4L], fixed = TRUE))
+  # The GTEx build script, when pyarrow is installed.
+  python <- unname(Sys.which("python3"))
+  if (nzchar(python) && system2(python, c("-c", shQuote("import pyarrow")), stdout = FALSE, stderr = FALSE) == 0L) {
+    gsrc <- file.path(work, "gtex_source"); dir.create(gsrc)
+    maker <- file.path(work, "make_gtex.py")
+    writeLines(c("import sys, gzip, pyarrow as pa, pyarrow.parquet as pq", "d = sys.argv[1]",
+      "pq.write_table(pa.table({'phenotype_id': ['ENSG00000000002.1', 'ENSG00000000001.5'], 'variant_id': ['chr1_300_T_C_b38', 'chr1_100_G_A_b38'],",
+      "  'start_distance': pa.array([7, -5], pa.int32()), 'af': pa.array([.1, .2], pa.float32()), 'ma_samples': pa.array([9, 9], pa.int32()), 'ma_count': pa.array([9, 9], pa.int32()),",
+      "  'pval_nominal': [1e-7, 1e-20], 'slope': pa.array([-.5, .3], pa.float32()), 'slope_se': pa.array([.1, .03], pa.float32()),",
+      "  'pval_nominal_threshold': [1e-4, 1e-4], 'min_pval_nominal': [1e-7, 1e-20], 'pval_beta': [1e-5, 1e-9]}), d + '/Whole_Blood.v99.eQTLs.signif_pairs.parquet')",
+      "with gzip.open(d + '/Whole_Blood.v99.eGenes.txt.gz', 'wt') as f:",
+      "    f.write('gene_id\\tgene_name\\tbiotype\\tvariant_id\\tslope\\tslope_se\\tpval_nominal\\taf\\tqval\\tpval_nominal_threshold\\tafc\\n')",
+      "    f.write('ENSG00000000002.1\\tGENEB\\tlncRNA\\tchr1_300_T_C_b38\\t-0.5\\t0.1\\t1e-7\\t0.1\\t0.01\\t1e-4\\t-0.6\\n')",
+      "    f.write('ENSG00000000001.5\\tGENEA\\tprotein_coding\\tchr1_100_G_A_b38\\t0.3\\t0.03\\t1e-20\\t0.2\\t0.001\\t1e-4\\t0.4\\n')"), maker)
+    stopifnot(system2(python, c(shQuote(maker), shQuote(gsrc))) == 0L)
+    built_pairs <- file.path(work, "gtex_built", "gtex_v99_eqtl_signif_pairs.b38.tsv.gz"); built_genes <- file.path(work, "gtex_built", "genes.tsv")
+    log <- system2(python, c("scripts/build_gtex_index.py", "--source", shQuote(gsrc), "--pairs", shQuote(built_pairs), "--genes", shQuote(built_genes),
+      "--bgzip", shQuote(bgzip), "--tabix", shQuote(tabix), "--memory", "64M", "--threads", "1", "--work", shQuote(work)), stdout = TRUE, stderr = TRUE)
+    stopifnot(file.exists(built_pairs), file.exists(paste0(built_pairs, ".tbi")), file.exists(built_genes), any(grepl("tissues: 1  pairs: 2  gene rows: 2", log, fixed = TRUE)),
+      identical(sub("\t.*$", "", readLines(built_genes)), c("ENSG00000000001", "ENSG00000000002")))
+    from_build <- srcs; from_build$gtex_pairs <- built_pairs; from_build$gtex_genes <- built_genes
+    gb <- interp_gtex_local(v, from_build)
+    stopifnot(gb$found, gb$release == "v99", nrow(gb$pairs) == 1L, abs(gb$pairs$slope_alt - .3) < 1e-6, gb$pairs$tissue == "Whole Blood", gb$pairs$p_nominal == 1e-20,
+      gb$pairs$tss_distance == -5L, !nzchar(srcs$look) || (gb$genes$gene == "GENEA" && gb$genes$lead_variant_in == 1L))
+  } else if (native) stop("--native needs python3 with pyarrow") else cat("pyarrow not found: GTEx build-script check skipped\n")
   st <- interp_local_status(srcs)
   stopifnot(st$available[st$source == "CADD v1.7"], st$available[st$source == "TOPMed multi-tissue cis-QTL"], !st$available[st$source == "SpliceAI 1.3.1"],
-    st$available[st$source == "GWAS Catalog"], st$available[st$source == "ClinVar VCF"])
+    st$available[st$source == "GWAS Catalog"], st$available[st$source == "ClinVar VCF"], st$available[st$source == "GTEx cis-eQTL"],
+    st$available[st$source == "cis-pQTL summary statistics"])
   # LD with nearby reported variants, from a small VCF: twelve samples, the target's ALT dosage 0,0,0,0,1,1,1,1,2,2,2,2.
   stopifnot(identical(interp_gt_dosage(c("0/0", "0|1", "1/1", "./.", "1", "0", "1/2", "2|2", "./1"), 1L), c(0, 1, 2, NA, 1, 0, 1, 0, NA)),
     identical(interp_gt_dosage(c("1/2", "2|2", "0/0"), 2L), c(1, 2, 0)))
@@ -789,12 +1198,34 @@ if (nzchar(tabix) && file.exists(bgzip)) {
       grepl("no other reported variant with r2 >= 0.2", quiet_ld$evidence[quiet_ld$question == "Disease and traits"], fixed = TRUE))
     # Protein abundance: a published protein-level association at a variant in tight LD counts; clinical traits do not.
     pl <- dl[dl$question == "Protein abundance (pQTL)", ]
-    stopifnot(pl$level == "Moderate", grepl("through LD (r2 >= 0.8 in this cohort): protein x (rs150, r2 1.00)", pl$evidence, fixed = TRUE),
-      grepl("blood level of 1 protein(s)", pl$finding, fixed = TRUE), level(quiet_ld, "Protein abundance (pQTL)") == "Not assessed",
+    stopifnot(pl$level == "Moderate", # The protein of the published trait is in the assay table and encoded on another chromosome: trans.
+      grepl("through LD (r2 >= 0.8 in this cohort): protein x (rs150, r2 1.00, trans, PROTX is on chr2)", pl$evidence, fixed = TRUE),
+      grepl("blood level of 1 protein(s) in published GWAS; not fine-mapped to this variant (1 encoded elsewhere, trans).", pl$finding, fixed = TRUE),
+      row_of("rs150")$protein_locus == "trans, PROTX is on chr2", row_of("rs180")$protein_locus == "", level(quiet_ld, "Protein abundance (pQTL)") == "Not assessed",
       identical(interp_is_protein_trait(c("level of liver carboxylesterase 1 in blood", "Level of X in blood serum", "protein measurement",
         "high density lipoprotein cholesterol measurement", "apolipoprotein A 1 measurement")), c(TRUE, TRUE, FALSE, FALSE, FALSE)),
       interp_protein_name("level of liver carboxylesterase 1 in blood") == "liver carboxylesterase 1")
   } else if (native) stop("--native needs bcftools")
 } else if (native) stop("--native needs tabix and bgzip") else cat("tabix/bgzip not found: indexed-source checks skipped\n")
+# ---- One variant, every local step ----------------------------------------------
+# Without any local source the report still gives the consequences, the splice outcome and seven summary rows.
+report <- interp_local_report(interp_variant("chrS", 161L, "G", "A"), annotation_S, fetch, none)
+row <- interp_report_row(report)
+stopifnot(identical(report$summary$question, c("Protein sequence", "Protein abundance (pQTL)", "Splicing", "Gene expression (eQTL)", "Disease and traits", "Pathway", "Tissue")),
+  nrow(report$consequences) == 1L, report$consequences$consequence == "splice_donor_variant", nrow(report$splice_protein) == 1L, !length(report$failed),
+  !length(report$mechanism), length(report$reading) >= 2L, nrow(row) == 1L, row$variant == "chrS:161:G:A", row$gene == "SPL", row$most_severe == "splice_donor_variant",
+  row$protein_sequence == "Strong", row$splicing == "Moderate", row$protein_abundance == "Not assessed", row$linked_genes == "SPL",
+  row$splice_outcome == "SPL SP: frameshift (assumed outcome); NMD predicted", row$shared_cause_pairs == 0L, row$sources_failed == "",
+  # Gene names are filled through the caller's lookup when TOPMed pairs exist; a failing lookup is not fatal.
+  !length(interp_local_report(interp_variant("chrS", 180L, "A", "G"), annotation_S, fetch, none, gene_names = function(ids) stop("no index"))$failed),
+  nrow(interp_report_row(interp_local_report(interp_variant("chrT", 6000L, "A", "G"), annotation_T, fetch, none))) == 1L)
+# The batch script checks its input before it reads any resource.
+rscript <- file.path(R.home("bin"), "Rscript")
+help <- suppressWarnings(system2(rscript, c("scripts/interpret_variants.R", "--help"), stdout = TRUE, stderr = TRUE))
+bad_list <- file.path(work, "bad_variants.txt"); writeLines(c("chr1:100:G:A", "rs123"), bad_list)
+bad <- suppressWarnings(system2(rscript, c("scripts/interpret_variants.R", "--variants", shQuote(bad_list), "--annotation-db", "/missing.sqlite", "--reference", "/missing.fa",
+  "--out", shQuote(file.path(work, "never.csv"))), stdout = TRUE, stderr = TRUE))
+stopifnot(any(grepl("--variants FILE --annotation-db", help, fixed = TRUE)), is.null(attr(help, "status")), any(grepl("not chrom:pos:REF:ALT: rs123", bad, fixed = TRUE)),
+  identical(attr(bad, "status"), 1L), !file.exists(file.path(work, "never.csv")))
 unlink(work, recursive = TRUE)
 cat("interpretation backend tests passed\n")

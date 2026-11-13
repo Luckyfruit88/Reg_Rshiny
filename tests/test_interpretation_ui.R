@@ -11,7 +11,9 @@ Sys.setenv(REGSHINY_CADD_SNV = "/nonexistent/cadd", REGSHINY_CADD_INDEL = "/none
   REGSHINY_TOPMED_QTL = "/nonexistent/topmed", REGSHINY_FHS_SQTL = "/nonexistent/a;/nonexistent/b", REGSHINY_FHS_EQTL = "/nonexistent/e",
   REGSHINY_SPLICEAI = "/nonexistent/spliceai", REGSHINY_GWAS_CATALOG = "/nonexistent/gwas", REGSHINY_CLINVAR_VCF = "/nonexistent/clinvar",
   REGSHINY_REACTOME = "/nonexistent/reactome", REGSHINY_MSIGDB = "/nonexistent/msigdb", REGSHINY_TISSUE_MODEL_EQTL = "/nonexistent/model",
-  REGSHINY_TISSUE_MODEL_SQTL = "/nonexistent/model")
+  REGSHINY_TISSUE_MODEL_SQTL = "/nonexistent/model", REGSHINY_PQTL_UKBPPP = "/nonexistent/pqtl", REGSHINY_PQTL_FHS = "/nonexistent/pqtl",
+  REGSHINY_PQTL_PROTEIN_MAP = "/nonexistent/map", REGSHINY_GTEX_EQTL = "/nonexistent/gtex", REGSHINY_GTEX_EGENES = "/nonexistent/genes",
+  REGSHINY_GENE_DISEASE = "/nonexistent/gene_disease")
 scratch <- tempfile("interpretation-ui-"); dir.create(scratch)
 backend_file <- normalizePath("src/interpretation_backend.R")
 fixture_backend <- file.path(scratch, "backend.R")
@@ -55,6 +57,37 @@ writeLines(c(
   '  list(available = TRUE, found = TRUE, ld = ld, window = 500000L, keep_r2 = .2, positions_in_window = 3L, positions_examined = 3L, truncated = FALSE,',
   '    samples = 100L, release = vcf, ran_at = "now")',
   '}',
+  '# Synthetic cis-pQTL scan and GTEx copy: the variant at 161 is in both, any other position in neither.',
+  'interp_pqtl <- function(variant, sources = NULL) {',
+  '  hit <- variant$pos1 == 161L',
+  '  a <- interp_pqtl_empty()[1, ]; a$study <- "UKB-PPP"; a$protein <- "PLUS"; a$gene <- "PLUS"; a$gene_id <- "ENSG00000000001"; a$assay_id <- ""; a$rs_id <- "rs77"',
+  '  a$beta_alt <- -.6; a$se <- .02; a$p_value <- 1e-30; a$log10_p <- -30; a$significance <- "experiment-wide"; a$alt_frequency <- .1; a$n <- 30000L; a$info <- 1; a$gene_distance <- 0L',
+  '  list(available = TRUE, found = hit, associations = if (hit) a else a[0, ], studies = data.frame(study = "UKB-PPP", label = "synthetic scan", available = TRUE,',
+  '    variant_tested = hit, proteins_tested = as.integer(hit), min_p = if (hit) 1e-30 else NA_real_, stringsAsFactors = FALSE), cut = interp_pqtl_cut(), source = "synthetic")',
+  '}',
+  'interp_gtex_local <- function(variant, sources = NULL) {',
+  '  out <- c(list(available = TRUE, found = FALSE, release = "v99", gene_table = TRUE), interp_gtex_local_empty(), list(source = "synthetic GTEx"))',
+  '  if (variant$pos1 != 161L) return(out)',
+  '  out$pairs <- data.frame(gene = "PLUS", gene_id = "ENSG00000000001.1", tissue = c("Whole Blood", "Liver"), slope_alt = c(-.4, -.2), slope_se = .05, p_nominal = c(1e-12, 1e-5),',
+  '    p_threshold = 1e-4, alt_frequency = .1, tss_distance = 60L, lead_variant = c(TRUE, FALSE), stringsAsFactors = FALSE)',
+  '  out$genes <- data.frame(gene = "PLUS", gene_id = "ENSG00000000001.1", biotype = "protein_coding", tissues_significant = 2L, tissues_tested = 40L,',
+  '    direction = "ALT lowers expression in every significant tissue", strongest_tissue = "Whole Blood", strongest_slope = -.4, strongest_p = 1e-12, lead_variant_in = 1L,',
+  '    whole_blood = "significant", tissues = "Whole Blood, Liver", stringsAsFactors = FALSE)',
+  '  out$found <- TRUE; out',
+  '}',
+  '# Two molecular traits at 161 (the protein above and a synthetic eQTL), compared by a canned colocalisation.',
+  'interp_coloc_traits <- function(local, ...) {',
+  '  hit <- !is.null(local$pqtl) && isTRUE(local$pqtl$found)',
+  '  data.frame(kind = c("eQTL", "pQTL"), label = c("eQTL PLUS (Lung)", "pQTL PLUS (UKB-PPP)"), gene = "PLUS", source = c("Lung", "UKB-PPP"),',
+  '    phenotype = c("ENSG00000000001.1", "PLUS"), p_value = c(1e-12, 1e-30), stringsAsFactors = FALSE)[if (hit) 1:2 else 0L, ]',
+  '}',
+  'interp_colocalise <- function(variant, local, ...) {',
+  '  traits <- interp_coloc_traits(local); traits$variants <- 500L; traits$this_variant_posterior <- c(.7, .9)',
+  '  pairs <- interp_coloc_empty()[1, ]; pairs$trait_1 <- traits$label[[1L]]; pairs$trait_2 <- traits$label[[2L]]; pairs$variants <- 480L; pairs$shared_cause <- .93',
+  '  pairs$distinct_causes <- .05; pairs$only_trait_1 <- .01; pairs$only_trait_2 <- .01; pairs$neither <- 0; pairs$this_variant_share <- .81',
+  '  pairs$leading_variant <- "this variant"; pairs$reading <- "one shared causal variant"',
+  '  list(available = TRUE, traits = traits, pairs = pairs, window = 1000000L, priors = c(p1 = 1e-4), ran_at = "now")',
+  '}',
   'interp_spliceai <- function(variant, fasta, ...) {',
   '  if (!nzchar(fasta)) stop("SpliceAI needs the reference FASTA of the connected dataset.")',
   '  list(scores = interp_parse_spliceai(c("#h", paste0("chrT\\t", variant$pos1, "\\t.\\tA\\tG\\t.\\t.\\tSpliceAI=G|PLUS|0.00|0.00|0.05|0.93|3|4|9|-1")), variant),',
@@ -82,7 +115,9 @@ writeLines(c(
 
 # Static pieces.
 ui <- as.character(interpretation_ui("x"))
-for (id in c("x-public", "x-spliceai", "x-summary", "x-consequences", "x-context_plot", "x-gwas", "x-pathways", "x-local_sources"))
+for (id in c("x-public", "x-spliceai", "x-summary", "x-consequences", "x-context_plot", "x-gwas", "x-pathways", "x-local_sources", "x-pqtl_table",
+  "x-pqtl_status", "x-gtex_local_plot_box", "x-gtex_local_genes", "x-gtex_local_pairs", "x-splice_protein", "x-splice_protein_status", "x-coloc_table",
+  "x-coloc_status", "x-gene_disease", "x-gene_disease_status"))
   stopifnot(grepl(paste0('id="', id, '"'), ui, fixed = TRUE))
 stopifnot(grepl("sends only the variant", ui, fixed = TRUE), grepl("not a clinical classification", ui, fixed = TRUE))
 cards <- as.character(interpretation_summary_cards(data.frame(question = c("Splicing", "Tissue"), level = c("Strong", "Not assessed"),
@@ -90,6 +125,12 @@ cards <- as.character(interpretation_summary_cards(data.frame(question = c("Spli
 stopifnot(grepl("regshiny-level-strong", cards, fixed = TRUE), grepl("regshiny-level-unknown", cards, fixed = TRUE),
   lengths(regmatches(cards, gregexpr("<li>", cards, fixed = TRUE))) == 2L, grepl("Sources: S", cards, fixed = TRUE))
 stopifnot(interpretation_level_class("Moderate") == "regshiny-level-moderate", interpretation_level_class("Context") == "regshiny-level-context")
+# A long evidence list shows its first four lines; the rest open on request and nothing is dropped.
+long_card <- as.character(interpretation_summary_cards(data.frame(question = "Splicing", level = "Strong", finding = "f", evidence = paste(paste0("line", 1:6), collapse = " | "),
+  sources = "S", stringsAsFactors = FALSE)))
+stopifnot(lengths(regmatches(long_card, gregexpr("<li>", long_card, fixed = TRUE))) == 6L, grepl("<summary>2 more evidence lines</summary>", long_card, fixed = TRUE),
+  regexpr("line4", long_card, fixed = TRUE) < regexpr("<details", long_card, fixed = TRUE), regexpr("line5", long_card, fixed = TRUE) > regexpr("<details", long_card, fixed = TRUE),
+  !grepl("<details", cards, fixed = TRUE), grepl(".regshiny-evidence-more", css <- paste(readLines("www/frontend.css", warn = FALSE), collapse = "\n"), fixed = TRUE))
 css <- paste(readLines("www/frontend.css", warn = FALSE), collapse = "\n")
 for (cls in c("regshiny-level-strong", "regshiny-level-moderate", "regshiny-level-limited", "regshiny-level-none", "regshiny-level-context",
   "regshiny-level-unknown", "regshiny-evidence-row", "regshiny-cell-wrap", "regshiny-site-list")) stopifnot(grepl(paste0(".", cls), css, fixed = TRUE))
@@ -125,6 +166,12 @@ grDevices::png(png, width = 900, height = 700)
 bars <- interpretation_plot_expression(data.frame(gene = "G", tissue = c("Whole Blood", "Liver"), median_tpm = c(5, 50)), "G")
 stopifnot(identical(bars$tissue, c("Whole Blood", "Liver")), is.null(interpretation_plot_expression(data.frame(gene = character(), tissue = character(), median_tpm = numeric()), "G")))
 grDevices::dev.off()
+gtex_pairs <- data.frame(gene = "G", gene_id = "ENSG1.1", tissue = c("Whole Blood", "Liver", "Lung"), slope_alt = c(.3, -.2, .1), slope_se = .05,
+  lead_variant = c(TRUE, FALSE, NA), stringsAsFactors = FALSE)
+grDevices::png(png, width = 900, height = 700)
+drawn <- interpretation_plot_gtex(gtex_pairs, "ENSG1.1", "v99")
+stopifnot(identical(drawn$tissue, c("Liver", "Lung", "Whole Blood")), is.null(interpretation_plot_gtex(gtex_pairs, "ENSG2.1")), is.null(interpretation_plot_gtex(NULL, "")))
+grDevices::dev.off()
 
 await <- function(session, task, ready) {
   for (i in seq_len(200L)) {
@@ -154,19 +201,54 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   s <- isolate(summary_now())
   # Essential site plus the cohort's own bin-ratio association: Strong without any external source.
   stopifnot(nrow(s) == 7L, level(s, "Splicing") == "Strong", level(s, "Protein sequence") == "Strong", level(s, "Disease and traits") == "Not assessed",
-    level(s, "Pathway") == "Not assessed", grepl("bin ratio at donor:+:chrT:161", s$evidence[s$question == "Splicing"], fixed = TRUE))
+    level(s, "Pathway") == "Not assessed", grepl("bin ratio at donor:+:chrT:161", s$evidence[s$question == "Splicing"], fixed = TRUE),
+    # The local cis-pQTL scan and GTEx copy are read with the other local sources: a cis-pQTL of the gene whose splice site
+    # the variant destroys is Strong, and the gene joins the linked genes through both.
+    level(s, "Protein abundance (pQTL)") == "Strong", grepl("PLUS in UKB-PPP: -0.600 per ALT allele", s$evidence[s$question == "Protein abundance (pQTL)"], fixed = TRUE),
+    level(s, "Gene expression (eQTL)") == "Moderate", grepl("GTEx v99 eQTL (local): PLUS in 2 of 40 tested tissue(s)", s$evidence[s$question == "Gene expression (eQTL)"], fixed = TRUE),
+    level(s, "Tissue") == "Context", grepl("the gene's lead variant in 1 tissue(s)", s$evidence[s$question == "Tissue"], fixed = TRUE),
+    x$local$pathways$genes$relation == "overlaps; eQTL target (GTEx); cis-pQTL protein")
+  stopifnot(grepl("this variant was tested against 1 nearby protein(s); smallest p 1.0e-30", html_text(output$pqtl_status), fixed = TRUE),
+    grepl("significant cis-eQTL of 1 gene(s) in 2 tissue(s)", html_text(output$gtex_local_status), fixed = TRUE), isolate(gtex_gene()) == "ENSG00000000001.1",
+    is.null(output$gtex_gene_choice) || !nzchar(html_text(output$gtex_gene_choice)),
+    # Two tissues: the plot box is sized for the three-row minimum.
+    grepl("height:222px", html_text(output$gtex_local_plot_box), fixed = TRUE))
   header <- html_text(output$header)
   stopifnot(grepl("chrT:161:A:G", header, fixed = TRUE), grepl("GENCODE v48", header, fixed = TRUE), !grepl("does not match", header, fixed = TRUE))
+  # The splice outcome is computed on its own once the local sources are in: an essential donor with nothing
+  # to show what replaces it gives the assumed outcome (first exon: retention only), read with the ALT allele.
+  await(session, protein_task, function() !is.null(protein_now()))
+  outcome <- isolate(splice_protein_table())
+  stopifnot(nrow(outcome) == 1L, outcome$transcript_id == "TP", outcome$basis == "assumed outcome", outcome$event == "if the intron is retained (40 nt)",
+    outcome$support == "the variant changes the essential donor site", outcome$protein_length_ref == 39L, nzchar(outcome$coding_effect),
+    grepl("0 SpliceAI site(s) (SpliceAI not run)", html_text(output$splice_protein_status), fixed = TRUE),
+    grepl("1 outcome(s) on coding transcripts", html_text(output$splice_protein_status), fixed = TRUE),
+    grepl("through splicing (assumed outcome), TP: if the intron is retained (40 nt); 40 intronic nt kept", isolate(summary_now())$evidence[[1L]], fixed = TRUE),
+    level(isolate(summary_now()), "Protein sequence") == "Strong")
+  # The variant has two molecular traits: they are compared by themselves, and the shared cause is named under both.
+  await(session, coloc_task, function() !is.null(coloc_now()))
+  s <- isolate(summary_now())
+  stopifnot(nrow(isolate(coloc_now())$pairs) == 1L,
+    grepl("2 trait(s), with this variant's posterior probability within each trait's own signal: eQTL PLUS (Lung) 0.70; pQTL PLUS (UKB-PPP) 0.90", html_text(output$coloc_status), fixed = TRUE),
+    grepl("1 with one shared causal variant, 0 with different ones", html_text(output$coloc_status), fixed = TRUE),
+    grepl("colocalisation, eQTL PLUS (Lung) and pQTL PLUS (UKB-PPP): one shared causal variant (posterior 0.93; this variant's share of the shared signal 0.81)",
+      s$evidence[s$question == "Protein abundance (pQTL)"], fixed = TRUE),
+    grepl("colocalisation, eQTL PLUS (Lung)", s$evidence[s$question == "Gene expression (eQTL)"], fixed = TRUE),
+    # The reading box ends with what fine-mapping and colocalisation add; the assumed splice outcome is left out of it.
+    grepl("What fine-mapping, the splice prediction and colocalisation add", html_text(output$reading), fixed = TRUE),
+    grepl("likely cause of the plasma level of PLUS (posterior 0.90); the expression of PLUS (posterior 0.70).", html_text(output$reading), fixed = TRUE),
+    grepl("One causal variant is shared by the expression of PLUS and the plasma level of PLUS (posterior 0.93).", html_text(output$reading), fixed = TRUE),
+    !grepl("The splice change it is tied to", html_text(output$reading), fixed = TRUE), length(isolate(mechanism_now())) == 2L)
   stopifnot(grepl("regshiny-level-strong", html_text(output$summary), fixed = TRUE), !length(readLines(request_log)))
   # The reading names the best-supported effect and the steps that have not been run.
-  stopifnot(grepl("Best-supported molecular effect: a change to the protein sequence and splicing (Strong)", html_text(output$reading), fixed = TRUE),
+  stopifnot(grepl("Best-supported molecular effect: a change to the protein sequence and protein abundance and splicing (Strong)", html_text(output$reading), fixed = TRUE),
     grepl("Not run yet: SpliceAI", html_text(output$reading), fixed = TRUE))
   stopifnot(grepl("has not been run", html_text(output$spliceai_status), fixed = TRUE))
   # Nothing is sent until the user asks.
   session$setInputs(public = 1L); await(session, public_task, function() !is.null(public_now()))
   p <- isolate(public_now()); s <- isolate(summary_now()); sent <- paste(readLines(request_log), collapse = "\n")
   stopifnot(p$open_targets$found, nrow(p$open_targets$gwas) == 1L, level(s, "Disease and traits") == "Strong", level(s, "Pathway") == "Context",
-    level(s, "Tissue") == "Context", level(s, "Protein abundance (pQTL)") == "None found", grepl("GTEx sQTL in 1 tissue", s$evidence[s$question == "Splicing"], fixed = TRUE),
+    level(s, "Tissue") == "Context", level(s, "Protein abundance (pQTL)") == "Strong", grepl("GTEx sQTL in 1 tissue", s$evidence[s$question == "Splicing"], fixed = TRUE),
     grepl("T_161_A_G", sent, fixed = TRUE), grepl("ENSG00000000001", sent, fixed = TRUE),
     # Only the variant and gene identifiers leave: no site table, sample count or cohort label.
     !grepl("bin ratio|donor:|800|FHS", sent))
@@ -176,6 +258,10 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   stopifnot(nrow(sites) == 1L, sites$effect == "donor loss", sites$site_position == 161L, sites$annotated_site == "yes",
     grepl("bin ratio -0.400", sites$observed_in_cohort, fixed = TRUE), grepl("SYNTHETIC SpliceAI", html_text(output$spliceai_status), fixed = TRUE))
   stopifnot(grepl("donor loss 0.93 at exon base 160", isolate(summary_now())$evidence[3L], fixed = TRUE))
+  # The SpliceAI site joins the splice changes and the outcome is computed again with it.
+  await(session, protein_task, function() !is.null(protein_now()) && nrow(protein_now()$events) == 1L)
+  stopifnot(isolate(protein_now())$events$source == "SpliceAI", isolate(protein_now())$events$effect == "loss", nrow(isolate(splice_protein_table())) == 1L,
+    grepl("1 SpliceAI site(s);", html_text(output$splice_protein_status), fixed = TRUE))
   # The LD scan runs on request with the record's own VCF and feeds Disease and the pQTL question.
   stopifnot(is.null(isolate(ld_now())), grepl("Not computed for this variant yet", html_text(output$ld_status), fixed = TRUE))
   session$setInputs(ld = 1L); await(session, ld_task, function() !is.null(ld_now()))
@@ -188,7 +274,13 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   current(record(pos = 124L, ref = "G", alt = "A")); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 124L))
   stopifnot(is.null(isolate(public_now())), is.null(isolate(spliceai_now())), is.null(isolate(ld_now())))
   s <- isolate(summary_now())
-  stopifnot(isolate(local_now())$consequences$hgvs_p == "p.Ala2Thr", level(s, "Protein sequence") == "Moderate", level(s, "Disease and traits") == "Not assessed")
+  stopifnot(isolate(local_now())$consequences$hgvs_p == "p.Ala2Thr", level(s, "Protein sequence") == "Moderate", level(s, "Disease and traits") == "Not assessed",
+    # This position is in neither the scan nor GTEx.
+    level(s, "Protein abundance (pQTL)") == "Not assessed", level(s, "Gene expression (eQTL)") == "None found",
+    grepl("this variant is not in the scan", html_text(output$pqtl_status), fixed = TRUE), grepl("not a significant cis-eQTL of any gene", html_text(output$gtex_local_status), fixed = TRUE),
+    # With fewer than two traits nothing is compared.
+    is.null(isolate(coloc_now())), grepl("Not applicable: the variant is associated with 0 molecular trait(s)", html_text(output$coloc_status), fixed = TRUE),
+    !length(isolate(mechanism_now())), !grepl("What fine-mapping", html_text(output$reading), fixed = TRUE))
   # Going back shows the answers already fetched for that variant.
   current(record()); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 161L))
   stopifnot(!is.null(isolate(public_now())), !is.null(isolate(spliceai_now())), !is.null(isolate(ld_now())))
@@ -209,6 +301,28 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
     grepl("Transcript consequences unavailable", html_text(output$header), fixed = TRUE))
   current(record(build = "GRCh37")); session$flushReact(); await(session, local_task, function() is.null(local_now()$local) && identical(local_now()$variant$chrom, "chrT"))
   stopifnot(grepl("GRCh38 only", html_text(output$header), fixed = TRUE), nrow(isolate(summary_now())) == 7L)
+})
+# A junction of the open result that rises with ALT is re-spliced into the transcript: exon 2 left out, in frame.
+rising <- reactiveVal(data.frame(chrom = "chrT", intron_start1 = 161L, intron_end1 = 300L, status = "OK", beta = 3, p_permutation = 1e-4, n = 800L, stringsAsFactors = FALSE))
+shiny::testServer(interpretation_server, args = list(variant = reactive(record(pos = 175L, ref = "A", alt = "G")), annotation_resources = list(release = "48"),
+  annotation_file = annotation_source, reference = list(fasta = "/synthetic.fa"), splice_file = splice_source, interpretation_file = fixture_backend,
+  junctions = reactive(rising())), {
+  session$flushReact(); await(session, local_task, function() !is.null(local_now()))
+  await(session, protein_task, function() !is.null(protein_now()))
+  outcome <- isolate(splice_protein_table()); s <- isolate(summary_now())
+  stopifnot(nrow(outcome) == 1L, outcome$event == "exon skipping: 1 exon(s) left out (60 nt)", outcome$basis == "observed", outcome$coding_effect == "in-frame deletion",
+    outcome$protein_length_new == 19L, grepl("this cohort: junction used more with ALT (+3.00 reads per 100", outcome$support, fixed = TRUE),
+    level(s, "Protein sequence") == "Moderate", grepl("The variant itself does not change the protein sequence. Through the splice change (observed): residues ", s$finding[[1L]], fixed = TRUE),
+    grepl("(20 residues) are removed; the rest of the protein is unchanged (19 instead of 39 residues).", s$finding[[1L]], fixed = TRUE),
+    grepl("1 intron(s) used more and 0 used less with ALT (0 from TOPMed sQTL, 1 from the open result)", html_text(output$splice_protein_status), fixed = TRUE))
+})
+# Without a reference sequence the outcome is not computed and says why.
+shiny::testServer(interpretation_server, args = list(variant = reactive(record()), annotation_resources = list(release = "48"), annotation_file = annotation_source,
+  reference = simpleError("no FASTA"), splice_file = splice_source, interpretation_file = fixture_backend), {
+  session$flushReact(); await(session, local_task, function() !is.null(local_now()))
+  await(session, protein_task, function() !is.null(protein_now()))
+  stopifnot(inherits(isolate(protein_now()), "error"), is.null(isolate(splice_protein_table())),
+    grepl("Not computed: the reference sequence is unavailable.", html_text(output$splice_protein_status), fixed = TRUE), nrow(isolate(summary_now())) == 7L)
 })
 # No reference: consequences still classify by position, SpliceAI reports why it cannot run.
 shiny::testServer(interpretation_server, args = list(variant = reactive(record(pos = 124L, ref = "G", alt = "A")),

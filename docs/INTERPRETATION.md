@@ -2,11 +2,12 @@
 
 The **Variant interpretation** tab answers, for the variant that is open (or, before a comparison exists, the record selected in step 1): what does it do to transcripts and proteins, is it tied to splicing, expression, disease or a pathway, and in which tissues. It reads; it never reruns BAM counting, refits Model 1 or changes a saved result.
 
-It has three layers, in the order they appear.
+It has these layers, in the order they run.
 
 | Layer | When it runs | Network |
 |---|---|---|
 | Transcript and protein consequences, local sources | Automatically, a few seconds | None |
+| Protein consequence of the splice change; colocalisation of the variant's molecular signals | Automatically, once the local sources are in; a few seconds more | None |
 | Public databases (Open Targets, GTEx, MyVariant.info) | **Query public databases** button | Sends the variant and gene IDs only |
 | SpliceAI | **Run SpliceAI** button, about 1–2 minutes | None |
 | LD with GWAS Catalog variants | **LD with GWAS variants** button, about 30 seconds | None |
@@ -28,6 +29,29 @@ Computed in the app from the GENCODE release selected in the top bar and the dat
 
 Check: 432 transcript-level calls on 266 SNVs in APOE, HBB, KRAS, PCSK9, BRCA1 and CNIH4 were compared with the VEP consequences published by Open Targets; all term sets and all 82 amino-acid changes agreed (GENCODE v48 here, Ensembl's own release there, compared on shared transcript IDs).
 
+## Protein consequence of a splice change
+
+A variant that changes splicing changes the protein through the transcript it produces. For every splice change tied to the variant, the tab re-splices the coding transcripts the change fits, from the reference sequence, translates them from their annotated start codon and compares the product with the annotated protein. It runs by itself after the local sources are in, and again when SpliceAI or an open result adds a change.
+
+Where the changes come from:
+
+- an intron that is used more with the ALT allele: a significant TOPMed sQTL intron with a positive slope, or a junction of the open result whose Model 1 slope is positive at the table's Bonferroni cut-off (*observed*);
+- a splice site SpliceAI predicts to appear or to weaken (*predicted* at 0.5 or more, *weakly predicted* from 0.2). A predicted new site that is an end of an intron seen to rise with ALT supports that intron, because the RNA shows what it splices to; otherwise it is paired with the annotated site it would splice to (the next annotated acceptor downstream of a new donor, the nearest annotated donor upstream of a new acceptor);
+- an essential splice site (intron positions 1, 2 and the last two) that the variant itself changes (*predicted*).
+
+How a change is placed on a transcript: the new intron must share at least one end with an intron of that transcript and must not be one of its introns already. It is spliced out in place of the annotated introns it overlaps, so exonic bases inside it are removed and intronic bases outside it are kept. Sharing both ends is exon skipping; sharing one is an alternative donor or acceptor, which may also leave exons out. A change that would keep more than 300 nt of intron is not placed on that transcript. When a site is lost and no change shows what replaces it, the two usual outcomes are listed as *assumed outcome*: the neighbouring exon skipped, and the intron retained. When the variant's ALT allele ends up in the new mRNA it is read as ALT. When the annotated intron that the new one stands in for is itself used less with ALT (a negative TOPMed sQTL slope or Model 1 slope), `support` says so: the two together show a switch from one intron to the other, not only an addition.
+
+What the table says, per transcript and change:
+
+- `mrna_change`: exonic bases removed and intronic bases kept.
+- `coding_effect` and `protein_change`: unchanged coding sequence; in-frame deletion, insertion or substitution (the annotated stop codon is still read in frame) with the residues concerned; premature stop or frameshift with the last unchanged residue and the number of new residues; no stop codon; start codon removed.
+- `nmd`: nonsense-mediated decay is *predicted* when the new stop codon ends 50 nt or more before the last exon junction of the new mRNA, the usual rule; otherwise a shortened or changed protein may be made.
+- `annotated_in`: transcripts of the selected GENCODE release that already contain the intron, with their type. An intron that ALT favours and that belongs to a transcript without a coding sequence points the same way as a predicted premature stop.
+
+Check: for 300 MANE Select transcripts drawn at random from ten chromosomes (162 on the plus strand, 138 on the minus strand), re-splicing the annotated exons and translating gave the annotated coding sequence in all 300, with the protein length equal to the CDS length divided by three, less the stop codon. Skipping each of 832 internal coding exons in turn gave an in-frame change for all 329 whose length is a multiple of three (296 plain deletions of exactly a third of the exon's length in residues, 31 where the codon across the new junction also changes, 2 where that codon is a stop) and a frameshift, premature stop or missing stop for all 503 others.
+
+Limits. The prediction says what the changed splice would encode, not how much of the gene's RNA is spliced that way: a strong sQTL can still move a small share of transcripts. Translation always starts at the annotated start codon; an alternative start, a second splice change on the same molecule and a new exon made of two new sites are not modelled. The 50 nt rule is a rule of thumb, and decay is rarely complete. Transcripts longer than 2.5 Mb are skipped.
+
 ## Local sources
 
 Every path can be overridden in `config/runtime.Renviron`; a source that is missing or unreadable is listed as unavailable in the **Sources** sub-tab and skipped.
@@ -40,8 +64,11 @@ Every path can be overridden in `config/runtime.Renviron`; a source that is miss
 | Cross-context sharing model | `REGSHINY_TISSUE_MODEL_EQTL`, `REGSHINY_TISSUE_MODEL_SQTL` | Effect and its certainty in each TOPMed context, from a model trained on those files | read |
 | FHS whole-blood isoform-ratio sQTL | `REGSHINY_FHS_SQTL` (`discovery;replication`) | Rows with p < 1e-4, N about 2,622 and 1,093 | `look` |
 | FHS whole-blood gene eQTL | `REGSHINY_FHS_EQTL` | Rows with p < 1e-7, N about 2,622 | `look` |
+| GTEx v11 cis-eQTL | `REGSHINY_GTEX_EQTL`, `REGSHINY_GTEX_EGENES` | Significant variant-gene pairs in 50 tissues, and the genes tested per tissue | tabix, `look` |
+| cis-pQTL summary statistics | `REGSHINY_PQTL_UKBPPP`, `REGSHINY_PQTL_FHS`, `REGSHINY_PQTL_PROTEIN_MAP` | Plasma level of a protein against the variants near its gene: UKB-PPP (2,910 proteins, about 34,000 participants) and the FHS scan (2,543 proteins); assay-to-gene table | tabix |
 | GWAS Catalog associations (e114, 2025-07-21) | `REGSHINY_GWAS_CATALOG` | Published trait associations reported at the variant's position | tabix |
 | ClinVar VCF (2025-07-21) | `REGSHINY_CLINVAR_VCF` | Classification, review status and conditions of the exact allele | tabix |
+| ClinVar conditions per gene | `REGSHINY_GENE_DISEASE` | Pathogenic and likely pathogenic ClinVar variants of each linked gene and their conditions | `look` |
 | Reactome gene-to-pathway mapping | `REGSHINY_REACTOME` | Pathways of the genes linked to the variant | `look` |
 | MSigDB gene sets (2026.1) | `REGSHINY_MSIGDB` (directory) | Hallmark, canonical pathways and GO biological process of those genes | read |
 | SpliceAI 1.3.1 | `REGSHINY_SPLICEAI` | Predicted splice-site gain and loss | SCC module wrapper |
@@ -67,6 +94,14 @@ Rscript scripts/train_tissue_model.R --type eqtl --topmed DIR --out tissue_shari
 Rscript scripts/train_tissue_model.R --type sqtl --topmed DIR --out tissue_sharing_sqtl.json --work WORKDIR
 ```
 
+**Colocalisation.** A variant is often associated with several molecular traits at once: the splicing of one gene, the expression of others, a protein level. Whether those are one signal or several decides how to read them. When the local sources give at least two such traits (per gene the strongest significant sQTL intron and the eQTL, each in the TOPMed context where it is strongest, up to four; and up to two proteins from the cis-pQTL scans), every pair is compared over the variants within 1 Mb of this one that both were tested on, using their full summary statistics and the method of Giambartolomei et al. (2014, *PLoS Genet*; the calculation of `coloc.abf`). It runs by itself after the local sources are in.
+
+- `shared_cause` is the posterior probability that one variant causes both signals, `distinct_causes` that each has its own causal variant; `only_trait_1`, `only_trait_2` and `neither` complete the five hypotheses. A pair is read as shared or distinct when that probability is at least 0.8.
+- `this_variant_share` is this variant's part of the shared signal and `leading_variant` the variant with the largest part.
+- For each trait on its own, the status line gives this variant's posterior probability within that trait's signal (the same single-signal calculation as for the pQTL scans), which says whether the variant leads that trait.
+
+How to read it: a shared cause ties two traits together, for example an eQTL and the level of the same gene's protein. Distinct causes between a trait this variant leads and an eQTL it does not lead say that the eQTL is probably reached through linkage disequilibrium with another causal variant; the Gene expression line then says so. Limits: at most one causal variant per trait is assumed in the region, no LD reference is used, and the priors are 1e-4 for each trait and 1e-5 for a shared variant. Several independent signals in one trait, or cohorts with different LD (TOPMed against UKB-PPP), push the result towards distinct causes, so a shared cause is the more robust of the two readings. Two introns of one gene are not compared, because intron ratios within a gene move against each other by construction. At least 50 variants must be common to both traits.
+
 **FHS whole-blood QTL.** Isoform-ratio sQTL (transcript / gene) and gene eQTL summary statistics, effects per ALT allele. A transcript "replicates" when it appears in both the discovery and the replication set with the same sign. The gene eQTL file must be a position-sorted copy; make it once with
 
 ```bash
@@ -74,6 +109,28 @@ scripts/build_qtl_index.sh SOURCE.csv DEST.csv
 ```
 
 which only reads the source.
+
+**GTEx cis-eQTL across tissues.** The significant variant-gene pairs of all 50 GTEx v11 tissues, read from one position-indexed copy. For each gene the variant is an eQTL of, the tab gives the number of tissues where the pair is significant, the number of tissues in which GTEx tested the gene at all (`tissues_tested`, from the per-tissue gene tables), the direction of the ALT allele, the strongest tissue, the status in whole blood (significant; tested, not significant; not tested), and the number of tissues where this variant is the gene's most significant variant (`lead_variant_in`). The plot shows the slope and its 95% interval in every significant tissue. Only significant pairs are stored, so there is no slope for a tissue where the pair was tested and missed the threshold; GTEx tissues differ several-fold in donors, so a count of tissues is descriptive and a small tissue can miss an effect. Being the lead variant is a hint, not fine-mapping. The copies are made once from the release's `*.eQTLs.signif_pairs.parquet` and `*.eGenes.txt.gz` files (needs `pyarrow`):
+
+```bash
+python3 scripts/build_gtex_index.py --source GTEx_Analysis_v11_eQTL --pairs gtex_v11_eqtl_signif_pairs.b38.tsv.gz --genes gtex_v11_egenes.tsv
+```
+
+Name the pairs file `gtex_vNN_...` so the release shows in the tab.
+
+**cis-pQTL scans.** Two scans of plasma protein levels against the variants near each protein's gene, kept with every p-value (not only the significant rows), so a variant that was tested and is not associated is told apart from one that was not tested: UKB-PPP (Olink Explore 3072, European discovery set, about 34,000 participants; Sun et al. 2023, *Nature*) and the Framingham Heart Study scan on Olink Explore HT (a project file; the model it was fitted with is not recorded with the file, so read it as supporting evidence). The table lists this variant against every nearby protein: effect per ALT allele (`beta_alt`, turned to ALT when the scan's effect allele is REF), standard error, p-value, sample size, the distance to the protein's gene and a `significance` label: experiment-wide (p ≤ 1.7e-11, UKB-PPP's published threshold of 5e-8 divided by 2,923 proteins), genome-wide (p ≤ 5e-8) or suggestive (p ≤ 1e-5).
+
+For the proteins the variant is associated with at p ≤ 5e-8 (the four strongest per scan) the protein's whole cis window is read and fine-mapped under the assumption of one causal variant: each variant gets Wakefield's approximate Bayes factor from its effect and standard error (prior standard deviation 0.15 on the scan's standardised scale, the calculation `coloc` uses for one trait), and the factors are normalised over the window. `posterior_probability` is this variant's share, `credible_set_size` the number of variants needed to reach 95%, and `lead_variant` the variant with the largest share when it is not this one. A posterior near 1 says that, if the window has one causal variant, the data point to this one; a posterior near 0 next to a small p-value says the variant is a neighbour in linkage disequilibrium with a stronger one. The assumption fails where a window holds several independent signals, and no LD reference is used, so treat a posterior between about 0.1 and 0.9 as undecided. A variant that changes the protein's sequence can also change how the assay binds it, which shows as a cis-pQTL without a change in abundance.
+
+The copies are made once with
+
+```bash
+scripts/build_pqtl_index.sh regenie UKB_CIS_DIR ukbppp_eur_cis_pqtl.b38.tsv.gz      # one <protein>.csv.gz per protein
+scripts/build_pqtl_index.sh table FHS_CIS_PQTL.txt.gz fhs_olink_cis_pqtl.b38.tsv.gz  # one tab-separated table
+python3 scripts/build_protein_map.py --ukbppp olink_protein_map_3k_v1.tsv --olink-ht olink-exht-annot.csv --out olink_protein_map.b38.tsv
+```
+
+The assay table also says where each protein is encoded. For a GWAS Catalog trait that is the blood level of one protein, the tab uses it to label the association cis (the protein's gene lies within 1 Mb of the variant) or trans (`protein_locus` in the catalog and LD tables); a protein the table does not hold stays undetermined.
 
 **GWAS Catalog.** Every association the catalog reports at the variant's position, strongest first: trait, mapped ontology trait, p-value, effect, risk allele, study and PubMed ID. The catalog keys an association by rsID and position, not by allele; `risk_allele_is` says whether the reported risk allele is this variant's ALT, its REF, another allele or not reported. A p-value too small for a double is stored as 0 and shown as `< 1e-300`. The position-indexed copy is made once from the catalog's "all associations v1.0.2" file with
 
@@ -87,7 +144,13 @@ Rows without a mapped position are left out and a row that reports several varia
 
 **ClinVar.** The record of the exact REF/ALT allele from a tabix-indexed ClinVar VCF: germline classification, review status, conditions, gene and molecular consequence. Records of other alleles at the same position are counted and not shown. When the VCF is unreadable the older significance stored in the VEP cache (2023-10) is used; after a public query the per-condition records from MyVariant.info are shown instead.
 
-**Linked genes and pathways.** The genes a variant can act through are the ones it overlaps and the ones whose splicing or expression is significantly associated with it in a TOPMed context (`sQTL target`, `eQTL target`). For each, the tab lists its Reactome pathways (all levels; `top_level` marks Reactome's top-level pathways) and its MSigDB gene sets (Hallmark; canonical pathways from KEGG, WikiPathways, PID and BioCarta; GO biological process; `genes_in_set` is the set's size, smaller being more specific). Reactome is matched by Ensembl gene ID, MSigDB by gene symbol. The Reactome copy is made once with
+**Disease genes among the linked genes.** For each linked gene (below), the number of ClinVar variants classified pathogenic or likely pathogenic, conflicting classifications left out, and the conditions they are reported for, most variants first. It answers "what happens when this gene is damaged", which is the disease context of a variant that acts through the gene. It is gene-level context: it is listed under Disease and traits as such and never changes the level. The table is made once from the ClinVar VCF with
+
+```bash
+python3 scripts/build_gene_disease_index.py --clinvar clinvar.vcf.gz --out clinvar_gene_disease_YYYY-MM-DD.tsv
+```
+
+**Linked genes and pathways.** The genes a variant can act through are the ones it overlaps, the ones whose splicing or expression is significantly associated with it in a TOPMed context or a GTEx tissue (`sQTL target`, `eQTL target`), and the ones whose plasma protein level is associated with it at p ≤ 5e-8 in a cis-pQTL scan (`cis-pQTL protein`). For each, the tab lists its Reactome pathways (all levels; `top_level` marks Reactome's top-level pathways) and its MSigDB gene sets (Hallmark; canonical pathways from KEGG, WikiPathways, PID and BioCarta; GO biological process; `genes_in_set` is the set's size, smaller being more specific). Reactome is matched by Ensembl gene ID, MSigDB by gene symbol. The Reactome copy is made once with
 
 ```bash
 scripts/build_pathway_index.sh Ensembl2Reactome_All_Levels.txt DEST.tsv
@@ -110,7 +173,7 @@ Each source fails on its own: the others are still shown and the failure is name
 
 ## Evidence summary
 
-Seven fixed questions, each with a level, a one-sentence finding, the evidence lines behind it and the sources. Above them a short reading restates the result: the best-supported molecular effect with its level, what else is supported, the disease or trait link, and which on-request steps (SpliceAI, the LD scan, the public query) have not been run for this variant. The reading adds no evidence of its own.
+Seven fixed questions, each with a level, a one-sentence finding, the evidence lines behind it and the sources. A card shows its first four evidence lines; the others open on request. Above them a short reading restates the result: the best-supported molecular effect with its level, what else is supported, the disease or trait link, and which on-request steps (SpliceAI, the LD scan, the public query) have not been run for this variant. The reading adds no evidence of its own. Below it, up to four sentences say what fine-mapping, the splice prediction and colocalisation add: the signals this variant itself is the likely cause of (a posterior probability of at least 0.5 within the signal: TOPMed SuSiE, the single-signal posterior of a pQTL window, or the variant's posterior within a trait of the colocalisation), what the splice change it is tied to would encode (assumed outcomes are left out), which signals share one causal variant, and which signals this variant does not lead have another cause than one it leads. When none of its associations reaches 0.5 the box says that a neighbour in linkage disequilibrium may carry them. These sentences are assembled from numbers that are in the tables; they are not a further analysis.
 
 | Level | Meaning |
 |---|---|
@@ -123,16 +186,27 @@ Seven fixed questions, each with a level, a one-sentence finding, the evidence l
 
 Rules:
 
-- **Protein sequence.** Strong: a HIGH-impact term (stop gained, frameshift, stop lost, start lost, essential splice site) on a MANE Select or Ensembl canonical transcript. Moderate: the same on other transcripts only, or a missense or in-frame change. Limited: a missense change that AlphaMissense calls likely benign with CADD below 20. None found: no change to the protein sequence.
-- **Protein abundance (pQTL).** Strong: a cis pQTL credible set with posterior probability ≥ 0.9 (public query). Moderate: any pQTL credible set with posterior probability ≥ 0.1; or, from local sources, a GWAS Catalog association at p ≤ 5e-8 with the blood level of a protein (mapped trait "level of … in blood") reported at this variant or at a variant in LD with it at r² ≥ 0.8 in this cohort. Such a local association is not fine-mapped and does not say whether the protein is encoded nearby. Limited: in a credible set with less. Without either, Not assessed.
+- **Protein sequence.** Strong: a HIGH-impact term (stop gained, frameshift, stop lost, start lost, essential splice site) on a MANE Select or Ensembl canonical transcript. Moderate: the same on other transcripts only, or a missense or in-frame change. Limited: a missense change that AlphaMissense calls likely benign with CADD below 20. None found: no change to the protein sequence. The predicted consequence of a splice change (above) can raise this level, never lower it, when it changes the protein: to Strong when the change is both observed and predicted and falls on a MANE Select or Ensembl canonical transcript; to Moderate when it is observed or predicted but not both, or on other transcripts only; to Limited when it is weakly predicted or an assumed outcome. The finding then says what the variant itself does and what the splice change would encode.
+- **Protein abundance (pQTL).** From the local cis-pQTL scans: Strong when the variant is associated with a protein at p ≤ 5e-8 and single-signal fine-mapping gives it a posterior probability ≥ 0.5, or when it is associated at p ≤ 1.7e-11 with the protein of a gene whose product it is itself predicted to change (a coding or essential splice-site consequence in that gene, or SpliceAI ≥ 0.5 for it). Moderate: associated at p ≤ 5e-8 without either. Limited: 5e-8 < p ≤ 1e-5 only. None found: the variant was tested against the nearby proteins and none reaches 1e-5. A variant that is in neither scan (no measured protein is encoded within the scans' window, or the variant was not tested) is Not assessed. From the GWAS Catalog: Moderate for an association at p ≤ 5e-8 with the blood level of a protein (mapped trait "level of … in blood") reported at this variant or at a variant in LD with it at r² ≥ 0.8 in this cohort; the finding says how many of those proteins are encoded near the variant (cis) or elsewhere (trans). From the public query: Strong for a cis pQTL credible set with posterior probability ≥ 0.9, Moderate for any credible set with posterior probability ≥ 0.1, Limited below that. The highest of these is shown.
 - **Splicing.** *Associated* means any of: a Model 1 row of the open result (bin ratio or junction) with permutation p below 0.05 divided by the number of fitted rows of its table, sites flagged `NO_DEPTH_DROP_AT_SITE` set aside; a significant TOPMed sQTL; an FHS isoform-ratio sQTL that replicates in cis; a GTEx sQTL. *Pinned to the variant* means any of: an essential splice-site term; SpliceAI ≥ 0.5; a TOPMed sQTL SuSiE probability ≥ 0.5; an Open Targets splicing or transcript-usage credible set with probability ≥ 0.5. Strong: associated and pinned. Moderate: associated, or predicted (essential site or SpliceAI ≥ 0.5), not both. Limited: a splice-region term or SpliceAI 0.2–0.5 only.
-- **Gene expression (eQTL).** Strong: a TOPMed or Open Targets eQTL credible set with posterior probability ≥ 0.5. Moderate: a significant eQTL in TOPMed, FHS, GTEx or Open Targets without that.
-- **Disease and traits.** Strong: ClinVar pathogenic or likely pathogenic with no benign assertion, or a GWAS credible set with posterior probability ≥ 0.5. Moderate: a GWAS Catalog association at p ≤ 5e-8 reported at the variant's position, a GWAS posterior probability of 0.1–0.5, ClinVar risk factor, drug response, association or conflicting assertions, or a pharmacogenomic annotation. Limited: other ClinVar records, GWAS Catalog associations above 5e-8 only, or GWAS credible sets with posterior probability below 0.1. After an LD scan, r² ≥ 0.8 with another reported variant at p ≤ 5e-8 also counts as Moderate, and r² of 0.2–0.8 as Limited. A catalog association shows that the variant or a neighbour in linkage disequilibrium is associated, so on its own it stops at Moderate; fine-mapping needs the public query, and the card says when it was not run. None found needs both the local GWAS Catalog and a ClinVar source to have been read; otherwise an empty answer reads Not assessed.
+- **Colocalisation** adds evidence lines under Protein abundance, Splicing and Gene expression for the pairs it decides, and does not change a level. One sentence is added to the Gene expression finding when an eQTL that this variant does not lead (posterior below 0.1 within that eQTL) has a different causal variant from a trait this variant does lead (posterior of at least 0.5).
+- **Gene expression (eQTL).** Strong: a TOPMed or Open Targets eQTL credible set with posterior probability ≥ 0.5. Moderate: a significant eQTL in TOPMed, FHS, GTEx (the local copy or the public query) or Open Targets without that. GTEx's significant-pair files carry no fine-mapping, so a GTEx eQTL alone stops at Moderate.
+- **Disease and traits.** Strong: ClinVar pathogenic or likely pathogenic with no benign assertion, or a GWAS credible set with posterior probability ≥ 0.5. Moderate: a GWAS Catalog association at p ≤ 5e-8 reported at the variant's position, a GWAS posterior probability of 0.1–0.5, ClinVar risk factor, drug response, association or conflicting assertions, or a pharmacogenomic annotation. Limited: other ClinVar records, GWAS Catalog associations above 5e-8 only, or GWAS credible sets with posterior probability below 0.1. After an LD scan, r² ≥ 0.8 with another reported variant at p ≤ 5e-8 also counts as Moderate, and r² of 0.2–0.8 as Limited. A catalog association shows that the variant or a neighbour in linkage disequilibrium is associated, so on its own it stops at Moderate; fine-mapping needs the public query, and the card says when it was not run. None found needs both the local GWAS Catalog and a ClinVar source to have been read; otherwise an empty answer reads Not assessed. A last evidence line names the linked genes in which ClinVar has pathogenic variants, with the leading condition; it is marked as gene-level context and does not enter the level.
 - **Pathway** is a Context line: for each linked gene, its Reactome top-level pathways, or its most specific gene sets when Reactome has none. It works without the public query; after one, Open Targets' counts for the overlapped genes are added.
-- **Tissue** is a Context line: where the QTL effect is seen (each context's own significance, then the cross-context model's reading after "model:") and where the gene is expressed. This cohort's RNA is whole blood.
+- **Tissue** is a Context line: where the QTL effect is seen (each TOPMed context's own significance, then the cross-context model's reading after "model:"; then, per gene, the GTEx tissues where the variant is an eQTL out of those that tested the gene, the direction, and the status in whole blood) and where the gene is expressed. This cohort's RNA is whole blood.
 
 What the levels are not: a clinical classification, a causal proof, or a replacement for reading the tables. A QTL association can be carried by a neighbour in linkage disequilibrium, which is why association alone stops at Moderate. Fine-mapping probabilities depend on the reference panel and the study. Model 1 is unadjusted for covariates and relatedness.
 
+## Many variants at once
+
+`scripts/interpret_variants.R` runs the local part of the tab for a list of variants outside the app and writes one row per variant: the level of the five graded questions, the linked genes, the best-supported splice outcome, the numbers of colocalisation pairs with a shared and with distinct causes, the mechanism sentences and each finding.
+
+```bash
+Rscript scripts/interpret_variants.R --variants variants.txt --annotation-db annotation.sqlite --reference genome.fa --out interpretation.csv [--json-dir DIR]
+```
+
+`variants.txt` holds one `chrom:pos:REF:ALT` per line (GRCh38). `--annotation-db` is a GENCODE index the app has prepared (`.reg_shiny/<user>/resources/gencode<release>-*/annotation.sqlite`) and `--reference` its indexed FASTA. It reads the annotation, the reference and the local reference copies only: no BAM, no genotype, no saved result, no network, so SpliceAI, the LD scan, the public query and the open result's own junctions are not part of it. Rows are appended as they are computed and variants already in the output are skipped, so an interrupted run can be continued. A variant takes about 10 to 30 seconds; on SCC run a long list as a batch job, because login nodes stop a process after 15 minutes of CPU time.
+
 ## Exports
 
-**Interpretation JSON** holds everything shown (consequences, every local and public table, SpliceAI, the LD table, the cohort RNA evidence used, the summary). **Evidence summary CSV** and **Consequences CSV** hold those two tables. Public and local reference content keeps its own terms of use; cite the sources.
+**Interpretation JSON** holds everything shown (consequences, the predicted splice outcomes with the splice changes they were computed from, the colocalisation of the variant's molecular traits, every local and public table, SpliceAI, the LD table, the cohort RNA evidence used, the summary). **Evidence summary CSV** and **Consequences CSV** hold those two tables. Public and local reference content keeps its own terms of use; cite the sources.

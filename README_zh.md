@@ -58,7 +58,7 @@ Reg_Shiny 用 DNA VCF 的 genotype 分组，对照匹配 RNA-seq BAM 的 depth�
 
 **Variant interpretation（变异解读）** 标签页回答“这个变异做了什么、已知什么”：
 
-- **本地自动完成（无需联网，几秒）**：按所选 GENCODE 版本和参考序列逐转录本计算后果（错义、同义、终止、剪接位点等，含 c./p. 记号）；CADD v1.7；SCC 上 TOPMed 六种组织/细胞（肺、单核细胞、鼻上皮、PBMC、T 细胞、全血）的 cis-eQTL / cis-sQTL，并比较效应是各组织共享还是特异（另有一个用这些 TOPMed 数据训练的跨组织模型，给出每个组织中效应存在的把握程度，并对未检测的组织给出预测）；FHS 全血 sQTL / eQTL；本地 GWAS Catalog（该位点已发表的性状关联）和 ClinVar（该等位基因的临床分类）；变异所在基因及其 sQTL/eQTL 靶基因的 Reactome 通路和 MSigDB 基因集。
+- **本地自动完成（无需联网，几秒）**：按所选 GENCODE 版本和参考序列逐转录本计算后果（错义、同义、终止、剪接位点等，含 c./p. 记号）；对与该变异相关的剪接改变（TOPMed sQTL 或当前结果中随 ALT 增多的内含子、SpliceAI 预测的位点、变异直接破坏的必需剪接位点），重新拼接编码转录本并翻译，给出预测的蛋白后果（框内缺失/插入、移码、提前终止、是否预计触发无义介导的 mRNA 降解）；CADD v1.7；SCC 上 TOPMed 六种组织/细胞（肺、单核细胞、鼻上皮、PBMC、T 细胞、全血）的 cis-eQTL / cis-sQTL，并比较效应是各组织共享还是特异（另有一个用这些 TOPMed 数据训练的跨组织模型，给出每个组织中效应存在的把握程度，并对未检测的组织给出预测）；FHS 全血 sQTL / eQTL；GTEx v11 五十个组织的 cis-eQTL（该变异在哪些组织是哪些基因的 eQTL、方向、全血中是否显著）；血浆蛋白 cis-pQTL（UKB-PPP 和 FHS 两套汇总统计，给出该变异对邻近每个蛋白的效应，并对显著的蛋白做单信号精细定位，得到该变异是因果变异的后验概率）；当该变异同时关联多个分子性状（剪接、表达、蛋白）时，自动做共定位，判断它们是同一个因果变异还是不同的因果变异；本地 GWAS Catalog（该位点已发表的性状关联）和 ClinVar（该等位基因的临床分类）；变异所在基因、其 sQTL/eQTL 靶基因及 cis-pQTL 蛋白基因的 Reactome 通路和 MSigDB 基因集。
 - **按需运行**：点 **Run SpliceAI** 在本地预测剪接位点的获得/丢失（约 1–2 分钟）；点 **LD with GWAS variants** 用所连接数据集自己的 WGS 基因型计算该变异与 ±500 kb 内 GWAS Catalog 变异的连锁不平衡 r²（约 30 秒，只保留相关系数和样本数，不显示基因型或样本 ID）；点 **Query public databases** 查询 Open Targets、GTEx、MyVariant.info，得到 GWAS 精细定位可信集、pQTL 和各组织表达。公共查询只发送变异的染色体、位置、等位基因和基因 ID，不发送任何样本、基因型或队列信息。
 - **Evidence summary**：按固定规则对蛋白序列、蛋白丰度、剪接、表达、疾病、通路、组织七个问题给出证据等级（Strong / Moderate / Limited / None found / Not assessed）。等级用于排序和后续验证，不是临床分级；只有关联而没有预测或精细定位时最高为 Moderate。
 
