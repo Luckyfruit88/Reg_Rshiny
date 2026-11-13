@@ -87,7 +87,7 @@ interpretation_ui <- function(id) {
         shiny::h5("Disease genes among the linked genes (ClinVar, gene level)"),
         shiny::uiOutput(ns("gene_disease_status")),
         interpretation_table_output(ns("gene_disease")),
-        shiny::p("For each gene the variant overlaps or is a QTL for (see Protein, genes and pathways), the number of ClinVar variants classified pathogenic or likely pathogenic and the conditions they are reported for, most variants first. This is context about the gene: it shows which diseases a damaging change in that gene can cause and how they are inherited is not stated. It is not evidence that this variant causes them, and it does not change the level above."),
+        shiny::p("For each gene the variant overlaps or is a QTL for (see Protein, genes and pathways), the number of ClinVar variants classified pathogenic or likely pathogenic and the conditions they are reported for, most variants first. This is context about the gene: it shows which diseases a damaging change in that gene can cause; how they are inherited is not stated. It is not evidence that this variant causes them, and it does not change the level above."),
         shiny::h5("Linkage disequilibrium with nearby GWAS Catalog variants"),
         shiny::uiOutput(ns("ld_status"), role = "status", `aria-live` = "polite"),
         interpretation_table_output(ns("ld_table")),
@@ -628,7 +628,10 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
         " Mb; ", sum(co$pairs$reading == "one shared causal variant"), " with one shared causal variant, ", sum(co$pairs$reading == "two different causal variants"),
         " with different ones. Computed at ", co$ran_at, "."))
     })
-    output$coloc_table <- show_table(function() { co <- coloc_now(); if (is.null(co) || inherits(co, "error")) NULL else co$pairs },
+    # The reading before the five probabilities it comes from.
+    coloc_columns <- c("trait_1", "trait_2", "reading", "shared_cause", "distinct_causes", "this_variant_share", "leading_variant", "variants",
+      "only_trait_1", "only_trait_2", "neither")
+    output$coloc_table <- show_table(function() { co <- coloc_now(); if (is.null(co) || inherits(co, "error")) NULL else co$pairs[, intersect(coloc_columns, names(co$pairs)), drop = FALSE] },
       empty = "No pair of traits to compare, or too few variants tested on both.")
     tissue_now <- shiny::reactive({ t <- local_part("tissue"); if (is.null(t) || !isTRUE(t$available)) NULL else t })
     output$context_plot <- shiny::renderPlot(interpretation_plot_contexts(topmed_now()$pairs, heterogeneity_now(),
