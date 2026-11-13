@@ -3293,7 +3293,7 @@ interp_report_row <- function(report) {
   data.frame(variant = report$variant$id, rs_id = known, gene = if (is.null(top)) "" else top$gene_name, most_severe = if (is.null(top)) "" else top$most_severe,
     protein_sequence = level("Protein sequence"), protein_abundance = level("Protein abundance (pQTL)"), splicing = level("Splicing"),
     gene_expression = level("Gene expression (eQTL)"), disease_and_traits = level("Disease and traits"),
-    linked_genes = paste(ifelse(nzchar(report$linked_genes$gene), report$linked_genes$gene, report$linked_genes$gene_id), collapse = "; "),
+    linked_genes = paste(unique(ifelse(nzchar(report$linked_genes$gene), report$linked_genes$gene, report$linked_genes$gene_id)), collapse = "; "),
     splice_outcome = if (is.null(sp)) "" else paste0(sp$gene, " ", sp$transcript_id, ": ", sp$coding_effect, " (", sp$basis, ")", if (nzchar(sp$nmd)) paste0("; NMD ", sub(":.*$", "", sp$nmd)) else ""),
     shared_cause_pairs = sum(co$reading == "one shared causal variant"), distinct_cause_pairs = sum(co$reading == "two different causal variants"),
     mechanism = paste(report$mechanism, collapse = " "), protein_sequence_finding = finding("Protein sequence"), protein_abundance_finding = finding("Protein abundance (pQTL)"),
