@@ -2008,6 +2008,144 @@ interp_gtex_local <- function(variant, sources = interp_local_sources()) {
   out
 }
 
+# ---- Do the molecular signals at the variant share a cause? ------------------
+# Colocalisation of two association signals from summary statistics alone
+# (Giambartolomei et al. 2014; the calculation of coloc.abf). Each variant gets
+# an approximate Bayes factor for each trait; the five hypotheses are
+#   H0 neither trait has a causal variant in the region, H1 only the first,
+#   H2 only the second, H3 both, with different causal variants,
+#   H4 both, with the same causal variant.
+# It assumes at most one causal variant per trait in the region.
+interp_coloc_abf <- function(beta1, se1, beta2, se2, prior_sd = 0.15, p1 = 1e-4, p2 = 1e-4, p12 = 1e-5) {
+  if (length(beta1) < 2L) return(NULL)
+  log_bf <- function(b, s) { v <- s^2; w <- prior_sd^2; 0.5 * (log(v / (v + w)) + (b / s)^2 * w / (v + w)) }
+  log_sum <- function(x) { m <- max(x); m + log(sum(exp(x - m))) }
+  l1 <- log_bf(beta1, se1); l2 <- log_bf(beta2, se2); both <- l1 + l2
+  apart <- log_sum(l1) + log_sum(l2); together <- log_sum(both)
+  # log(exp(apart) - exp(together)): every pair of different variants.
+  different <- if (together >= apart) -Inf else apart + log1p(-exp(together - apart))
+  h <- c(H0 = 0, H1 = log(p1) + log_sum(l1), H2 = log(p2) + log_sum(l2), H3 = log(p1) + log(p2) + different, H4 = log(p12) + together)
+  list(posterior = exp(h - log_sum(h)), variant_h4 = exp(both - together))
+}
+
+# Rows of one phenotype in a region of a tabix-indexed file, without reading the other phenotypes into R.
+interp_region_rows <- function(sources, file, chrom, from, to, pattern, timeout = 180) {
+  grep <- unname(Sys.which("grep")); sh <- unname(Sys.which("sh"))
+  if (!nzchar(grep) || !nzchar(sh)) stop("sh and grep are needed to read a region.", call. = FALSE)
+  p <- processx::run(sh, c("-c", '"$1" "$2" "$3" | "$4" -F -- "$5"', "sh", sources$tabix, file, paste0(chrom, ":", max(1L, from), "-", to), grep, pattern),
+    timeout = timeout, error_on_status = FALSE)
+  if (isTRUE(p$timeout)) stop("Reading the region timed out.", call. = FALSE)
+  lines <- strsplit(p$stdout, "\n", fixed = TRUE)[[1L]]
+  strsplit(lines[nzchar(lines)], "\t", fixed = TRUE)
+}
+
+# Position and unordered alleles: the same variant whichever allele a file calls the effect allele.
+interp_variant_key <- function(pos, a1, a2) paste(pos, pmin(a1, a2), pmax(a1, a2), sep = ":")
+
+# The molecular traits this variant is associated with: per gene the strongest sQTL intron and the eQTL
+# (each in its strongest TOPMed context), and the proteins of the cis-pQTL scans.
+interp_coloc_traits <- function(local, max_qtl = 4L, max_protein = 2L) {
+  empty <- data.frame(kind = character(), label = character(), gene = character(), source = character(), phenotype = character(), p_value = numeric(), stringsAsFactors = FALSE)
+  rows <- list(empty)
+  topmed <- if (interp_ok(local) && interp_ok(local$topmed) && isTRUE(local$topmed$available)) local$topmed$pairs else NULL
+  if (!is.null(topmed) && nrow(topmed)) {
+    x <- topmed[topmed$significant %in% TRUE & is.finite(topmed$slope_alt) & is.finite(topmed$slope_se), , drop = FALSE]
+    if (nrow(x)) {
+      x <- x[order(x$p_nominal), , drop = FALSE]
+      x <- x[!duplicated(paste(x$qtl_type, interp_bare_gene(x$gene_id))), , drop = FALSE]
+      x <- utils::head(x, max_qtl); name <- ifelse(nzchar(x$gene), x$gene, interp_bare_gene(x$gene_id))
+      rows[[2L]] <- data.frame(kind = x$qtl_type, label = paste0(x$qtl_type, " ", name, ifelse(x$qtl_type == "sQTL",
+        sub("^[^:]+:([0-9]+):([0-9]+):.*$", " intron \\1-\\2", x$phenotype), ""), " (", x$context, ")"), gene = name, source = x$context, phenotype = x$phenotype,
+        p_value = x$p_nominal, stringsAsFactors = FALSE)
+    }
+  }
+  pqtl <- if (interp_ok(local) && interp_ok(local$pqtl) && isTRUE(local$pqtl$found)) local$pqtl$associations else NULL
+  if (!is.null(pqtl)) {
+    x <- pqtl[pqtl$significance %in% c("experiment-wide", "genome-wide"), , drop = FALSE]
+    if (nrow(x)) {
+      x <- x[order(x$log10_p), , drop = FALSE]; x <- utils::head(x[!duplicated(x$protein), , drop = FALSE], max_protein)
+      rows[[3L]] <- data.frame(kind = "pQTL", label = paste0("pQTL ", x$protein, " (", x$study, ")"), gene = ifelse(nzchar(x$gene), x$gene, x$protein), source = x$study,
+        phenotype = x$protein, p_value = x$p_value, stringsAsFactors = FALSE)
+    }
+  }
+  out <- do.call(rbind, rows); rownames(out) <- NULL; out
+}
+
+# Summary statistics of one trait around the variant: key, beta, standard error.
+interp_coloc_region <- function(trait, variant, sources, window) {
+  empty <- data.frame(key = character(), beta = numeric(), se = numeric(), stringsAsFactors = FALSE)
+  from <- variant$pos1 - window; to <- variant$pos1 + window
+  if (trait$kind == "pQTL") {
+    file <- sources$pqtl[[trait$source]]
+    if (is.null(file) || !interp_readable(file)) return(empty)
+    f <- interp_region_rows(sources, file, variant$chrom, from, to, paste0("\t", trait$phenotype, "\t"))
+    f <- f[lengths(f) >= 13L]; f <- f[vapply(f, function(x) x[[6L]] == trait$phenotype, logical(1))]
+    if (!length(f)) return(empty)
+    get <- function(k) vapply(f, `[[`, character(1), k)
+    out <- data.frame(key = interp_variant_key(get(2L), toupper(get(3L)), toupper(get(4L))), beta = suppressWarnings(as.numeric(get(11L))),
+      se = suppressWarnings(as.numeric(get(12L))), stringsAsFactors = FALSE)
+  } else {
+    context <- names(interp_topmed_contexts())[match(trait$source, interp_topmed_contexts())]
+    dir <- if (trait$kind == "eQTL") "cis-eqtl" else "cis-sqtl2"
+    out <- empty
+    for (set in if (identical(context, "Whole_blood")) c("maf001", "maf0001") else "maf001") {
+      file <- file.path(sources$topmed_qtl, dir, "nominal", paste0(context, ".", set, ".tsv.gz"))
+      if (is.na(context) || !interp_readable(file)) next
+      f <- interp_region_rows(sources, file, variant$chrom, from, to, paste0("\t", trait$phenotype, "\t"))
+      f <- f[lengths(f) >= 12L]; f <- f[vapply(f, function(x) x[[4L]] == trait$phenotype, logical(1))]
+      if (!length(f)) next
+      id <- strsplit(vapply(f, `[[`, character(1), 5L), "_", fixed = TRUE); id <- id[lengths(id) >= 4L]
+      if (length(id) != length(f)) next
+      out <- data.frame(key = interp_variant_key(vapply(id, `[[`, character(1), 2L), vapply(id, `[[`, character(1), 3L), vapply(id, `[[`, character(1), 4L)),
+        beta = suppressWarnings(as.numeric(vapply(f, `[[`, character(1), 11L))), se = suppressWarnings(as.numeric(vapply(f, `[[`, character(1), 12L))), stringsAsFactors = FALSE)
+      break
+    }
+  }
+  out <- out[is.finite(out$beta) & is.finite(out$se) & out$se > 0 & !duplicated(out$key), , drop = FALSE]
+  rownames(out) <- NULL; out
+}
+
+interp_coloc_empty <- function() data.frame(trait_1 = character(), trait_2 = character(), variants = integer(), shared_cause = numeric(), distinct_causes = numeric(),
+  only_trait_1 = numeric(), only_trait_2 = numeric(), neither = numeric(), this_variant_share = numeric(), leading_variant = character(), reading = character(),
+  stringsAsFactors = FALSE)
+
+# Colocalisation of every pair of the variant's molecular traits (two introns of one gene are not paired:
+# their ratios move against each other by construction).
+interp_colocalise <- function(variant, local, sources = interp_local_sources(), window = 1000000L, min_variants = 50L, decided = 0.8) {
+  traits <- interp_coloc_traits(local)
+  out <- list(available = interp_readable(sources$tabix), traits = traits, pairs = interp_coloc_empty(), window = window,
+    priors = c(p1 = 1e-4, p2 = 1e-4, p12 = 1e-5, prior_sd = 0.15), ran_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z", tz = "UTC"))
+  if (!out$available || nrow(traits) < 2L) return(out)
+  regions <- lapply(seq_len(nrow(traits)), function(i) tryCatch(interp_coloc_region(traits[i, ], variant, sources, window), error = function(e) NULL))
+  own <- interp_variant_key(variant$pos1, variant$ref, variant$alt)
+  # Each trait on its own: the variants read for it, and this variant's posterior if the trait has one causal variant there.
+  out$traits$variants <- vapply(regions, function(r) if (is.null(r)) 0L else nrow(r), integer(1))
+  out$traits$this_variant_posterior <- vapply(regions, function(r) {
+    me <- if (is.null(r) || nrow(r) < 2L) NA_integer_ else match(own, r$key)
+    if (is.na(me)) NA_real_ else interp_abf_posterior(r$beta, r$se)[[me]]
+  }, numeric(1))
+  rows <- list()
+  for (i in seq_len(nrow(traits) - 1L)) for (j in (i + 1L):nrow(traits)) {
+    if (traits$kind[[i]] == traits$kind[[j]] && traits$gene[[i]] == traits$gene[[j]]) next
+    a <- regions[[i]]; b <- regions[[j]]
+    if (is.null(a) || is.null(b)) next
+    keys <- intersect(a$key, b$key)
+    if (length(keys) < min_variants) next
+    a <- a[match(keys, a$key), ]; b <- b[match(keys, b$key), ]
+    fit <- interp_coloc_abf(a$beta, a$se, b$beta, b$se)
+    pp <- fit$posterior; lead <- which.max(fit$variant_h4); me <- match(own, keys)
+    reading <- if (pp[["H4"]] >= decided) "one shared causal variant" else if (pp[["H3"]] >= decided) "two different causal variants" else
+      if (pp[["H4"]] + pp[["H3"]] < 0.5) "at most one of the two has a signal here" else "undecided between shared and different"
+    rows[[length(rows) + 1L]] <- data.frame(trait_1 = traits$label[[i]], trait_2 = traits$label[[j]], variants = length(keys), shared_cause = pp[["H4"]],
+      distinct_causes = pp[["H3"]], only_trait_1 = pp[["H1"]], only_trait_2 = pp[["H2"]], neither = pp[["H0"]],
+      this_variant_share = if (is.na(me)) NA_real_ else fit$variant_h4[[me]],
+      leading_variant = if (!is.na(me) && me == lead) "this variant" else sprintf("%s:%s (share %.2f)", variant$chrom, gsub(":", " ", keys[[lead]]), fit$variant_h4[[lead]]),
+      reading = reading, stringsAsFactors = FALSE)
+  }
+  if (length(rows)) { out$pairs <- do.call(rbind, rows); out$pairs <- out$pairs[order(-out$pairs$shared_cause), , drop = FALSE]; rownames(out$pairs) <- NULL }
+  out
+}
+
 # ---- Genes linked to the variant, and their pathways -------------------------
 # Genes the variant can act through: the ones it overlaps, and the ones whose
 # splicing or expression is associated with it in the local QTL sources.
@@ -2178,8 +2316,21 @@ interp_summary_row <- function(question, level, finding, evidence = character(),
   data.frame(question = question, level = level, finding = finding, evidence = paste(evidence[nzchar(evidence)], collapse = " | "),
     sources = paste(unique(sources[nzchar(sources)]), collapse = "; "), stringsAsFactors = FALSE)
 
-interp_evidence_summary <- function(consequences, local = NULL, public = NULL, spliceai = NULL, rna = NULL, ld = NULL, splice_protein = NULL) {
+interp_evidence_summary <- function(consequences, local = NULL, public = NULL, spliceai = NULL, rna = NULL, ld = NULL, splice_protein = NULL, coloc = NULL) {
   rows <- list()
+  # Colocalisation lines for one kind of trait (sQTL, eQTL, pQTL): the decided pairs it takes part in.
+  coloc_pairs <- if (interp_ok(coloc) && is.data.frame(coloc$pairs) && nrow(coloc$pairs)) coloc$pairs[coloc$pairs$reading %in%
+    c("one shared causal variant", "two different causal variants"), , drop = FALSE] else NULL
+  coloc_lines <- function(kind) {
+    if (is.null(coloc_pairs) || !nrow(coloc_pairs)) return(character())
+    first <- startsWith(coloc_pairs$trait_1, paste0(kind, " ")); second <- startsWith(coloc_pairs$trait_2, paste0(kind, " "))
+    x <- coloc_pairs[first | second, , drop = FALSE]
+    if (!nrow(x)) return(character())
+    x <- utils::head(x, 4L)
+    sprintf("colocalisation, %s and %s: %s (posterior %.2f%s)", x$trait_1, x$trait_2, x$reading,
+      ifelse(x$reading == "one shared causal variant", x$shared_cause, x$distinct_causes),
+      ifelse(x$reading == "one shared causal variant" & is.finite(x$this_variant_share), sprintf("; this variant's share of the shared signal %.2f", x$this_variant_share), ""))
+  }
   rank_up <- function(current, new) interp_levels()[[min(match(current, interp_levels()), match(new, interp_levels()))]]
   genic <- consequences[!consequences$most_severe %in% c("upstream_gene_variant", "downstream_gene_variant"), , drop = FALSE]
   ot <- if (interp_ok(public) && interp_ok(public$open_targets) && isTRUE(public$open_targets$found)) public$open_targets else NULL
@@ -2361,6 +2512,11 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       "; pQTL credible sets need the public query."))
   }
 
+  if (length(coloc_lines("pQTL"))) {
+    rows[[2L]]$evidence <- paste(c(rows[[2L]]$evidence[nzchar(rows[[2L]]$evidence)], coloc_lines("pQTL")), collapse = " | ")
+    rows[[2L]]$sources <- paste(unique(c(strsplit(rows[[2L]]$sources, "; ", fixed = TRUE)[[1L]], "colocalisation (computed here)")), collapse = "; ")
+  }
+
   # 3. Splicing.
   evidence <- character(); sources <- character()
   splice_terms <- unique(unlist(strsplit(genic$consequence, "&", fixed = TRUE)))
@@ -2433,6 +2589,7 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     Limited = "Near a splice site or weakly predicted; no RNA association found.",
     `None found` = "No splicing effect predicted or observed.", "No splicing source was available.")
   if (is.null(sai)) evidence <- c(evidence, "SpliceAI not run")
+  if (length(coloc_lines("sQTL"))) { evidence <- c(evidence, coloc_lines("sQTL")); sources <- c(sources, "colocalisation (computed here)") }
   rows[[3L]] <- interp_summary_row("Splicing", level, finding, evidence, sources)
 
   # 4. Expression.
@@ -2482,6 +2639,20 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   finding <- switch(level, Strong = "Associated with expression, and fine-mapping gives this variant a posterior probability of at least 0.5.",
     Moderate = "Associated with expression; not fine-mapped to this variant.", `None found` = "No eQTL reported for this variant.",
     "No expression-QTL source was available.")
+  if (length(coloc_lines("eQTL"))) {
+    evidence <- c(evidence, coloc_lines("eQTL")); sources <- c(sources, "colocalisation (computed here)")
+    # An expression signal that this variant does not lead, and whose causal variant differs from a signal this
+    # variant does lead (posterior of at least 0.5 within that trait), is probably reached through LD.
+    share <- function(label) { t <- coloc$traits; if (is.null(t$this_variant_posterior)) rep(NA_real_, length(label)) else t$this_variant_posterior[match(label, t$label)] }
+    led <- coloc_pairs[coloc_pairs$reading == "two different causal variants" & (startsWith(coloc_pairs$trait_1, "eQTL ") != startsWith(coloc_pairs$trait_2, "eQTL ")), , drop = FALSE]
+    if (nrow(led)) {
+      other <- ifelse(startsWith(led$trait_1, "eQTL "), led$trait_2, led$trait_1); mine <- ifelse(startsWith(led$trait_1, "eQTL "), led$trait_1, led$trait_2)
+      keep <- share(other) >= 0.5 & share(mine) < 0.1; keep[is.na(keep)] <- FALSE
+      if (any(keep) && level == "Moderate") finding <- paste0(finding, " Colocalisation gives ", interp_join(sub(" \\(.*$", "", mine[keep]), ", ", max = 3),
+        " a different causal variant from ", sub(" \\(.*$", "", other[keep][[1L]]),
+        ", which this variant leads: that expression signal is probably carried by a neighbour in linkage disequilibrium.")
+    }
+  }
   rows[[4L]] <- interp_summary_row("Gene expression (eQTL)", level, finding, evidence, sources)
 
   # 5. Disease and traits.

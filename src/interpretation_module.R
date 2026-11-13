@@ -56,6 +56,10 @@ interpretation_ui <- function(id) {
         interpretation_table_output(ns("tissue_phenotypes")),
         interpretation_table_output(ns("tissue_contexts")),
         shiny::p("A model trained on TOPMed lead cis-QTLs across the six contexts (scripts/train_tissue_model.R) re-estimates this variant's effect in each context from all of them together. posterior_slope is the re-estimated per-ALT-allele effect; lfsr is the local false sign rate, the probability that the effect is absent or has the other sign, and below 0.05 is called an effect. A small context borrows strength from the others, so it can show an effect without passing its own significance threshold. For a context where the pair was not tested the row is a prediction from the tested contexts (call \"predicted effect\" or \"not predicted\"), not a measurement. Diamonds in the plot are the model's estimates: filled for an effect, pale for a predicted one, empty otherwise. The model describes sharing among these six blood, airway and lung contexts; it says nothing about other tissues."),
+        shiny::h5("Do the signals share a cause? (colocalisation)"),
+        shiny::uiOutput(ns("coloc_status"), role = "status", `aria-live` = "polite"),
+        interpretation_table_output(ns("coloc_table")),
+        shiny::p("When the variant is associated with more than one molecular trait (per gene its strongest sQTL intron and its eQTL, each in the TOPMed context where it is strongest, and the proteins of the cis-pQTL scans), each pair of traits is compared over the variants within 1 Mb that both were tested on, from their full summary statistics (Giambartolomei et al. 2014, as in coloc). shared_cause is the posterior probability that one variant causes both signals, distinct_causes that each has its own; the remaining columns are the probabilities that only one trait, or neither, has a signal there. this_variant_share is this variant's part of the shared signal, and leading_variant the variant with the largest part. A shared cause links the traits, for instance expression and protein level; distinct causes for a signal this variant leads and another one say that the other association is probably reached through linkage disequilibrium. The method assumes at most one causal variant per trait in the region, uses no LD reference, and takes prior probabilities of 1e-4 for each trait and 1e-5 for a shared variant; cohorts of different ancestry or several independent signals push it towards distinct causes. Two introns of one gene are not compared: their ratios move against each other by construction."),
         shiny::h5("Tested pairs"),
         interpretation_table_output(ns("topmed_pairs")),
         shiny::p("Kept: every significant pair, every pair in a SuSiE credible set (pip), pairs with nominal p below 0.001, the three smallest p per context, and every context's row of a phenotype that is significant somewhere. n_estimated is derived from the minor-allele count and frequency."),
@@ -451,13 +455,32 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       if (is.null(k)) NULL else protein_store()[[k]]
     })
     splice_protein_table <- shiny::reactive({ p <- protein_now(); if (is.null(p) || inherits(p, "error")) NULL else p$table })
+    # Colocalisation of the variant's molecular traits: once per variant, after the local sources, from local files only.
+    coloc_store <- shiny::reactiveVal(list())
+    coloc_task <- shiny::ExtendedTask$new(function(key, variant, local, interpretation_file) {
+      promises::future_promise({
+        e <- new.env(parent = globalenv()); sys.source(interpretation_file, envir = e)
+        list(key = key, value = tryCatch(e$interp_colocalise(variant, local), error = function(err) err))
+      }, seed = TRUE)
+    })
+    shiny::observe({
+      x <- local_ready(); shiny::req(!is.null(x), !is.null(x$local))
+      k <- shiny::isolate(key())
+      if (!is.null(shiny::isolate(coloc_store())[[k]]) || nrow(backend$interp_coloc_traits(x$local)) < 2L) return()
+      coloc_task$invoke(k, x$variant, x$local[c("topmed", "pqtl")], interpretation_file)
+    })
+    shiny::observeEvent(coloc_task$status(), {
+      if (coloc_task$status() != "success") return()
+      r <- coloc_task$result(); store <- coloc_store(); store[[r$key]] <- r$value; coloc_store(store)
+    }, ignoreInit = TRUE)
+    coloc_now <- shiny::reactive({ k <- tryCatch(key(), error = function(e) NULL); if (is.null(k)) NULL else coloc_store()[[k]] })
     rna_now <- shiny::reactive({
       get_table <- function(f) if (is.null(f)) NULL else tryCatch(f(), error = function(e) NULL)
       backend$interp_rna_evidence(get_table(bin_ratio), get_table(junctions))
     })
     summary_now <- shiny::reactive({
       x <- local_now()
-      backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now(), ld_now(), splice_protein_table())
+      backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now(), ld_now(), splice_protein_table(), coloc_now())
     })
 
     show_table <- function(expr, digits = 3L, empty = "No rows.") DT::renderDT({
@@ -582,6 +605,20 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
         " tested context-and-type combinations.", if (length(untested)) paste0(" Not tested (absent or below the frequency cut-off): ",
           paste(untested, collapse = ", "), ".") else ""))
     })
+    output$coloc_status <- shiny::renderUI({
+      x <- local_now(); traits <- if (is.null(x$local)) NULL else backend$interp_coloc_traits(x$local); co <- coloc_now()
+      if (is.null(traits) || nrow(traits) < 2L) return(shiny::p(paste0("Not applicable: the variant is associated with ", if (is.null(traits)) 0L else nrow(traits),
+        " molecular trait(s) in the local sources, and a comparison needs two.")))
+      if (inherits(co, "error")) return(shiny::div(class = "alert alert-danger", paste("Colocalisation failed:", conditionMessage(co))))
+      if (is.null(co)) return(shiny::p(paste0("Comparing ", nrow(traits), " traits: ", paste(traits$label, collapse = "; "), "...")))
+      share <- co$traits$this_variant_posterior
+      shiny::p(paste0(nrow(co$traits), " trait(s), with this variant's posterior probability within each trait's own signal: ", paste0(co$traits$label,
+        ifelse(is.finite(share), sprintf(" %.2f", share), " not tested there"), collapse = "; "), ". ", nrow(co$pairs), " pair(s) compared within ", round(co$window / 1e6, 1),
+        " Mb; ", sum(co$pairs$reading == "one shared causal variant"), " with one shared causal variant, ", sum(co$pairs$reading == "two different causal variants"),
+        " with different ones. Computed at ", co$ran_at, "."))
+    })
+    output$coloc_table <- show_table(function() { co <- coloc_now(); if (is.null(co) || inherits(co, "error")) NULL else co$pairs },
+      empty = "No pair of traits to compare, or too few variants tested on both.")
     tissue_now <- shiny::reactive({ t <- local_part("tissue"); if (is.null(t) || !isTRUE(t$available)) NULL else t })
     output$context_plot <- shiny::renderPlot(interpretation_plot_contexts(topmed_now()$pairs, heterogeneity_now(),
       model = if (is.null(tissue_now())) NULL else tissue_now()$contexts), res = 96)
@@ -767,7 +804,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
         consequences = x$consequences, local = if (is.null(x$local)) NULL else lapply(x$local, plain),
         public = if (is.null(p)) NULL else lapply(p, plain), spliceai = if (is.null(s)) NULL else plain(s),
         gwas_ld = if (is.null(ld_now())) NULL else plain(ld_now()), rna_evidence = rna_now(),
-        splice_protein = if (is.null(protein_now())) NULL else plain(protein_now()))
+        splice_protein = if (is.null(protein_now())) NULL else plain(protein_now()), colocalisation = if (is.null(coloc_now())) NULL else plain(coloc_now()))
     }
     output$download_json <- shiny::downloadHandler(function() paste0("interpretation_", gsub(":", "_", local_now()$variant$id), ".json"),
       function(file) writeLines(jsonlite::toJSON(export(), dataframe = "rows", auto_unbox = TRUE, na = "null", null = "null", digits = NA, pretty = TRUE), file))
@@ -776,6 +813,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     output$download_consequences <- shiny::downloadHandler("transcript_consequences.csv", function(file)
       utils::write.csv(local_now()$consequences, file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8"))
     invisible(list(summary = summary_now, local = local_now, public = public_now, spliceai = spliceai_now, ld = ld_now, splice_protein = protein_now,
-      tasks = list(local = local_task, public = public_task, spliceai = spliceai_task, ld = ld_task, splice_protein = protein_task)))
+      colocalisation = coloc_now,
+      tasks = list(local = local_task, public = public_task, spliceai = spliceai_task, ld = ld_task, splice_protein = protein_task, colocalisation = coloc_task)))
   })
 }

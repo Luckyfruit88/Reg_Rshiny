@@ -1018,6 +1018,60 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   lg2 <- interp_linked_genes(interp_empty_consequences(), list(gtex = gt, pqtl = pq))
   stopifnot("ENSG00000000001" %in% lg2$gene_id, lg2$relation[lg2$gene_id == "ENSG00000000001"] == "eQTL target (GTEx)",
     lg2$relation[lg2$gene_id == "ENSGACT"] == "cis-pQTL protein", !"ENSGB" %in% lg2$gene_id)
+  # Colocalisation. Two traits that peak at the same variant share a cause; peaks at different variants do not; flat traits have no signal.
+  flat <- rep(0, 60L); peak <- function(at, size) { b <- flat; b[[at]] <- size; b }
+  shared <- interp_coloc_abf(peak(10L, .6), rep(.05, 60L), peak(10L, .5), rep(.05, 60L))
+  apart <- interp_coloc_abf(peak(10L, .6), rep(.05, 60L), peak(40L, .5), rep(.05, 60L))
+  nothing <- interp_coloc_abf(flat, rep(.05, 60L), flat, rep(.05, 60L))
+  stopifnot(abs(sum(shared$posterior) - 1) < 1e-12, identical(names(shared$posterior), c("H0", "H1", "H2", "H3", "H4")), shared$posterior[["H4"]] > .99,
+    which.max(shared$variant_h4) == 10L, abs(sum(shared$variant_h4) - 1) < 1e-12, apart$posterior[["H3"]] > .99, nothing$posterior[["H0"]] > .9,
+    interp_coloc_abf(peak(10L, .6), rep(.05, 60L), flat, rep(.05, 60L))$posterior[["H1"]] > .9, is.null(interp_coloc_abf(.5, .05, .5, .05)),
+    interp_variant_key("100", "G", "A") == interp_variant_key(100L, "A", "G"), interp_variant_key(100L, "G", "A") != interp_variant_key(100L, "G", "T"))
+  # From files: an eQTL and a protein that peak at this variant, and a second eQTL that peaks 300 bases away.
+  co_root <- file.path(work, "coloc"); dir.create(file.path(co_root, "cis-eqtl", "nominal"), recursive = TRUE)
+  spots <- c(100L, 200L, 300L, 400L, 500L, 600L)
+  nominal_rows <- function(gene, betas) paste("chr1", spots - 1L, spots, gene, paste("chr1", spots, "G", "A", sep = "_"), 500, .2, 300, 300,
+    signif(2 * stats::pnorm(-abs(betas / .05)), 4), betas, .05, 1, sep = "\t")
+  body <- c(nominal_rows("ENSGA.1", c(.8, .1, 0, 0, 0, 0)), nominal_rows("ENSGB.1", c(0, 0, .1, .8, 0, 0)))
+  index(c(header, body[order(rep(spots, 2L))]), file.path(co_root, "cis-eqtl", "nominal", "Lung.maf001.tsv.gz"), args)
+  co_pqtl <- file.path(work, "protein", "coloc.tsv.gz")
+  # The scan names the other allele as its effect allele: the same variants all the same.
+  index(c("#chrom\tpos\tother_allele\teffect_allele\trsid\tprotein\tassay_id\teffect_af\tinfo\tn\tbeta\tse\tp_mlog",
+    paste("chr1", spots, "A", "G", paste0("rs", spots), "PA", ".", .8, 1, 30000, c(-.9, -.1, 0, 0, 0, 0), .05, 10, sep = "\t")), co_pqtl,
+    c("-s", "1", "-b", "2", "-e", "2", "-c", shQuote("#")))
+  co_src <- srcs; co_src$topmed_qtl <- co_root; co_src$pqtl <- c(`UKB-PPP` = co_pqtl)
+  co_pairs <- rbind(pair("eQTL", "Lung", "ENSGA.1", .8, .05, 1e-50, TRUE, "ENSGA.1"), pair("eQTL", "Lung", "ENSGB.1", 0, .05, 1e-9, TRUE, "ENSGB.1"),
+    pair("eQTL", "PBMC", "ENSGA.1", .5, .05, 1e-20, TRUE, "ENSGA.1"), pair("eQTL", "Lung", "ENSGC.1", .1, .05, .04, FALSE, "ENSGC.1"))
+  co_pairs$gene[co_pairs$gene_id == "ENSGA.1"] <- "GA"
+  co_protein <- interp_pqtl_empty()[1L, ]; co_protein$study <- "UKB-PPP"; co_protein$protein <- "PA"; co_protein$gene <- "PA"; co_protein$significance <- "experiment-wide"
+  co_protein$log10_p <- -70; co_protein$p_value <- 1e-70
+  co_local <- list(topmed = list(available = TRUE, pairs = co_pairs), pqtl = list(available = TRUE, found = TRUE, associations = co_protein))
+  traits <- interp_coloc_traits(co_local)
+  stopifnot(nrow(traits) == 3L, identical(traits$kind, c("eQTL", "eQTL", "pQTL")),
+    # One row per gene, in its strongest context; a gene without a name keeps its ID.
+    identical(traits$label, c("eQTL GA (Lung)", "eQTL ENSGB (Lung)", "pQTL PA (UKB-PPP)")), !nrow(interp_coloc_traits(NULL)),
+    nrow(interp_coloc_traits(list(topmed = list(available = TRUE, pairs = co_pairs[4L, ])))) == 0L)
+  co <- interp_colocalise(v, co_local, co_src, window = 1000L, min_variants = 3L)
+  pair_of <- function(a, b) co$pairs[co$pairs$trait_1 == a & co$pairs$trait_2 == b, ]
+  stopifnot(co$available, nrow(co$pairs) == 3L, identical(co$traits$variants, c(6L, 6L, 6L)), co$traits$this_variant_posterior[[1L]] > .99,
+    co$traits$this_variant_posterior[[2L]] < 1e-6, co$traits$this_variant_posterior[[3L]] > .99,
+    pair_of("eQTL GA (Lung)", "pQTL PA (UKB-PPP)")$reading == "one shared causal variant", pair_of("eQTL GA (Lung)", "pQTL PA (UKB-PPP)")$shared_cause > .99,
+    pair_of("eQTL GA (Lung)", "pQTL PA (UKB-PPP)")$leading_variant == "this variant", pair_of("eQTL GA (Lung)", "pQTL PA (UKB-PPP)")$this_variant_share > .99,
+    pair_of("eQTL GA (Lung)", "pQTL PA (UKB-PPP)")$variants == 6L, pair_of("eQTL GA (Lung)", "eQTL ENSGB (Lung)")$reading == "two different causal variants",
+    pair_of("eQTL ENSGB (Lung)", "pQTL PA (UKB-PPP)")$distinct_causes > .99, co$pairs$trait_2[[1L]] == "pQTL PA (UKB-PPP)",
+    # Too few variants in common, a single trait, or unreadable files: no pair, no failure.
+    !nrow(interp_colocalise(v, co_local, co_src, window = 1000L)$pairs), !nrow(interp_colocalise(v, list(topmed = list(available = TRUE, pairs = co_pairs[1L, ])), co_src)$pairs),
+    !nrow(interp_colocalise(v, co_local, none, min_variants = 3L)$pairs), !interp_colocalise(v, co_local, none)$available)
+  # In the summary: the shared cause is named under both traits, and an expression signal with another cause than
+  # a signal this variant leads is said to be reached through LD.
+  sc <- interp_evidence_summary(intronic, co_local, coloc = co)
+  stopifnot(grepl("colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant (posterior 1.00; this variant's share of the shared signal 1.00)",
+      sc$evidence[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
+    grepl("colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant", sc$evidence[sc$question == "Protein abundance (pQTL)"], fixed = TRUE),
+    grepl("colocalisation (computed here)", sc$sources[sc$question == "Protein abundance (pQTL)"], fixed = TRUE),
+    grepl("Colocalisation gives eQTL ENSGB a different causal variant from pQTL PA, which this variant leads", sc$finding[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
+    !grepl("colocalisation", sc$evidence[sc$question == "Splicing"], fixed = TRUE),
+    !grepl("Colocalisation", interp_evidence_summary(intronic, co_local)$finding[4L], fixed = TRUE))
   # The GTEx build script, when pyarrow is installed.
   python <- unname(Sys.which("python3"))
   if (nzchar(python) && system2(python, c("-c", shQuote("import pyarrow")), stdout = FALSE, stderr = FALSE) == 0L) {
