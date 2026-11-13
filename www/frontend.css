@@ -99,6 +99,9 @@
 .regshiny-evidence-row p { margin: 0.15rem 0; }
 .regshiny-evidence-row ul { margin: 0.25rem 0 0.25rem; padding-inline-start: 1.2rem; font-size: 0.92rem; }
 .regshiny-evidence-source { font-size: 0.82rem; color: var(--bs-secondary-color, #5c6670); }
+.regshiny-evidence-more { margin: 0 0 0.25rem; font-size: 0.92rem; }
+.regshiny-evidence-more > summary { cursor: pointer; color: var(--bs-link-color, #0b5cad); width: fit-content; }
+.regshiny-evidence-more > ul { margin-top: 0.25rem; }
 .regshiny-level {
   padding: 0.1rem 0.55rem;
   border-radius: 1rem;

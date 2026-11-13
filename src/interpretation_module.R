@@ -84,6 +84,10 @@ interpretation_ui <- function(id) {
         shiny::uiOutput(ns("catalog_status")),
         interpretation_table_output(ns("catalog")),
         shiny::p("Read from the local copy of the GWAS Catalog; nothing is sent. The catalog lists the variant each study reported, by rsID and position. risk_allele_is says whether the reported risk allele is this variant's ALT or REF. A reported association shows that the variant, or one in linkage disequilibrium with it, is associated with the trait; fine-mapping (below) is what singles a variant out."),
+        shiny::h5("Disease genes among the linked genes (ClinVar, gene level)"),
+        shiny::uiOutput(ns("gene_disease_status")),
+        interpretation_table_output(ns("gene_disease")),
+        shiny::p("For each gene the variant overlaps or is a QTL for (see Protein, genes and pathways), the number of ClinVar variants classified pathogenic or likely pathogenic and the conditions they are reported for, most variants first. This is context about the gene: it shows which diseases a damaging change in that gene can cause and how they are inherited is not stated. It is not evidence that this variant causes them, and it does not change the level above."),
         shiny::h5("Linkage disequilibrium with nearby GWAS Catalog variants"),
         shiny::uiOutput(ns("ld_status"), role = "status", `aria-live` = "polite"),
         interpretation_table_output(ns("ld_table")),
@@ -131,15 +135,20 @@ interpretation_ui <- function(id) {
 interpretation_level_class <- function(level) switch(level, Strong = "regshiny-level-strong", Moderate = "regshiny-level-moderate",
   Limited = "regshiny-level-limited", `None found` = "regshiny-level-none", Context = "regshiny-level-context", "regshiny-level-unknown")
 
-interpretation_summary_cards <- function(summary) {
+# One card per question. The first `shown` evidence lines are visible; the rest open on request, so a
+# variant with many sources still fits on a screen.
+interpretation_summary_cards <- function(summary, shown = 4L) {
   shiny::div(class = "regshiny-evidence", lapply(seq_len(nrow(summary)), function(i) {
     evidence <- strsplit(summary$evidence[[i]], " | ", fixed = TRUE)[[1L]]
+    first <- utils::head(evidence, shown); rest <- evidence[-seq_len(shown)]
     shiny::div(class = "regshiny-evidence-row",
       shiny::div(class = "regshiny-evidence-head",
         shiny::strong(summary$question[[i]]),
         shiny::span(class = paste("regshiny-level", interpretation_level_class(summary$level[[i]])), summary$level[[i]])),
       shiny::p(summary$finding[[i]]),
-      if (length(evidence)) shiny::tags$ul(lapply(evidence, shiny::tags$li)),
+      if (length(first)) shiny::tags$ul(lapply(first, shiny::tags$li)),
+      if (length(rest)) shiny::tags$details(class = "regshiny-evidence-more",
+        shiny::tags$summary(paste0(length(rest), " more evidence line", if (length(rest) > 1L) "s" else "")), shiny::tags$ul(lapply(rest, shiny::tags$li))),
       if (nzchar(summary$sources[[i]])) shiny::p(class = "regshiny-evidence-source", paste("Sources:", summary$sources[[i]])))
   }))
 }
@@ -312,6 +321,8 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
             e$interp_tissue_sharing(out$local$topmed$pairs), error = function(err) err)
           if (!is.null(out$local)) out$local$pathways <- tryCatch(
             e$interp_local_pathways(e$interp_linked_genes(out$consequences, out$local)), error = function(err) err)
+          if (!is.null(out$local)) out$local$gene_disease <- tryCatch(
+            e$interp_gene_disease(e$interp_linked_genes(out$consequences, out$local)), error = function(err) err)
           out
         }, error = function(err) err)
         list(key = key, value = value)
@@ -746,6 +757,13 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     })
     output$catalog <- show_table(function() { g <- local_part("gwas_catalog"); if (is.null(g)) NULL else g$associations },
       empty = "No GWAS Catalog association is reported at this position.")
+    output$gene_disease_status <- shiny::renderUI({
+      g <- local_part("gene_disease")
+      if (is.null(g) || !isTRUE(g$available)) return(shiny::p("The gene-level ClinVar table is not readable from this session (see scripts/build_gene_disease_index.py)."))
+      shiny::p(paste0(g$source, ": ", nrow(g$genes), " of ", g$genes_checked, " linked gene(s) with a name have a pathogenic or likely pathogenic variant on record."))
+    })
+    output$gene_disease <- show_table(function() { g <- local_part("gene_disease"); if (is.null(g)) NULL else g$genes },
+      empty = "None of the linked genes has a pathogenic or likely pathogenic ClinVar variant on record.")
     output$ld_status <- shiny::renderUI({
       s <- ld_task$status(); r <- ld_now()
       if (s == "running") return(shiny::div(class = "alert alert-info", "Reading genotypes at the nearby GWAS Catalog positions. This takes about half a minute; the rest of the app stays usable."))
@@ -788,7 +806,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       x <- local_now(); p <- public_store()[[variant_key()]]; s <- spliceai_now()
       cat("Variant:", x$variant$id, "\nGENCODE release:", if (is.null(x$release)) "unavailable" else x$release, "\n")
       cat("Reference base(s) at the variant:", x$reference_base, "\n")
-      if (!is.null(x$local)) for (n in c("cadd", "known", "fhs", "topmed", "tissue", "gwas_catalog", "clinvar", "pqtl", "gtex", "pathways")) if (inherits(x$local[[n]], "error"))
+      if (!is.null(x$local)) for (n in c("cadd", "known", "fhs", "topmed", "tissue", "gwas_catalog", "clinvar", "pqtl", "gtex", "pathways", "gene_disease")) if (inherits(x$local[[n]], "error"))
         cat("Local source", n, "failed:", conditionMessage(x$local[[n]]), "\n")
       cat("Public query:", if (is.null(p)) "not run" else if (inherits(p, "error")) conditionMessage(p) else
         paste0("run at ", p$queried_at, "; sent variant ", p$variant, " and gene IDs ", paste(p$gene_ids, collapse = ", ")), "\n")

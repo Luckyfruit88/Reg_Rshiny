@@ -455,9 +455,9 @@ for (n in names(old_env)) if (is.na(old_env[[n]])) Sys.unsetenv(n) else do.call(
 none <- list(tabix = "", look = "", cadd_snv = "/missing", cadd_indel = "/missing", vep_cache = "/missing", topmed_qtl = "/missing",
   fhs_sqtl = c(discovery = "/missing", replication = "/missing"), fhs_eqtl = "/missing", gwas_catalog = "/missing",
   clinvar_vcf = "/missing", reactome = "/missing", msigdb = "/missing", tissue_model = c(eQTL = "/missing", sQTL = "/missing"), spliceai = "/missing",
-  pqtl = c(`UKB-PPP` = "/missing", FHS = "/missing"), pqtl_map = "/missing", gtex_pairs = "/missing", gtex_genes = "/missing")
+  pqtl = c(`UKB-PPP` = "/missing", FHS = "/missing"), pqtl_map = "/missing", gtex_pairs = "/missing", gtex_genes = "/missing", gene_disease = "/missing")
 status <- interp_local_status(none)
-stopifnot(nrow(status) == 13L, !any(status$available))
+stopifnot(nrow(status) == 14L, !any(status$available))
 # A source list written before a source existed simply reports it as unavailable.
 stopifnot(!any(interp_local_status(none[c("tabix", "look", "cadd_snv", "cadd_indel", "vep_cache", "topmed_qtl", "fhs_sqtl", "fhs_eqtl", "spliceai")])$available))
 gone <- interp_local_evidence(v, none)
@@ -756,6 +756,29 @@ if (nzchar(Sys.which("look"))) {
     identical(lp$gene_sets$collection, c("Hallmark", "Canonical pathways", "Canonical pathways")), grepl("MSigDB 2099.1", lp$source[[2L]], fixed = TRUE))
   st <- interp_local_status(srcs)
   stopifnot(st$available[st$source == "Reactome gene-to-pathway mapping"], st$available[st$source == "MSigDB gene sets"])
+  # ClinVar conditions per gene through the build script: pathogenic and likely pathogenic only, conflicting left out,
+  # one row per gene of a variant that names several, conditions by number of variants.
+  gene_vcf <- file.path(work, "gene_clinvar.vcf")
+  writeLines(c("##fileformat=VCFv4.1", "##fileDate=2099-02-03", "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+    "1\t100\t1\tG\tA\t.\t.\tCLNDN=Disease_one|not_provided;CLNSIG=Pathogenic;GENEINFO=GENEA:1",
+    "1\t101\t2\tG\tA\t.\t.\tCLNDN=Disease_one;CLNSIG=Likely_pathogenic;GENEINFO=GENEA:1|GENEAB:2",
+    "1\t102\t3\tG\tA\t.\t.\tCLNDN=Disease_two;CLNSIG=Pathogenic/Likely_pathogenic;GENEINFO=GENEA:1",
+    "1\t103\t4\tG\tA\t.\t.\tCLNDN=Disease_three;CLNSIG=Conflicting_classifications_of_pathogenicity;GENEINFO=GENEA:1",
+    "1\t104\t5\tG\tA\t.\t.\tCLNDN=Disease_four;CLNSIG=Benign;GENEINFO=GENEB:3", "1\t105\t6\tG\tA\t.\t.\tCLNDN=Disease_five;CLNSIG=Pathogenic"), gene_vcf)
+  gene_table <- file.path(work, "disease_genes", "clinvar_gene_disease_2099-02-03.tsv")
+  built <- system2(unname(Sys.which("python3")), c("scripts/build_gene_disease_index.py", "--clinvar", shQuote(gene_vcf), "--out", shQuote(gene_table)), stdout = TRUE, stderr = TRUE)
+  stopifnot(file.exists(gene_table), grepl("genes: 2  ClinVar file date: 2099-02-03", built[[length(built)]], fixed = TRUE),
+    identical(readLines(gene_table), c("GENEA\t3\t2\tDisease one (2); Disease two (1)", "GENEAB\t1\t1\tDisease one (1)")))
+  srcs$gene_disease <- gene_table
+  gd <- interp_gene_disease(linked, srcs)
+  stopifnot(gd$available, gd$genes_checked == 2L, nrow(gd$genes) == 2L, identical(gd$genes$gene, c("GENEA", "GENEAB")), identical(gd$genes$pathogenic_variants, c(3L, 1L)),
+    gd$genes$conditions[[1L]] == "Disease one (2); Disease two (1)", gd$genes$relation[[2L]] == "sQTL target (TOPMed)", gd$source == "ClinVar pathogenic variants per gene (2099-02-03) (local)",
+    # A gene whose name is the start of another gene's name is not mixed up with it; no gene, no file: nothing.
+    !nrow(interp_gene_disease(linked[2L, ], srcs)$genes), !interp_gene_disease(linked, none)$available, interp_gene_disease(NULL, srcs)$available)
+  sgd <- interp_evidence_summary(interp_empty_consequences(), list(gene_disease = gd))
+  stopifnot(sgd$level[sgd$question == "Disease and traits"] == "Not assessed",
+    grepl("gene-level context, not evidence about this variant: ClinVar has pathogenic variants in GENEA (overlaps; 3 variants; Disease one); GENEAB (sQTL target (TOPMed); 1 variants; Disease one)",
+      sgd$evidence[sgd$question == "Disease and traits"], fixed = TRUE), grepl("ClinVar pathogenic variants per gene", sgd$sources[sgd$question == "Disease and traits"], fixed = TRUE))
   sp <- interp_evidence_summary(interp_empty_consequences(), list(pathways = lp))
   stopifnot(level(sp, "Pathway") == "Context", grepl("GENEA (overlaps): Metabolism", sp$finding[sp$question == "Pathway"], fixed = TRUE),
     grepl("no pathway annotation: ENSG00000000003", sp$evidence[sp$question == "Pathway"], fixed = TRUE))

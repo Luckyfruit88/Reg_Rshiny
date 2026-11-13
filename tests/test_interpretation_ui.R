@@ -12,7 +12,8 @@ Sys.setenv(REGSHINY_CADD_SNV = "/nonexistent/cadd", REGSHINY_CADD_INDEL = "/none
   REGSHINY_SPLICEAI = "/nonexistent/spliceai", REGSHINY_GWAS_CATALOG = "/nonexistent/gwas", REGSHINY_CLINVAR_VCF = "/nonexistent/clinvar",
   REGSHINY_REACTOME = "/nonexistent/reactome", REGSHINY_MSIGDB = "/nonexistent/msigdb", REGSHINY_TISSUE_MODEL_EQTL = "/nonexistent/model",
   REGSHINY_TISSUE_MODEL_SQTL = "/nonexistent/model", REGSHINY_PQTL_UKBPPP = "/nonexistent/pqtl", REGSHINY_PQTL_FHS = "/nonexistent/pqtl",
-  REGSHINY_PQTL_PROTEIN_MAP = "/nonexistent/map", REGSHINY_GTEX_EQTL = "/nonexistent/gtex", REGSHINY_GTEX_EGENES = "/nonexistent/genes")
+  REGSHINY_PQTL_PROTEIN_MAP = "/nonexistent/map", REGSHINY_GTEX_EQTL = "/nonexistent/gtex", REGSHINY_GTEX_EGENES = "/nonexistent/genes",
+  REGSHINY_GENE_DISEASE = "/nonexistent/gene_disease")
 scratch <- tempfile("interpretation-ui-"); dir.create(scratch)
 backend_file <- normalizePath("src/interpretation_backend.R")
 fixture_backend <- file.path(scratch, "backend.R")
@@ -116,7 +117,7 @@ writeLines(c(
 ui <- as.character(interpretation_ui("x"))
 for (id in c("x-public", "x-spliceai", "x-summary", "x-consequences", "x-context_plot", "x-gwas", "x-pathways", "x-local_sources", "x-pqtl_table",
   "x-pqtl_status", "x-gtex_local_plot_box", "x-gtex_local_genes", "x-gtex_local_pairs", "x-splice_protein", "x-splice_protein_status", "x-coloc_table",
-  "x-coloc_status"))
+  "x-coloc_status", "x-gene_disease", "x-gene_disease_status"))
   stopifnot(grepl(paste0('id="', id, '"'), ui, fixed = TRUE))
 stopifnot(grepl("sends only the variant", ui, fixed = TRUE), grepl("not a clinical classification", ui, fixed = TRUE))
 cards <- as.character(interpretation_summary_cards(data.frame(question = c("Splicing", "Tissue"), level = c("Strong", "Not assessed"),
@@ -124,6 +125,12 @@ cards <- as.character(interpretation_summary_cards(data.frame(question = c("Spli
 stopifnot(grepl("regshiny-level-strong", cards, fixed = TRUE), grepl("regshiny-level-unknown", cards, fixed = TRUE),
   lengths(regmatches(cards, gregexpr("<li>", cards, fixed = TRUE))) == 2L, grepl("Sources: S", cards, fixed = TRUE))
 stopifnot(interpretation_level_class("Moderate") == "regshiny-level-moderate", interpretation_level_class("Context") == "regshiny-level-context")
+# A long evidence list shows its first four lines; the rest open on request and nothing is dropped.
+long_card <- as.character(interpretation_summary_cards(data.frame(question = "Splicing", level = "Strong", finding = "f", evidence = paste(paste0("line", 1:6), collapse = " | "),
+  sources = "S", stringsAsFactors = FALSE)))
+stopifnot(lengths(regmatches(long_card, gregexpr("<li>", long_card, fixed = TRUE))) == 6L, grepl("<summary>2 more evidence lines</summary>", long_card, fixed = TRUE),
+  regexpr("line4", long_card, fixed = TRUE) < regexpr("<details", long_card, fixed = TRUE), regexpr("line5", long_card, fixed = TRUE) > regexpr("<details", long_card, fixed = TRUE),
+  !grepl("<details", cards, fixed = TRUE), grepl(".regshiny-evidence-more", css <- paste(readLines("www/frontend.css", warn = FALSE), collapse = "\n"), fixed = TRUE))
 css <- paste(readLines("www/frontend.css", warn = FALSE), collapse = "\n")
 for (cls in c("regshiny-level-strong", "regshiny-level-moderate", "regshiny-level-limited", "regshiny-level-none", "regshiny-level-context",
   "regshiny-level-unknown", "regshiny-evidence-row", "regshiny-cell-wrap", "regshiny-site-list")) stopifnot(grepl(paste0(".", cls), css, fixed = TRUE))

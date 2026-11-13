@@ -1210,6 +1210,7 @@ interp_local_sources <- function() {
     fhs_eqtl = env("REGSHINY_FHS_EQTL", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/topmed_qtl/fhs_whole_blood_eqtl_gene_combined_1e-7.sorted.csv")),
     gwas_catalog = env("REGSHINY_GWAS_CATALOG", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/disease/gwas_catalog_e114_r2025-07-21.b38.tsv.gz")),
     clinvar_vcf = env("REGSHINY_CLINVAR_VCF", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/disease/clinvar_2025-07-21.GRCh38.vcf.gz")),
+    gene_disease = env("REGSHINY_GENE_DISEASE", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/disease/clinvar_gene_disease_2025-07-21.tsv")),
     reactome = env("REGSHINY_REACTOME", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/pathway/reactome_ensembl_all_levels_2026-09-22.human.tsv")),
     msigdb = env("REGSHINY_MSIGDB", "/restricted/projectnb/cbmhive/MSigDB/2026.1.Hs"),
     pqtl = c(`UKB-PPP` = env("REGSHINY_PQTL_UKBPPP", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/protein/ukbppp_eur_cis_pqtl.b38.tsv.gz")),
@@ -1248,6 +1249,8 @@ interp_local_status <- function(sources = interp_local_sources()) {
       tabix && interp_readable(sources$gwas_catalog) && interp_readable(paste0(sources$gwas_catalog, ".tbi")), sources$gwas_catalog),
     row("ClinVar VCF", "Germline classification, review status and conditions of this allele",
       tabix && interp_readable(sources$clinvar_vcf) && interp_readable(paste0(sources$clinvar_vcf, ".tbi")), sources$clinvar_vcf),
+    row("ClinVar conditions per gene", "Pathogenic and likely pathogenic ClinVar variants of each gene and the conditions they are reported for (gene-sorted table)",
+      interp_readable(sources$look) && interp_readable(sources$gene_disease), sources$gene_disease),
     row("Reactome gene-to-pathway mapping", "Pathways of the genes the variant overlaps or is a QTL for (gene-sorted copy)",
       interp_readable(sources$look) && interp_readable(sources$reactome), sources$reactome),
     row("MSigDB gene sets", "Hallmark, canonical pathways (KEGG, WikiPathways, PID, BioCarta) and GO biological process",
@@ -2249,6 +2252,32 @@ interp_local_pathways <- function(genes, sources = interp_local_sources()) {
   out
 }
 
+# Conditions ClinVar ties to the linked genes (scripts/build_gene_disease_index.py): how many pathogenic or likely
+# pathogenic variants the gene has and for which conditions. This describes the gene: it shows which diseases a
+# change in that gene can cause, not that this variant causes them.
+interp_gene_disease_empty <- function() data.frame(gene = character(), relation = character(), pathogenic_variants = integer(),
+  conditions_total = integer(), conditions = character(), stringsAsFactors = FALSE)
+
+interp_gene_disease <- function(genes, sources = interp_local_sources()) {
+  out <- list(available = FALSE, genes = interp_gene_disease_empty(), genes_checked = 0L, source = "")
+  file <- sources$gene_disease
+  if (!interp_readable(sources$look) || !interp_readable(file)) return(out)
+  out$available <- TRUE
+  date <- sub("^.*_([0-9]{4}-[0-9]{2}-[0-9]{2}).*$", "\\1", basename(file))
+  out$source <- paste0("ClinVar pathogenic variants per gene", if (!identical(date, basename(file))) paste0(" (", date, ")") else "", " (local)")
+  if (is.null(genes) || !nrow(genes)) return(out)
+  named <- genes[nzchar(genes$gene) & !startsWith(genes$gene, "ENSG"), , drop = FALSE]
+  out$genes_checked <- nrow(named); rows <- list()
+  for (i in seq_len(nrow(named))) {
+    lines <- interp_run_lines(sources$look, c(paste0(named$gene[[i]], "\t"), file), env = c("current", LC_ALL = "C"))
+    f <- strsplit(lines, "\t", fixed = TRUE); f <- f[lengths(f) >= 4L & vapply(f, function(x) x[[1L]] == named$gene[[i]], logical(1))]
+    if (length(f)) rows[[length(rows) + 1L]] <- data.frame(gene = named$gene[[i]], relation = named$relation[[i]], pathogenic_variants = as.integer(f[[1L]][[2L]]),
+      conditions_total = as.integer(f[[1L]][[3L]]), conditions = f[[1L]][[4L]], stringsAsFactors = FALSE)
+  }
+  if (length(rows)) out$genes <- do.call(rbind, rows)
+  out
+}
+
 # All local lookups; each source fails on its own.
 interp_local_evidence <- function(variant, sources = interp_local_sources()) {
   attempt <- function(expr) tryCatch(expr, error = function(e) e)
@@ -2326,10 +2355,11 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     first <- startsWith(coloc_pairs$trait_1, paste0(kind, " ")); second <- startsWith(coloc_pairs$trait_2, paste0(kind, " "))
     x <- coloc_pairs[first | second, , drop = FALSE]
     if (!nrow(x)) return(character())
-    x <- utils::head(x, 4L)
-    sprintf("colocalisation, %s and %s: %s (posterior %.2f%s)", x$trait_1, x$trait_2, x$reading,
+    more <- nrow(x) - 3L; x <- utils::head(x, 3L)
+    c(sprintf("colocalisation, %s and %s: %s (posterior %.2f%s)", x$trait_1, x$trait_2, x$reading,
       ifelse(x$reading == "one shared causal variant", x$shared_cause, x$distinct_causes),
-      ifelse(x$reading == "one shared causal variant" & is.finite(x$this_variant_share), sprintf("; this variant's share of the shared signal %.2f", x$this_variant_share), ""))
+      ifelse(x$reading == "one shared causal variant" & is.finite(x$this_variant_share), sprintf("; this variant's share of the shared signal %.2f", x$this_variant_share), "")),
+      if (more > 0L) paste0("colocalisation: ", more, " more decided pair(s) with a ", kind, " in the table"))
   }
   rank_up <- function(current, new) interp_levels()[[min(match(current, interp_levels()), match(new, interp_levels()))]]
   genic <- consequences[!consequences$most_severe %in% c("upstream_gene_variant", "downstream_gene_variant"), , drop = FALSE]
@@ -2719,6 +2749,12 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     if (!nrow(x)) evidence <- c(evidence, sprintf("LD in this cohort: no other reported variant with r2 >= %.1f (%s)", ld$keep_r2, scan))
     sources <- c(sources, "cohort WGS genotypes")
   }
+  # Disease genes among the linked genes: context for where a change in those genes leads, not evidence about this variant.
+  gd <- if (interp_ok(local) && interp_ok(local$gene_disease) && isTRUE(local$gene_disease$available)) local$gene_disease else NULL
+  gene_context <- if (!is.null(gd) && nrow(gd$genes)) paste0("gene-level context, not evidence about this variant: ClinVar has pathogenic variants in ",
+    paste(sprintf("%s (%s; %d variants; %s)", utils::head(gd$genes$gene, 4L), utils::head(gd$genes$relation, 4L), utils::head(gd$genes$pathogenic_variants, 4L),
+      vapply(strsplit(utils::head(gd$genes$conditions, 4L), "; ", fixed = TRUE), function(x) sub(" \\([0-9]+\\)$", "", x[[1L]]), character(1))), collapse = "; "),
+    if (nrow(gd$genes) > 4L) paste0("; +", nrow(gd$genes) - 4L, " more") else "") else character()
   if (!is.null(ot) && nrow(ot$pharmacogenomics)) {
     evidence <- c(evidence, paste0("Pharmacogenomics: ", interp_join(ot$pharmacogenomics$drugs, ", ", max = 6)))
     level <- rank_up(level, "Moderate"); sources <- c(sources, "Open Targets")
@@ -2736,7 +2772,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     `None found` = paste0("No clinical record and no published GWAS association for this variant in ", interp_join(consulted, ", "), "."),
     if (length(consulted)) paste0("Only ", interp_join(consulted, ", "), " could be consulted and reports nothing; run the public query for GWAS and curated evidence.") else
       "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.")
-  rows[[5L]] <- interp_summary_row("Disease and traits", level, finding, evidence, if (length(evidence) > !ot_queried) sources else consulted)
+  rows[[5L]] <- interp_summary_row("Disease and traits", level, finding, c(evidence, gene_context),
+    c(if (length(evidence) > !ot_queried) sources else consulted, if (length(gene_context)) gd$source))
 
   # 6. Pathway (context for the genes the variant acts through; not evidence about the variant).
   genes <- if (interp_ok(public) && interp_ok(public$genes) && nrow(public$genes$genes)) public$genes else NULL
