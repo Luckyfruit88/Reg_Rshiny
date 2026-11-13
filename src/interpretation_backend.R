@@ -847,6 +847,11 @@ interp_local_sources <- function() {
     clinvar_vcf = env("REGSHINY_CLINVAR_VCF", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/disease/clinvar_2025-07-21.GRCh38.vcf.gz")),
     reactome = env("REGSHINY_REACTOME", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/pathway/reactome_ensembl_all_levels_2026-09-22.human.tsv")),
     msigdb = env("REGSHINY_MSIGDB", "/restricted/projectnb/cbmhive/MSigDB/2026.1.Hs"),
+    pqtl = c(`UKB-PPP` = env("REGSHINY_PQTL_UKBPPP", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/protein/ukbppp_eur_cis_pqtl.b38.tsv.gz")),
+      FHS = env("REGSHINY_PQTL_FHS", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/protein/fhs_olink_cis_pqtl.b38.tsv.gz"))),
+    pqtl_map = env("REGSHINY_PQTL_PROTEIN_MAP", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/protein/olink_protein_map.b38.tsv")),
+    gtex_pairs = env("REGSHINY_GTEX_EQTL", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/gtex/gtex_v11_eqtl_signif_pairs.b38.tsv.gz")),
+    gtex_genes = env("REGSHINY_GTEX_EGENES", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/gtex/gtex_v11_egenes.tsv")),
     tissue_model = c(eQTL = env("REGSHINY_TISSUE_MODEL_EQTL", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/topmed_qtl/tissue_model/tissue_sharing_eqtl.json")),
       sQTL = env("REGSHINY_TISSUE_MODEL_SQTL", file.path(lab, "Jinjie_Jay/Reg_Shiny_output/resources/topmed_qtl/tissue_model/tissue_sharing_sqtl.json"))),
     spliceai = env("REGSHINY_SPLICEAI", "/share/pkg.8/spliceai/1.3.1/install/bin/spliceai"))
@@ -870,6 +875,10 @@ interp_local_status <- function(sources = interp_local_sources()) {
       nzchar(sources$look) && all(vapply(sources$fhs_sqtl, interp_readable, logical(1))), sources$fhs_sqtl),
     row("FHS whole-blood gene eQTL", "Combined set, p < 1e-7 (position-sorted copy)",
       nzchar(sources$look) && interp_readable(sources$fhs_eqtl), sources$fhs_eqtl),
+    row("GTEx cis-eQTL", "Significant variant-gene pairs in every GTEx tissue, and the genes tested per tissue (position-indexed copy)",
+      tabix && interp_readable(sources$gtex_pairs) && interp_readable(paste0(sources$gtex_pairs, ".tbi")), c(sources$gtex_pairs, sources$gtex_genes)),
+    row("cis-pQTL summary statistics", "Plasma protein levels against nearby variants: UKB-PPP (Olink Explore 3072) and the FHS scan (Olink Explore HT)",
+      tabix && length(sources$pqtl) > 0L && any(vapply(sources$pqtl, function(f) interp_readable(f) && interp_readable(paste0(f, ".tbi")), logical(1))), sources$pqtl),
     row("GWAS Catalog", "Published trait associations reported at the variant's position (position-indexed copy)",
       tabix && interp_readable(sources$gwas_catalog) && interp_readable(paste0(sources$gwas_catalog, ".tbi")), sources$gwas_catalog),
     row("ClinVar VCF", "Germline classification, review status and conditions of this allele",
@@ -972,7 +981,16 @@ interp_variant_span <- function(variant) c(min(variant$pos1, variant$start1), ma
 interp_gwas_catalog_empty <- function() data.frame(rs_id = character(), risk_allele = character(), risk_allele_is = character(),
   trait = character(), mapped_trait = character(), p_value = numeric(), effect = numeric(), ci_text = character(),
   risk_allele_frequency = character(), mapped_gene = character(), pubmed = character(), first_author = character(),
-  date = character(), study_accession = character(), initial_sample = character(), stringsAsFactors = FALSE)
+  date = character(), study_accession = character(), initial_sample = character(), protein_locus = character(), stringsAsFactors = FALSE)
+
+# protein_locus: for a trait that is the blood level of one protein, whether that
+# protein is encoded near the variant ("cis") or elsewhere ("trans, ..."); ""
+# when the trait is not a protein level or the protein is not in the assay table.
+interp_trait_protein_locus <- function(mapped_trait, variant, sources) {
+  out <- rep("", length(mapped_trait)); protein <- interp_is_protein_trait(mapped_trait)
+  if (any(protein)) out[protein] <- interp_protein_locus(interp_protein_name(mapped_trait[protein]), variant, sources)$locus
+  out
+}
 
 interp_gwas_catalog <- function(variant, sources = interp_local_sources()) {
   out <- list(available = FALSE, found = FALSE, associations = interp_gwas_catalog_empty(), release = "",
@@ -995,6 +1013,7 @@ interp_gwas_catalog <- function(variant, sources = interp_local_sources()) {
     p_value = suppressWarnings(as.numeric(field(7L))), effect = suppressWarnings(as.numeric(field(9L))), ci_text = field(10L),
     risk_allele_frequency = field(11L), mapped_gene = field(12L), pubmed = field(13L), first_author = field(14L), date = field(15L),
     study_accession = field(16L), initial_sample = field(17L), stringsAsFactors = FALSE)
+  x$protein_locus <- interp_trait_protein_locus(x$mapped_trait, variant, sources)
   # A p-value too small for a double is kept as 0 and ordered by its stored -log10.
   mlog <- suppressWarnings(as.numeric(field(8L)))
   x <- x[order(-ifelse(is.finite(mlog), mlog, -Inf), x$trait), , drop = FALSE]; rownames(x) <- NULL
@@ -1022,7 +1041,7 @@ interp_gt_dosage <- function(gt, allele = 1L) {
 interp_gwas_ld_empty <- function() data.frame(rs_id = character(), position = integer(), distance = integer(), ref = character(),
   alt = character(), r2 = numeric(), r = numeric(), n = integer(), risk_allele = character(), risk_allele_travels_with = character(),
   trait = character(), mapped_trait = character(), p_value = numeric(), effect = numeric(), pubmed = character(),
-  study_accession = character(), stringsAsFactors = FALSE)
+  study_accession = character(), protein_locus = character(), stringsAsFactors = FALSE)
 
 # r2 between this variant and every variant the GWAS Catalog reports within
 # `window` bp, from the genotypes of the dataset's own VCF. Only correlations
@@ -1098,6 +1117,7 @@ interp_gwas_ld <- function(variant, vcf, sources = interp_local_sources(), windo
   }
   if (!length(rows)) return(out)
   ld <- do.call(rbind, rows); ld <- ld[ld$r2 >= keep_r2, , drop = FALSE]
+  ld$protein_locus <- interp_trait_protein_locus(ld$mapped_trait, variant, sources)
   ld <- ld[order(-round(ld$r2, 6), -ifelse(is.finite(ld$mlog), ld$mlog, -Inf), ld$trait), names(interp_gwas_ld_empty()), drop = FALSE]
   rownames(ld) <- NULL
   out$ld <- ld; out$found <- nrow(ld) > 0L
@@ -1398,6 +1418,231 @@ interp_spliceai_sites <- function(scores, strand, introns = NULL, min_delta = 0.
   out <- do.call(rbind, rows); out <- out[order(-out$delta), , drop = FALSE]; rownames(out) <- NULL; out
 }
 
+# ---- cis-pQTL summary statistics (local) --------------------------------------
+# Position-indexed copies of cis-pQTL scans (scripts/build_pqtl_index.sh). A scan
+# lists every variant tested against the plasma level of a protein encoded
+# nearby, whatever its p-value, so "tested and not associated" can be told from
+# "not tested". Effects are reported per ALT allele of this variant.
+interp_pqtl_studies <- function(sources) {
+  files <- sources$pqtl
+  if (is.null(files) || !length(files)) return(data.frame(study = character(), file = character(), label = character(), stringsAsFactors = FALSE))
+  if (is.null(names(files))) names(files) <- paste0("study ", seq_along(files))
+  known <- c(`UKB-PPP` = "UK Biobank Pharma Proteomics Project, European discovery set, Olink Explore 3072 (Sun et al. 2023)",
+    FHS = "Framingham Heart Study cis-pQTL scan, Olink Explore HT (project file; its analysis model is not recorded with the file)")
+  data.frame(study = names(files), file = unname(files), label = ifelse(names(files) %in% names(known), known[names(files)], names(files)),
+    stringsAsFactors = FALSE)
+}
+
+# p-value cut-offs: the published experiment-wide threshold of UKB-PPP (5e-8
+# divided by its 2,923 proteins), genome-wide significance, and a suggestive level.
+interp_pqtl_cut <- function() c(experiment_wide = 1.7e-11, genome_wide = 5e-8, suggestive = 1e-5)
+
+interp_pqtl_empty <- function() data.frame(study = character(), protein = character(), gene = character(), gene_id = character(),
+  assay_id = character(), rs_id = character(), beta_alt = numeric(), se = numeric(), p_value = numeric(), log10_p = numeric(),
+  significance = character(), alt_frequency = numeric(), n = integer(), info = numeric(), gene_distance = integer(),
+  posterior_probability = numeric(), credible_set_size = integer(), window_variants = integer(), lead_variant = character(), stringsAsFactors = FALSE)
+
+# Posterior probability of each variant being the causal one, from summary
+# statistics alone (Wakefield's approximate Bayes factors; the calculation used
+# by coloc for one trait). It assumes exactly one causal variant among the
+# variants given and a normal prior on its effect with standard deviation
+# `prior_sd` (effects on a standardised scale).
+interp_abf_posterior <- function(beta, se, prior_sd = 0.15) {
+  v <- se^2; w <- prior_sd^2
+  log_bf <- 0.5 * (log(v / (v + w)) + (beta / se)^2 * w / (v + w))
+  p <- exp(log_bf - max(log_bf))
+  p / sum(p)
+}
+
+# Single-signal fine-mapping of one protein's cis window in one scan: this
+# variant's posterior probability, the size of the 95% credible set and the
+# leading variant. NULL when the window cannot be read or the variant is not in it.
+# `lines` are the scan's rows of a region that covers the protein's whole cis window.
+interp_pqtl_finemap <- function(variant, lines, protein, is_own) {
+  lines <- lines[grepl(paste0("\t", protein, "\t"), lines, fixed = TRUE)]
+  f <- strsplit(lines, "\t", fixed = TRUE); f <- f[lengths(f) >= 13L & vapply(f, function(x) x[[6L]] == protein, logical(1))]
+  if (length(f) < 2L) return(NULL)
+  field <- function(k) vapply(f, `[[`, character(1), k)
+  beta <- suppressWarnings(as.numeric(field(11L))); se <- suppressWarnings(as.numeric(field(12L)))
+  pos <- suppressWarnings(as.integer(field(2L))); other <- toupper(field(3L)); effect <- toupper(field(4L))
+  ok <- is.finite(beta) & is.finite(se) & se > 0
+  own <- is_own(pos, other, effect) & ok
+  if (sum(own) != 1L) return(NULL)
+  posterior <- rep(0, length(f)); posterior[ok] <- interp_abf_posterior(beta[ok], se[ok])
+  ranked <- order(-posterior); in_set <- ranked[seq_len(which(cumsum(posterior[ranked]) >= 0.95)[[1L]])]
+  lead <- ranked[[1L]]; rs <- field(5L)[[lead]]
+  list(posterior_probability = posterior[own], credible_set_size = length(in_set), in_credible_set = which(own) %in% in_set, window_variants = sum(ok),
+    lead_variant = if (which(own) == lead) "this variant" else paste0(if (rs %in% c(".", "NA", "")) paste0(variant$chrom, ":", pos[[lead]]) else rs,
+      " (posterior ", formatC(posterior[[lead]], format = "f", digits = 2), ", ", abs(pos[[lead]] - variant$pos1), " bp away)"))
+}
+
+# Olink assay -> gene table (scripts/build_protein_map.py): protein name, gene,
+# Ensembl ID and GRCh38 gene coordinates.
+interp_pqtl_map <- function(sources) {
+  empty <- data.frame(assay = character(), olink_id = character(), protein_name = character(), gene = character(), gene_id = character(),
+    chrom = character(), gene_start = integer(), gene_end = integer(), stringsAsFactors = FALSE)
+  file <- sources$pqtl_map
+  if (!interp_readable(file)) return(empty)
+  x <- tryCatch(utils::read.delim(file, stringsAsFactors = FALSE, quote = "", check.names = FALSE, colClasses = "character"), error = function(e) NULL)
+  if (is.null(x) || !all(names(empty) %in% names(x)) || !nrow(x)) return(empty)
+  x <- x[, names(empty), drop = FALSE]
+  x$gene_start <- suppressWarnings(as.integer(x$gene_start)); x$gene_end <- suppressWarnings(as.integer(x$gene_end))
+  x
+}
+
+# Bases between the variant and a gene (0 inside it); NA on another chromosome.
+interp_gene_distance <- function(variant, chrom, start, end) {
+  d <- ifelse(variant$pos1 < start, start - variant$pos1, ifelse(variant$pos1 > end, variant$pos1 - end, 0L))
+  as.integer(ifelse(is.na(chrom) | chrom != variant$chrom, NA, d))
+}
+
+interp_pqtl <- function(variant, sources = interp_local_sources(), finemap_max = 4L) {
+  studies <- interp_pqtl_studies(sources)
+  out <- list(available = FALSE, found = FALSE, associations = interp_pqtl_empty(),
+    studies = data.frame(study = studies$study, label = studies$label, available = rep(FALSE, nrow(studies)), variant_tested = rep(FALSE, nrow(studies)),
+      proteins_tested = rep(0L, nrow(studies)), min_p = rep(NA_real_, nrow(studies)), stringsAsFactors = FALSE),
+    cut = interp_pqtl_cut(), source = "cis-pQTL summary statistics (local position-indexed copies)")
+  if (!nrow(studies) || !interp_readable(sources$tabix) || interp_is_mito(variant$chrom)) return(out)
+  span <- interp_variant_span(variant); rows <- list()
+  map <- interp_pqtl_map(sources)
+  # Assay table row of each scan row: by assay ID when the scan gives one, then by gene symbol, then by assay name.
+  map_row <- function(x) {
+    k <- if (nrow(map)) ifelse(nzchar(x$assay_id), match(x$assay_id, map$olink_id), NA_integer_) else rep(NA_integer_, nrow(x))
+    if (nrow(map)) { k[is.na(k)] <- match(x$protein[is.na(k)], map$gene); k[is.na(k)] <- match(x$protein[is.na(k)], map$assay) }
+    k
+  }
+  # The variant in VCF form, or as its changed bases only; either orientation of the effect allele.
+  at <- function(pos, other, effect, a, b) (pos == variant$pos1 & other == a[[1L]] & effect == b[[1L]]) |
+    (nzchar(a[[2L]]) & nzchar(b[[2L]]) & pos == variant$start1 & other == a[[2L]] & effect == b[[2L]])
+  ref <- c(variant$ref, variant$ref_changed); alt <- c(variant$alt, variant$alt_changed)
+  cut <- -log10(out$cut)
+  for (i in seq_len(nrow(studies))) {
+    file <- studies$file[[i]]
+    if (!interp_readable(file) || !interp_readable(paste0(file, ".tbi"))) next
+    out$studies$available[[i]] <- TRUE; out$available <- TRUE
+    lines <- interp_tabix(sources, file, variant$chrom, span[[1L]], span[[2L]])
+    f <- strsplit(lines[!startsWith(lines, "#")], "\t", fixed = TRUE); f <- f[lengths(f) >= 13L]
+    if (!length(f)) next
+    field <- function(k) vapply(f, `[[`, character(1), k)
+    num <- function(k) suppressWarnings(as.numeric(field(k)))
+    pos <- suppressWarnings(as.integer(field(2L))); other <- toupper(field(3L)); effect <- toupper(field(4L))
+    same <- at(pos, other, effect, ref, alt); flip <- at(pos, other, effect, alt, ref) & !same
+    keep <- (same | flip) & is.finite(num(11L)) & is.finite(num(13L))
+    if (!any(keep)) next
+    af <- num(8L); strength <- num(13L)
+    x <- data.frame(study = studies$study[[i]], protein = field(6L), gene = "", gene_id = "", assay_id = ifelse(field(7L) == ".", "", field(7L)),
+      rs_id = ifelse(field(5L) %in% c(".", "NA"), "", field(5L)), beta_alt = ifelse(flip, -1, 1) * num(11L), se = num(12L), p_value = 10^(-strength),
+      log10_p = -strength, significance = ifelse(strength >= cut[["experiment_wide"]], "experiment-wide", ifelse(strength >= cut[["genome_wide"]],
+        "genome-wide", ifelse(strength >= cut[["suggestive"]], "suggestive", ""))), alt_frequency = ifelse(flip, 1 - af, af),
+      n = suppressWarnings(as.integer(num(10L))), info = num(9L), gene_distance = NA_integer_, posterior_probability = NA_real_,
+      credible_set_size = NA_integer_, window_variants = NA_integer_, lead_variant = "", stringsAsFactors = FALSE)[keep, , drop = FALSE]
+    # Fine-map the window of the proteins this variant is associated with (the strongest few).
+    hits <- utils::head(order(x$log10_p)[x$significance[order(x$log10_p)] %in% c("experiment-wide", "genome-wide")], finemap_max)
+    region <- NULL
+    if (length(hits)) {
+      # One read that covers the whole cis window (the gene and 1 Mb either side) of every protein to fine-map;
+      # without the gene's coordinates, 2 Mb either side of the variant.
+      k <- map_row(x[hits, , drop = FALSE]); known <- !is.na(k) & map$chrom[k] %in% variant$chrom & is.finite(map$gene_start[k]) & is.finite(map$gene_end[k])
+      from <- if (all(known)) min(map$gene_start[k]) - 1050000L else variant$pos1 - 2000000L
+      to <- if (all(known)) max(map$gene_end[k]) + 1050000L else variant$pos1 + 2000000L
+      region <- tryCatch(interp_tabix(sources, file, variant$chrom, max(1L, min(from, variant$pos1 - 1000000L)), max(to, variant$pos1 + 1000000L)), error = function(e) NULL)
+    }
+    for (j in hits) {
+      fm <- if (is.null(region)) NULL else tryCatch(interp_pqtl_finemap(variant, region, x$protein[[j]],
+        function(pos, other, effect) at(pos, other, effect, ref, alt) | at(pos, other, effect, alt, ref)), error = function(e) NULL)
+      if (is.null(fm)) next
+      x$posterior_probability[[j]] <- fm$posterior_probability; x$credible_set_size[[j]] <- fm$credible_set_size
+      x$window_variants[[j]] <- fm$window_variants; x$lead_variant[[j]] <- fm$lead_variant
+    }
+    out$studies$variant_tested[[i]] <- TRUE; out$studies$proteins_tested[[i]] <- length(unique(x$protein)); out$studies$min_p[[i]] <- min(x$p_value)
+    rows[[length(rows) + 1L]] <- x
+  }
+  if (!length(rows)) return(out)
+  x <- do.call(rbind, rows)
+  if (nrow(map)) {
+    k <- map_row(x)
+    x$gene <- ifelse(is.na(k), "", map$gene[k]); x$gene_id <- ifelse(is.na(k), "", map$gene_id[k])
+    x$gene_distance <- interp_gene_distance(variant, map$chrom[k], map$gene_start[k], map$gene_end[k])
+  }
+  x <- x[order(x$log10_p, x$protein, x$study), , drop = FALSE]; rownames(x) <- NULL
+  out$associations <- x; out$found <- TRUE
+  out
+}
+
+# Whether a protein named in a published trait is encoded near the variant (cis,
+# within `window` of its gene) or elsewhere (trans). Names are matched to the
+# Olink assay table; a name it does not hold stays undetermined ("").
+interp_protein_locus <- function(protein_names, variant, sources = interp_local_sources(), window = 1000000L) {
+  out <- data.frame(protein = protein_names, gene = rep("", length(protein_names)), locus = rep("", length(protein_names)), stringsAsFactors = FALSE)
+  map <- if (length(protein_names)) interp_pqtl_map(sources) else NULL
+  if (is.null(map) || !nrow(map)) return(out)
+  k <- match(tolower(protein_names), tolower(map$protein_name))
+  d <- interp_gene_distance(variant, map$chrom[k], map$gene_start[k], map$gene_end[k])
+  out$gene <- ifelse(is.na(k), "", map$gene[k])
+  out$locus <- ifelse(is.na(k), "", ifelse(!is.na(d) & d <= window, "cis", paste0("trans, ", map$gene[k], " is on ", map$chrom[k])))
+  out
+}
+
+# ---- GTEx cis-eQTL across tissues (local) -------------------------------------
+# Position-indexed copy of the GTEx significant variant-gene pairs of every
+# tissue, and a gene-sorted table of the genes tested per tissue
+# (scripts/build_gtex_index.py). Only significant pairs are stored, so a tissue
+# without a row is either not significant there or did not test the gene; the
+# gene table tells the two apart. Slopes are per ALT allele.
+interp_gtex_local_empty <- function() list(
+  pairs = data.frame(gene = character(), gene_id = character(), tissue = character(), slope_alt = numeric(), slope_se = numeric(),
+    p_nominal = numeric(), p_threshold = numeric(), alt_frequency = numeric(), tss_distance = integer(), lead_variant = logical(), stringsAsFactors = FALSE),
+  genes = data.frame(gene = character(), gene_id = character(), biotype = character(), tissues_significant = integer(), tissues_tested = integer(),
+    direction = character(), strongest_tissue = character(), strongest_slope = numeric(), strongest_p = numeric(), lead_variant_in = integer(),
+    whole_blood = character(), tissues = character(), stringsAsFactors = FALSE))
+
+interp_gtex_local <- function(variant, sources = interp_local_sources()) {
+  out <- c(list(available = FALSE, found = FALSE, release = "", gene_table = FALSE), interp_gtex_local_empty(),
+    list(source = "GTEx cis-eQTL significant pairs (local position-indexed copy)"))
+  file <- sources$gtex_pairs
+  if (!interp_readable(sources$tabix) || !interp_readable(file) || !interp_readable(paste0(file, ".tbi"))) return(out)
+  out$available <- TRUE
+  release <- sub("^gtex_(v[0-9]+)_.*$", "\\1", basename(file)); if (!identical(release, basename(file))) out$release <- release
+  out$source <- trimws(paste0("GTEx ", out$release, " cis-eQTL significant pairs (local)"))
+  out$gene_table <- interp_readable(sources$look) && interp_readable(sources$gtex_genes)
+  lines <- interp_tabix(sources, file, variant$chrom, variant$pos1)
+  f <- strsplit(lines[!startsWith(lines, "#")], "\t", fixed = TRUE); f <- f[lengths(f) >= 12L]
+  f <- f[vapply(f, function(x) x[[2L]] == as.character(variant$pos1) && x[[3L]] == variant$ref && x[[4L]] == variant$alt, logical(1))]
+  if (!length(f)) return(out)
+  field <- function(k) vapply(f, `[[`, character(1), k)
+  num <- function(k) suppressWarnings(as.numeric(field(k)))
+  pairs <- data.frame(gene = "", gene_id = field(5L), tissue = gsub("_", " ", field(6L)), slope_alt = num(7L), slope_se = num(8L), p_nominal = num(9L),
+    p_threshold = num(11L), alt_frequency = num(10L), tss_distance = suppressWarnings(as.integer(num(12L))), lead_variant = NA, stringsAsFactors = FALSE)
+  variant_id <- paste(variant$chrom, variant$pos1, variant$ref, variant$alt, "b38", sep = "_")
+  genes <- list()
+  for (id in unique(pairs$gene_id)) {
+    p <- pairs[pairs$gene_id == id, , drop = FALSE]; best <- which.min(p$p_nominal)
+    row <- data.frame(gene = "", gene_id = id, biotype = "", tissues_significant = nrow(p), tissues_tested = NA_integer_,
+      direction = if (all(p$slope_alt > 0)) "ALT raises expression in every significant tissue" else if (all(p$slope_alt < 0))
+        "ALT lowers expression in every significant tissue" else sprintf("mixed: raises in %d, lowers in %d", sum(p$slope_alt > 0), sum(p$slope_alt < 0)),
+      strongest_tissue = p$tissue[[best]], strongest_slope = p$slope_alt[[best]], strongest_p = p$p_nominal[[best]], lead_variant_in = NA_integer_,
+      whole_blood = if ("Whole Blood" %in% p$tissue) "significant" else "", tissues = paste(p$tissue[order(p$p_nominal)], collapse = ", "), stringsAsFactors = FALSE)
+    if (out$gene_table) {
+      g <- strsplit(interp_run_lines(sources$look, c(paste0(interp_bare_gene(id), "\t"), sources$gtex_genes), env = c("current", LC_ALL = "C")), "\t", fixed = TRUE)
+      g <- g[lengths(g) >= 8L]
+      if (length(g)) {
+        tissue <- gsub("_", " ", vapply(g, `[[`, character(1), 5L)); lead <- vapply(g, `[[`, character(1), 8L) == variant_id
+        row$gene <- g[[1L]][[3L]]; row$biotype <- g[[1L]][[4L]]; row$tissues_tested <- length(unique(tissue))
+        row$lead_variant_in <- sum(lead & tissue %in% p$tissue)
+        if (!nzchar(row$whole_blood)) row$whole_blood <- if ("Whole Blood" %in% tissue) "tested, not significant" else "not tested"
+        pairs$gene[pairs$gene_id == id] <- row$gene
+        pairs$lead_variant[pairs$gene_id == id] <- p$tissue %in% tissue[lead]
+      }
+    }
+    genes[[length(genes) + 1L]] <- row
+  }
+  genes <- do.call(rbind, genes)
+  genes <- genes[order(genes$strongest_p), , drop = FALSE]; rownames(genes) <- NULL
+  pairs <- pairs[order(match(pairs$gene_id, genes$gene_id), pairs$p_nominal), , drop = FALSE]; rownames(pairs) <- NULL
+  out$pairs <- pairs; out$genes <- genes; out$found <- TRUE
+  out
+}
+
 # ---- Genes linked to the variant, and their pathways -------------------------
 # Genes the variant can act through: the ones it overlaps, and the ones whose
 # splicing or expression is associated with it in the local QTL sources.
@@ -1412,6 +1657,13 @@ interp_linked_genes <- function(consequences, local = NULL) {
     hit <- topmed[topmed$significant %in% TRUE, , drop = FALSE]
     add(hit$gene_id[hit$qtl_type == "sQTL"], hit$gene[hit$qtl_type == "sQTL"], "sQTL target (TOPMed)")
     add(hit$gene_id[hit$qtl_type == "eQTL"], hit$gene[hit$qtl_type == "eQTL"], "eQTL target (TOPMed)")
+  }
+  gtex <- if (interp_ok(local) && interp_ok(local$gtex) && isTRUE(local$gtex$found)) local$gtex$genes else NULL
+  if (!is.null(gtex) && nrow(gtex)) add(gtex$gene_id, gtex$gene, "eQTL target (GTEx)")
+  pqtl <- if (interp_ok(local) && interp_ok(local$pqtl) && isTRUE(local$pqtl$found)) local$pqtl$associations else NULL
+  if (!is.null(pqtl)) {
+    hit <- pqtl[pqtl$significance %in% c("experiment-wide", "genome-wide") & nzchar(pqtl$gene_id), , drop = FALSE]
+    if (nrow(hit)) add(hit$gene_id, hit$gene, "cis-pQTL protein")
   }
   if (!length(rows)) return(data.frame(gene_id = character(), gene = character(), relation = character(), stringsAsFactors = FALSE))
   x <- unique(do.call(rbind, rows))
@@ -1500,6 +1752,7 @@ interp_local_evidence <- function(variant, sources = interp_local_sources()) {
   list(cadd = attempt(interp_cadd(variant, sources)), known = attempt(interp_known_variant(variant, sources)),
     fhs = attempt(interp_fhs_qtl(variant, sources)), topmed = attempt(interp_topmed_qtl(variant, sources)),
     gwas_catalog = attempt(interp_gwas_catalog(variant, sources)), clinvar = attempt(interp_clinvar_local(variant, sources)),
+    pqtl = attempt(interp_pqtl(variant, sources)), gtex = attempt(interp_gtex_local(variant, sources)),
     status = interp_local_status(sources))
 }
 
@@ -1622,22 +1875,78 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       c(src, if (is.finite(cadd)) "CADD v1.7", if (!is.null(am) && nrow(am)) "Open Targets", if (is.finite(revel)) "MyVariant.info"))
   }
 
-  # 2. Protein abundance: pQTL credible sets (public), and published protein-level associations (local).
+  # 2. Protein abundance: cis-pQTL scans and published protein-level associations (local), pQTL credible sets (public).
+  rank_up <- function(current, new) interp_levels()[[min(match(current, interp_levels()), match(new, interp_levels()))]]
+  # Genes whose product this variant is itself predicted to change (coding or essential splice-site change, or SpliceAI >= 0.5).
+  sai_scores <- if (interp_ok(spliceai) && is.data.frame(spliceai$scores) && nrow(spliceai$scores)) spliceai$scores else NULL
+  mechanism <- unique(c(genic$gene_name[genic$most_severe %in% coding_terms], if (!is.null(sai_scores)) sai_scores$gene[sai_scores$max_delta >= 0.5]))
+  pq_local <- if (interp_ok(local) && interp_ok(local$pqtl) && isTRUE(local$pqtl$available)) local$pqtl else NULL
+  direct <- list(level = NA_character_, finding = "", evidence = character(), sources = character())
+  if (!is.null(pq_local) && any(pq_local$studies$variant_tested)) {
+    a <- pq_local$associations; tested <- pq_local$studies[pq_local$studies$variant_tested, , drop = FALSE]
+    direct$sources <- paste(tested$study, "cis-pQTL")
+    describe <- function(x) sprintf("%s in %s: %+.3f per ALT allele, p %s%s", x$protein, x$study, x$beta_alt, interp_fmt_p(x$p_value),
+      ifelse(is.na(x$n), "", paste0(", n ", formatC(x$n, format = "d", big.mark = ","))))
+    scope <- paste0("tested against ", paste(sprintf("%d nearby protein(s) in %s", tested$proteins_tested, tested$study), collapse = " and "))
+    wide <- a[a$significance %in% c("experiment-wide", "genome-wide"), , drop = FALSE]
+    suggestive <- a[a$significance == "suggestive", , drop = FALSE]
+    if (nrow(wide)) {
+      proteins <- unique(wide$protein)
+      # The same protein in a second scan, at least suggestive there and in the same direction.
+      replicated <- proteins[vapply(proteins, function(p) { w <- a[a$protein == p & nzchar(a$significance), , drop = FALSE]
+        length(unique(w$study)) > 1L && length(unique(sign(w$beta_alt))) == 1L }, logical(1))]
+      acting <- unique(wide$protein[wide$significance == "experiment-wide" & (wide$protein %in% mechanism | wide$gene %in% mechanism)])
+      mapped <- wide[is.finite(wide$posterior_probability), , drop = FALSE]
+      pinned <- unique(mapped$protein[mapped$posterior_probability >= 0.5])
+      direct$level <- if (length(acting) || length(pinned)) "Strong" else "Moderate"
+      direct$finding <- if (length(acting)) paste0("Associated in cis with the plasma level of ", interp_join(acting, ", "),
+        ", and this variant is itself predicted to change that gene's product.") else if (length(pinned))
+        paste0("Associated in cis with the plasma level of ", interp_join(pinned, ", "), ", and single-signal fine-mapping gives this variant a posterior probability of ",
+          formatC(max(mapped$posterior_probability), format = "f", digits = 2), ".") else
+        paste0("Associated in cis with the plasma level of ", interp_join(proteins, ", ", max = 5), "; not fine-mapped to this variant.")
+      direct$evidence <- c(paste0("cis-pQTL at this variant: ", paste(describe(utils::head(wide, 6L)), collapse = "; "),
+        if (nrow(wide) > 6L) paste0("; +", nrow(wide) - 6L, " more") else ""),
+        if (nrow(mapped)) paste0("single-signal fine-mapping of the cis window (one causal variant assumed): ", paste(sprintf(
+          "%s in %s posterior %.2f, 95%% credible set of %d of %d variant(s)%s", mapped$protein, mapped$study, mapped$posterior_probability, mapped$credible_set_size,
+          mapped$window_variants, ifelse(mapped$lead_variant == "this variant", ", this variant leads", paste0(", lead ", mapped$lead_variant))), collapse = "; ")),
+        if (length(replicated)) paste0("seen in both scans in the same direction: ", interp_join(replicated, ", ", max = 6)), scope)
+    } else if (nrow(suggestive)) {
+      direct$level <- "Limited"
+      direct$finding <- paste0("Only a suggestive cis association with the plasma level of ", interp_join(suggestive$protein, ", ", max = 5), " (p between 5e-8 and 1e-5).")
+      direct$evidence <- c(paste0("suggestive cis-pQTL: ", paste(describe(utils::head(suggestive, 6L)), collapse = "; ")), scope)
+    } else {
+      direct$level <- "None found"
+      direct$finding <- paste0("No cis-pQTL at this variant: ", scope, ", smallest p ", interp_fmt_p(min(tested$min_p)), ".")
+    }
+  }
   catalog_p <- if (interp_ok(local) && interp_ok(local$gwas_catalog) && isTRUE(local$gwas_catalog$available)) local$gwas_catalog$associations else NULL
   protein_here <- if (!is.null(catalog_p)) catalog_p[interp_is_protein_trait(catalog_p$mapped_trait) & is.finite(catalog_p$p_value) & catalog_p$p_value <= 5e-8, , drop = FALSE] else NULL
   protein_ld <- if (interp_ok(ld) && isTRUE(ld$available)) ld$ld[ld$ld$r2 >= 0.8 & interp_is_protein_trait(ld$ld$mapped_trait) &
     is.finite(ld$ld$p_value) & ld$ld$p_value <= 5e-8, , drop = FALSE] else NULL
+  # cis or trans, when the protein of the published trait is in the assay table.
+  locus_of <- function(x) if (is.null(x) || !nrow(x)) character() else if (is.null(x$protein_locus)) rep("", nrow(x)) else
+    ifelse(is.na(x$protein_locus), "", x$protein_locus)
+  where <- function(x) { l <- locus_of(x); ifelse(nzchar(l), paste0(", ", l), "") }
   local_lines <- c(
-    if (!is.null(protein_here) && nrow(protein_here)) paste0("GWAS Catalog, at this variant: ", interp_join(unique(interp_protein_name(protein_here$mapped_trait)), ", ", max = 6)),
+    if (!is.null(protein_here) && nrow(protein_here)) paste0("GWAS Catalog, at this variant: ",
+      interp_join(unique(paste0(interp_protein_name(protein_here$mapped_trait), sub("^, (.*)$", " (\\1)", where(protein_here)))), ", ", max = 6)),
     if (!is.null(protein_ld) && nrow(protein_ld)) paste0("GWAS Catalog, through LD (r2 >= 0.8 in this cohort): ",
-      interp_join(unique(sprintf("%s (%s, r2 %.2f)", interp_protein_name(protein_ld$mapped_trait), protein_ld$rs_id, protein_ld$r2)), ", ", max = 6)))
+      interp_join(unique(sprintf("%s (%s, r2 %.2f%s)", interp_protein_name(protein_ld$mapped_trait), protein_ld$rs_id, protein_ld$r2, where(protein_ld))), ", ", max = 6)))
   local_sources <- c(if (length(local_lines)) "GWAS Catalog", if (!is.null(protein_ld) && nrow(protein_ld)) "cohort WGS genotypes")
+  published <- unique(data.frame(protein = c(interp_protein_name(protein_here$mapped_trait), interp_protein_name(protein_ld$mapped_trait)),
+    locus = c(locus_of(protein_here), locus_of(protein_ld)), stringsAsFactors = FALSE))
+  published_note <- if (!nrow(published)) "" else if (all(!nzchar(published$locus))) ", and cis or trans is not determined here" else
+    paste0(" (", paste(c(if (any(published$locus == "cis")) paste0(sum(published$locus == "cis"), " encoded near the variant, cis"),
+      if (any(startsWith(published$locus, "trans"))) paste0(sum(startsWith(published$locus, "trans")), " encoded elsewhere, trans"),
+      if (any(!nzchar(published$locus))) paste0(sum(!nzchar(published$locus)), " undetermined")), collapse = "; "), ")")
+  direct_hit <- !is.na(direct$level) && direct$level %in% c("Strong", "Moderate", "Limited")
   pq <- if (!is.null(ot)) ot$qtl[ot$qtl$qtl_type == "pqtl", , drop = FALSE] else NULL
   if (!is.null(pq) && nrow(pq)) {
     pip <- ifelse(is.na(pq$posterior_probability), 0, pq$posterior_probability)
     cis <- !(pq$trans %in% TRUE)
     level <- if (any(pip >= 0.9 & cis)) "Strong" else "Moderate"
     if (!any(pip >= 0.1) && !length(local_lines)) level <- "Limited"
+    if (direct_hit) level <- rank_up(level, direct$level)
     # Cis sets first: they concern the protein encoded next to the variant.
     order_best <- order(!cis, -pip)
     best <- pq[order_best, , drop = FALSE]; best_pip <- pip[order_best]; best_cis <- cis[order_best]
@@ -1645,18 +1954,25 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       sprintf("In %d pQTL credible set(s), %d in cis; leading set: %s in %s (%s), posterior probability %.2f.", nrow(pq), sum(cis),
         best$gene[[1L]], best$biosample[[1L]], if (best_cis[[1L]]) "cis" else "trans", best_pip[[1L]]),
       c(sprintf("%s in %s: PIP %.2f, beta %+.2f, p %s%s", head(best$gene, 6L), head(best$biosample, 6L), head(best_pip, 6L),
-        head(best$beta, 6L), interp_fmt_p(head(best$p_value, 6L)), ifelse(head(best_cis, 6L), "", " (trans)")), local_lines),
-      c("Open Targets", local_sources))
-  } else if (length(local_lines)) {
-    # A published association with a protein level, at the variant or at one it travels with: not fine-mapped, so Moderate.
-    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "Moderate",
-      paste0("Associated with the blood level of ", length(unique(c(interp_protein_name(protein_here$mapped_trait), interp_protein_name(protein_ld$mapped_trait)))),
-        " protein(s) in published GWAS; not fine-mapped to this variant, and cis or trans is not determined here."),
-      c(local_lines, if (!ot_queried) "pQTL credible sets not consulted: public query not run"), local_sources)
-  } else if (ot_queried) {
-    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "None found", "Not in any pQTL credible set in Open Targets.", sources = "Open Targets")
+        head(best$beta, 6L), interp_fmt_p(head(best$p_value, 6L)), ifelse(head(best_cis, 6L), "", " (trans)")), direct$evidence, local_lines),
+      c("Open Targets", direct$sources, local_sources))
+  } else if (direct_hit || length(local_lines)) {
+    # An association with a protein level, in a cis-pQTL scan or published: Moderate unless the variant is also predicted to act on that gene.
+    level <- if (length(local_lines)) "Moderate" else direct$level
+    if (direct_hit) level <- rank_up(level, direct$level)
+    in_scan <- direct_hit && direct$level != "Limited"
+    finding <- paste0(if (in_scan || !length(local_lines)) direct$finding else "",
+      if (length(local_lines)) paste0(if (in_scan) " Also a" else "A", "ssociated with the blood level of ", nrow(published),
+        " protein(s) in published GWAS", if (in_scan) "" else "; not fine-mapped to this variant", published_note, ".") else "")
+    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", level, finding,
+      c(direct$evidence, local_lines, if (!ot_queried) "pQTL credible sets not consulted: public query not run"), c(direct$sources, local_sources))
+  } else if (ot_queried || identical(direct$level, "None found")) {
+    rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "None found", trimws(paste(
+      if (identical(direct$level, "None found")) direct$finding else "", if (ot_queried) "Not in any pQTL credible set in Open Targets." else "")),
+      if (!ot_queried) "pQTL credible sets not consulted: public query not run" else character(), c(direct$sources, if (ot_queried) "Open Targets"))
   } else {
     rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "Not assessed", paste0(
+      if (!is.null(pq_local)) "This variant is not in the local cis-pQTL scans (no measured protein is encoded within their window, or the variant was not tested). " else "",
       if (!is.null(catalog_p)) "No protein-level association is reported at this position in the GWAS Catalog" else "No local pQTL source was readable",
       if (!is.null(catalog_p) && !(interp_ok(ld) && isTRUE(ld$available))) " (variants in LD not checked: run the LD scan)" else "",
       "; pQTL credible sets need the public query."))
@@ -1760,6 +2076,16 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       interp_join(g_eqtl$gene, ", ", max = 4), interp_fmt_p(min(g_eqtl$p_value)), g_eqtl$tissue[[which.min(g_eqtl$p_value)]]))
     sources <- c(sources, "GTEx")
   }
+  gl <- if (interp_ok(local) && interp_ok(local$gtex) && isTRUE(local$gtex$available)) local$gtex else NULL
+  gl_eqtl <- !is.null(gl) && nrow(gl$genes) > 0L
+  gl_name <- function(g) ifelse(nzchar(g$gene), g$gene, g$gene_id)
+  if (gl_eqtl) {
+    g <- gl$genes
+    evidence <- c(evidence, sprintf("GTEx %s eQTL (local): %s; strongest %s in %s, slope %+.2f, p %s", gl$release,
+      interp_join(sprintf("%s in %d%s tissue(s)", gl_name(g), g$tissues_significant, ifelse(is.na(g$tissues_tested), "", paste0(" of ", g$tissues_tested, " tested"))), ", ", max = 5),
+      gl_name(g)[[1L]], g$strongest_tissue[[1L]], g$strongest_slope[[1L]], interp_fmt_p(g$strongest_p[[1L]])))
+    sources <- c(sources, trimws(paste("GTEx", gl$release, "(local)")))
+  }
   ot_e <- if (!is.null(ot)) ot$qtl[ot$qtl$qtl_type %in% c("eqtl", "sceqtl"), , drop = FALSE] else NULL
   ot_eqtl <- !is.null(ot_e) && nrow(ot_e) > 0L
   ot_fine <- ot_eqtl && any(ot_e$posterior_probability >= 0.5, na.rm = TRUE)
@@ -1768,8 +2094,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       max(ot_e$posterior_probability, na.rm = TRUE), ot_e$gene[[1L]], ot_e$biosample[[1L]]))
     sources <- c(sources, "Open Targets")
   }
-  any_e <- topmed_eqtl || fhs_eqtl || gtex_eqtl || ot_eqtl
-  level <- if (e_fine || ot_fine) "Strong" else if (any_e) "Moderate" else if (!is.null(topmed) || !is.null(gtex) || ot_queried) "None found" else "Not assessed"
+  any_e <- topmed_eqtl || fhs_eqtl || gtex_eqtl || gl_eqtl || ot_eqtl
+  level <- if (e_fine || ot_fine) "Strong" else if (any_e) "Moderate" else if (!is.null(topmed) || !is.null(gtex) || !is.null(gl) || ot_queried) "None found" else "Not assessed"
   finding <- switch(level, Strong = "Associated with expression, and fine-mapping gives this variant a posterior probability of at least 0.5.",
     Moderate = "Associated with expression; not fine-mapped to this variant.", `None found` = "No eQTL reported for this variant.",
     "No expression-QTL source was available.")
@@ -1777,7 +2103,6 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
 
   # 5. Disease and traits.
   evidence <- character(); sources <- character(); level <- "None found"
-  rank_up <- function(current, new) interp_levels()[[min(match(current, interp_levels()), match(new, interp_levels()))]]
   clinvar_local <- if (interp_ok(local) && interp_ok(local$clinvar) && isTRUE(local$clinvar$available)) local$clinvar else NULL
   catalog <- if (interp_ok(local) && interp_ok(local$gwas_catalog) && isTRUE(local$gwas_catalog$available)) local$gwas_catalog else NULL
   significance <- character(); detail <- ""
@@ -1914,6 +2239,19 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
         ifelse(is.na(modelled), "", paste0("; model: ", modelled))))
       sources <- c(sources, "TOPMed cis-QTL (6 contexts)", if (any(!is.na(modelled))) "cross-context model")
     }
+  }
+  if (gl_eqtl) {
+    g <- utils::head(gl$genes, 3L)
+    evidence <- c(evidence, sprintf("GTEx %s %s: eQTL in %d tissue(s)%s (%s); %s; whole blood: %s%s", gl$release, gl_name(g), g$tissues_significant,
+      ifelse(is.na(g$tissues_tested), "", paste0(" of the ", g$tissues_tested, " that tested the gene")),
+      vapply(strsplit(g$tissues, ", ", fixed = TRUE), function(t) interp_join(t, ", ", max = 4), character(1)), g$direction,
+      ifelse(nzchar(g$whole_blood), g$whole_blood, "not significant or not tested"),
+      ifelse(!is.na(g$lead_variant_in) & g$lead_variant_in > 0L, paste0("; the gene's lead variant in ", g$lead_variant_in, " tissue(s)"), "")))
+    if (nrow(gl$genes) > 3L) evidence <- c(evidence, paste0("GTEx ", gl$release, ": ", nrow(gl$genes) - 3L, " more eQTL gene(s) in the table"))
+    sources <- c(sources, trimws(paste("GTEx", gl$release, "(local)")))
+  } else if (!is.null(gl)) {
+    evidence <- c(evidence, paste0("GTEx ", gl$release, " (local): not a significant cis-eQTL in any tissue"))
+    sources <- c(sources, trimws(paste("GTEx", gl$release, "(local)")))
   }
   if (!is.null(gtex) && nrow(gtex$qtl)) {
     evidence <- c(evidence, sprintf("GTEx: QTL in %d of 50 tissues; whole blood %s", length(unique(gtex$qtl$tissue)),

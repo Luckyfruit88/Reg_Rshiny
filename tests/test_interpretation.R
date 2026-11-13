@@ -299,9 +299,10 @@ stopifnot(src$cadd_snv == "/tmp/custom_cadd.tsv.gz", identical(unname(src$fhs_sq
 for (n in names(old_env)) if (is.na(old_env[[n]])) Sys.unsetenv(n) else do.call(Sys.setenv, stats::setNames(list(old_env[[n]]), n))
 none <- list(tabix = "", look = "", cadd_snv = "/missing", cadd_indel = "/missing", vep_cache = "/missing", topmed_qtl = "/missing",
   fhs_sqtl = c(discovery = "/missing", replication = "/missing"), fhs_eqtl = "/missing", gwas_catalog = "/missing",
-  clinvar_vcf = "/missing", reactome = "/missing", msigdb = "/missing", tissue_model = c(eQTL = "/missing", sQTL = "/missing"), spliceai = "/missing")
+  clinvar_vcf = "/missing", reactome = "/missing", msigdb = "/missing", tissue_model = c(eQTL = "/missing", sQTL = "/missing"), spliceai = "/missing",
+  pqtl = c(`UKB-PPP` = "/missing", FHS = "/missing"), pqtl_map = "/missing", gtex_pairs = "/missing", gtex_genes = "/missing")
 status <- interp_local_status(none)
-stopifnot(nrow(status) == 11L, !any(status$available))
+stopifnot(nrow(status) == 13L, !any(status$available))
 # A source list written before a source existed simply reports it as unavailable.
 stopifnot(!any(interp_local_status(none[c("tabix", "look", "cadd_snv", "cadd_indel", "vep_cache", "topmed_qtl", "fhs_sqtl", "fhs_eqtl", "spliceai")])$available))
 gone <- interp_local_evidence(v, none)
@@ -729,9 +730,168 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   stopifnot(d0$level == "None found", grepl("ClinVar VCF 2099-02-03 (local), GWAS Catalog e999_r2099-01-01", d0$finding, fixed = TRUE),
     disease(list(clinvar = none_here))$level == "Not assessed", disease(list(gwas_catalog = far))$level == "Not assessed",
     grepl("Only GWAS Catalog", disease(list(gwas_catalog = far))$finding, fixed = TRUE))
+  # cis-pQTL scans through their build script: one file per protein (REGENIE layout) and one table.
+  acting <- missense$gene_name[missense$most_severe == "missense_variant"][[1L]]
+  regenie <- file.path(work, "ukb"); dir.create(regenie)
+  regenie_header <- "ID,CHROM,GENPOS,ALLELE0,ALLELE1,A1FREQ,INFO,N,TEST,BETA,SE,CHISQ,LOG10P,EXTRA,REF,ALT,rsid,POS19,POS38"
+  gz_lines <- function(lines, path) { con <- gzfile(path, "w"); on.exit(close(con)); writeLines(lines, con) }
+  gz_lines(c(regenie_header, "1:90:G:A:imp:v1,1,90,G,A,0.2,0.99,30000,ADD,0.5,0.02,100,40,NA,G,A,rs1,90,100",
+    "1:90:G:C:imp:v1,1,90,G,C,0.1,0.99,30000,ADD,0.9,0.02,100,60,NA,G,C,rs1b,90,100", "1:95:T:C:imp:v1,1,95,T,C,0.1,0.99,30000,ADD,0.9,0.02,100,60,NA,T,C,rs3,95,NA",
+    "23:40:A:C:imp:v1,23,40,A,C,0.3,0.9,30000,ADD,0.2,0.02,100,12,NA,A,C,rs8,40,50"), file.path(regenie, paste0(acting, ".csv.gz")))
+  # ALLELE1 (the effect allele) is this variant's REF here: the effect and the frequency are turned to ALT.
+  gz_lines(c(regenie_header, "1:90:A:G:imp:v1,1,90,A,G,0.8,0.98,30000,ADD,-0.1,0.02,25,6.2,NA,A,G,rs1,90,100"), file.path(regenie, "PROTB.csv.gz"))
+  gz_lines(c(regenie_header, "1:90:G:A:imp:v1,1,90,G,A,0.2,0.99,30000,ADD,0.01,0.02,0.2,0.3,NA,G,A,rs1,90,100"), file.path(regenie, "PROTC.csv.gz"))
+  ukb <- file.path(work, "protein", "ukb.tsv.gz"); tool_env <- c(paste0("BGZIP=", bgzip), paste0("TABIX=", tabix))
+  built <- system2("bash", c("scripts/build_pqtl_index.sh", "regenie", shQuote(regenie), shQuote(ukb)), stdout = TRUE, stderr = TRUE, env = tool_env)
+  stopifnot(file.exists(ukb), file.exists(paste0(ukb, ".tbi")), grepl("rows: 5  proteins: 3", built[[length(built)]], fixed = TRUE))
+  fhs_table <- file.path(work, "fhs_pqtl.txt.gz")
+  gz_lines(c("SNP\tEA\tOA\tCHR\tBP\tEAF\tOlinkID\tGene\tBETA\tSE\tP", paste("rs1", "A", "G", 1, 100, 0.21, "OID1", acting, 0.4, 0.05, 1e-9, sep = "\t"),
+    paste("rs1", "G", "A", 1, 100, 0.79, "OID2", "PROTD", 0.3, 0.05, 0, sep = "\t"), paste("rs2", "A", "G", 1, 200, 0.5, "OID1", acting, "NA", 0.05, "NA", sep = "\t")), fhs_table)
+  fhs_pqtl <- file.path(work, "protein", "fhs.tsv.gz")
+  built <- system2("bash", c("scripts/build_pqtl_index.sh", "table", shQuote(fhs_table), shQuote(fhs_pqtl)), stdout = TRUE, stderr = TRUE, env = tool_env)
+  stopifnot(file.exists(fhs_pqtl), grepl("rows: 2  proteins: 2", built[[length(built)]], fixed = TRUE))
+  # The assay table through its build script, from both source layouts.
+  ukb_map <- file.path(work, "ukb_map.tsv"); ht_annot <- file.path(work, "ht_annot.csv")
+  writeLines(c("UKBPPP_ProteinID\tolink_target_fullname\tOlinkID\tUniProt\tAssay\tPanel\tHGNC.symbol\tensembl_id\tchr\tgene_start\tgene_end",
+    paste("a", "Acting protein", "OID9", "P1", acting, "Panel", acting, "ENSGACT", "1", 50, 150, sep = "\t"),
+    paste("b", "Protein B", "OID3", "P2", "PROTB", "Panel", "PROTB", "ENSGB", "1", 5000, 6000, sep = "\t"),
+    paste("x", "Protein X", "OID4", "P3", "PROTX", "Panel", "PROTX", "ENSGX", "2", 10, 20, sep = "\t")), ukb_map)
+  writeLines(c("OlinkID,UniProtID,Assay,Protein name,Gene name,Chr,Start,End,ENSG", "OID2,P4,PROTD,\"Protein D, long form\",GENED,chr1,300,400,ENSGD",
+    "OID7,AMP1,Amplification control 1,,,,,,"), ht_annot)
+  protein_map <- file.path(work, "protein", "map.tsv")
+  built <- system2(unname(Sys.which("python3")), c("scripts/build_protein_map.py", "--ukbppp", shQuote(ukb_map), "--olink-ht", shQuote(ht_annot), "--out", shQuote(protein_map)),
+    stdout = TRUE, stderr = TRUE)
+  stopifnot(file.exists(protein_map), grepl("assay rows: 4", built[[length(built)]], fixed = TRUE), nrow(interp_pqtl_map(list(pqtl_map = protein_map))) == 4L,
+    !nrow(interp_pqtl_map(none)))
+  srcs$pqtl <- c(`UKB-PPP` = ukb, FHS = fhs_pqtl); srcs$pqtl_map <- protein_map
+  pq <- interp_pqtl(v, srcs)
+  pa <- pq$associations; one_row <- function(study, protein) pa[pa$study == study & pa$protein == protein, ]
+  stopifnot(pq$available, pq$found, identical(pq$studies$variant_tested, c(TRUE, TRUE)), identical(pq$studies$proteins_tested, c(3L, 2L)),
+    # Strongest first; a p-value of zero is kept and ranks first.
+    identical(pa$protein, c("PROTD", acting, acting, "PROTB", "PROTC")), pa$p_value[[1L]] == 0, pa$log10_p[[1L]] == -400,
+    one_row("FHS", "PROTD")$beta_alt == -0.3, abs(one_row("FHS", "PROTD")$alt_frequency - 0.21) < 1e-12, one_row("FHS", "PROTD")$assay_id == "OID2",
+    one_row("UKB-PPP", acting)$beta_alt == 0.5, one_row("UKB-PPP", acting)$n == 30000L, one_row("UKB-PPP", acting)$significance == "experiment-wide",
+    one_row("UKB-PPP", acting)$gene_id == "ENSGACT", one_row("UKB-PPP", acting)$gene_distance == 0L, one_row("FHS", acting)$significance == "genome-wide",
+    one_row("UKB-PPP", "PROTB")$beta_alt == 0.1, abs(one_row("UKB-PPP", "PROTB")$alt_frequency - 0.2) < 1e-12, one_row("UKB-PPP", "PROTB")$significance == "suggestive",
+    one_row("UKB-PPP", "PROTB")$gene_distance == 4900L, one_row("UKB-PPP", "PROTC")$significance == "", one_row("UKB-PPP", "PROTC")$gene == "",
+    # The second scan names its assay: the gene comes from the assay ID, here under another symbol.
+    one_row("FHS", "PROTD")$gene == "GENED", one_row("FHS", "PROTD")$gene_id == "ENSGD", one_row("FHS", "PROTD")$gene_distance == 200L,
+    # Another allele at the position has its own row; chromosome 23 is read as chrX; an untested position is told apart.
+    interp_pqtl(interp_variant("chr1", 100L, "G", "C"), srcs)$associations$beta_alt == 0.9,
+    interp_pqtl(interp_variant("chrX", 50L, "A", "C"), srcs)$associations$log10_p == -12)
+  # Single-signal fine-mapping. The UKB window of the acting protein holds this variant (z 25) and chr1:100 G>C (z 45):
+  # the stronger neighbour takes the posterior.
+  stopifnot(abs(sum(interp_abf_posterior(c(.5, .1, 0), c(.02, .02, .02))) - 1) < 1e-12, which.max(interp_abf_posterior(c(.5, .1, 0), c(.02, .02, .02))) == 1L,
+    all(abs(interp_abf_posterior(c(.1, .1), c(.02, .02)) - .5) < 1e-12),
+    one_row("UKB-PPP", acting)$posterior_probability < 1e-6, one_row("UKB-PPP", acting)$credible_set_size == 1L, one_row("UKB-PPP", acting)$window_variants == 2L,
+    grepl("^rs1b \\(posterior 1.00, 0 bp away\\)$", one_row("UKB-PPP", acting)$lead_variant),
+    # A protein with one variant in its window cannot be fine-mapped; suggestive rows are not attempted.
+    is.na(one_row("FHS", "PROTD")$posterior_probability), is.na(one_row("UKB-PPP", "PROTB")$posterior_probability),
+    is.na(one_row("FHS", acting)$posterior_probability))
+  untested <- interp_pqtl(interp_variant("chr1", 101L, "G", "A"), srcs)
+  stopifnot(untested$available, !untested$found, !any(untested$studies$variant_tested), !interp_pqtl(v, none)$available)
+  # Protein abundance from the scans: association plus a predicted change to that gene is Strong; association alone Moderate.
+  protein_row <- function(consequences, local, ...) { s <- interp_evidence_summary(consequences, local, ...); s[s$question == "Protein abundance (pQTL)", ] }
+  p_strong <- protein_row(missense, list(pqtl = pq))
+  stopifnot(p_strong$level == "Strong", grepl(paste0("plasma level of ", acting, ", and this variant is itself predicted"), p_strong$finding, fixed = TRUE),
+    grepl(paste0("seen in both scans in the same direction: ", acting), p_strong$evidence, fixed = TRUE),
+    grepl("tested against 3 nearby protein(s) in UKB-PPP and 2 nearby protein(s) in FHS", p_strong$evidence, fixed = TRUE),
+    grepl("UKB-PPP cis-pQTL; FHS cis-pQTL", p_strong$sources, fixed = TRUE), grepl("p < 1e-300", p_strong$evidence, fixed = TRUE))
+  p_moderate <- protein_row(intronic, list(pqtl = pq))
+  stopifnot(p_moderate$level == "Moderate", grepl("not fine-mapped to this variant", p_moderate$finding, fixed = TRUE),
+    grepl("posterior 0.00, 95% credible set of 1 of 2 variant(s), lead rs1b", p_moderate$evidence, fixed = TRUE))
+  # A posterior of at least 0.5 is what singles the variant out: Strong without any predicted consequence.
+  led <- pq; led$associations$posterior_probability[led$associations$study == "UKB-PPP" & led$associations$protein == acting] <- .83
+  led$associations$lead_variant[led$associations$study == "UKB-PPP" & led$associations$protein == acting] <- "this variant"
+  p_pinned <- protein_row(intronic, list(pqtl = led))
+  stopifnot(p_pinned$level == "Strong", grepl("single-signal fine-mapping gives this variant a posterior probability of 0.83", p_pinned$finding, fixed = TRUE),
+    grepl("posterior 0.83, 95% credible set of 1 of 2 variant(s), this variant leads", p_pinned$evidence, fixed = TRUE))
+  only <- function(keep) { x <- pq; x$associations <- pa[pa$protein %in% keep, , drop = FALSE]; x }
+  stopifnot(protein_row(intronic, list(pqtl = only(c("PROTB", "PROTC"))))$level == "Limited",
+    protein_row(intronic, list(pqtl = only("PROTC")))$level == "None found",
+    grepl("No cis-pQTL at this variant: tested against", protein_row(intronic, list(pqtl = only("PROTC")))$finding, fixed = TRUE),
+    protein_row(intronic, list(pqtl = untested))$level == "Not assessed",
+    grepl("not in the local cis-pQTL scans", protein_row(intronic, list(pqtl = untested))$finding, fixed = TRUE),
+    # A published protein-level association still counts next to an empty scan.
+    protein_row(missense, list(pqtl = only("PROTC"), clinvar = none_here, gwas_catalog = far))$level == "None found")
+  # cis or trans for a published protein-level trait, from the assay table.
+  locus <- interp_protein_locus(c("protein x", "Acting protein", "unknown protein"), v, srcs)
+  stopifnot(identical(locus$locus, c("trans, PROTX is on chr2", "cis", "")), identical(locus$gene, c("PROTX", acting, "")),
+    identical(interp_trait_protein_locus(c("level of protein X in blood", "body height"), v, srcs), c("trans, PROTX is on chr2", "")),
+    identical(interp_protein_locus("protein x", v, none)$locus, ""))
+  published <- g; published$associations <- transform(g$associations[1:2, ], mapped_trait = c("level of protein X in blood", "level of acting protein in blood"),
+    p_value = 1e-20, protein_locus = c("trans, PROTX is on chr2", "cis"))
+  p_published <- protein_row(intronic, list(gwas_catalog = published))
+  stopifnot(p_published$level == "Moderate", grepl("blood level of 2 protein(s) in published GWAS", p_published$finding, fixed = TRUE),
+    grepl("1 encoded near the variant, cis; 1 encoded elsewhere, trans", p_published$finding, fixed = TRUE),
+    grepl("protein X (trans, PROTX is on chr2)", p_published$evidence, fixed = TRUE))
+  # GTEx significant pairs across tissues, with the table of genes tested per tissue.
+  gtex_file <- file.path(work, "gtex", "gtex_v11_eqtl_signif_pairs.b38.tsv.gz"); dir.create(dirname(gtex_file))
+  gtex_row <- function(pos, alt, gene, tissue, slope, se, p) paste("chr1", pos, "G", alt, gene, tissue, slope, se, p, 0.2, 1e-4, 500, sep = "\t")
+  index(c("#chrom\tpos\tref\talt\tgene_id\ttissue\tslope\tslope_se\tpval_nominal\taf\tpval_nominal_threshold\tstart_distance",
+    gtex_row(100, "A", "ENSG00000000001.5", "Brain_Cortex", .2, .05, 1e-4), gtex_row(100, "A", "ENSG00000000001.5", "Lung", .25, .05, 1e-6),
+    gtex_row(100, "A", "ENSG00000000001.5", "Whole_Blood", .3, .03, 1e-20), gtex_row(100, "A", "ENSG00000000002.1", "Liver", -.5, .1, 1e-7),
+    gtex_row(100, "A", "ENSG00000000002.1", "Lung", .4, .1, 1e-5), gtex_row(100, "C", "ENSG00000000009.1", "Lung", .9, .1, 1e-30),
+    gtex_row(101, "A", "ENSG00000000009.1", "Lung", .9, .1, 1e-30)), gtex_file, c("-s", "1", "-b", "2", "-e", "2", "-c", shQuote("#")))
+  gtex_gene <- function(gene, name, biotype, tissue, lead) paste(sub("\\..*$", "", gene), gene, name, biotype, tissue, 0.01, 1e-4, lead, .3, .03, 1e-20, .2, .5, sep = "\t")
+  gtex_genes <- file.path(work, "gtex", "genes.tsv")
+  writeLines(c(gtex_gene("ENSG00000000001.5", "GENEA", "protein_coding", "Brain_Cortex", "chr1_100_G_A_b38"),
+    gtex_gene("ENSG00000000001.5", "GENEA", "protein_coding", "Liver", "chr1_300_T_C_b38"), gtex_gene("ENSG00000000001.5", "GENEA", "protein_coding", "Lung", "chr1_300_T_C_b38"),
+    gtex_gene("ENSG00000000001.5", "GENEA", "protein_coding", "Whole_Blood", "chr1_100_G_A_b38"), gtex_gene("ENSG00000000002.1", "GENEB", "lncRNA", "Liver", "chr1_300_T_C_b38"),
+    gtex_gene("ENSG00000000002.1", "GENEB", "lncRNA", "Lung", "chr1_300_T_C_b38")), gtex_genes)
+  srcs$gtex_pairs <- gtex_file; srcs$gtex_genes <- gtex_genes; srcs$look <- unname(Sys.which("look"))
+  gt <- interp_gtex_local(v, srcs)
+  stopifnot(gt$available, gt$found, gt$release == "v11", nrow(gt$pairs) == 5L, identical(gt$genes$gene_id, c("ENSG00000000001.5", "ENSG00000000002.1")),
+    identical(gt$genes$tissues_significant, c(3L, 2L)), gt$genes$strongest_tissue[[1L]] == "Whole Blood", gt$genes$strongest_slope[[1L]] == .3,
+    gt$genes$direction[[1L]] == "ALT raises expression in every significant tissue", gt$genes$direction[[2L]] == "mixed: raises in 1, lowers in 1",
+    gt$genes$tissues[[1L]] == "Whole Blood, Lung, Brain Cortex", !nrow(interp_gtex_local(interp_variant("chr1", 100L, "G", "T"), srcs)$pairs),
+    interp_gtex_local(interp_variant("chr1", 100L, "G", "T"), srcs)$available, !interp_gtex_local(v, none)$available)
+  if (nzchar(srcs$look)) stopifnot(gt$gene_table, identical(gt$genes$gene, c("GENEA", "GENEB")), identical(gt$genes$tissues_tested, c(4L, 2L)),
+    identical(gt$genes$lead_variant_in, c(2L, 0L)), identical(gt$genes$whole_blood, c("significant", "not tested")), gt$genes$biotype[[2L]] == "lncRNA",
+    identical(gt$pairs$lead_variant[gt$pairs$gene == "GENEA"], c(TRUE, FALSE, TRUE)), identical(gt$pairs$gene, rep(c("GENEA", "GENEB"), c(3L, 2L))))
+  bare <- srcs; bare$gtex_genes <- "/missing"; gt_bare <- interp_gtex_local(v, bare)
+  stopifnot(!gt_bare$gene_table, all(is.na(gt_bare$genes$tissues_tested)), identical(gt_bare$genes$whole_blood, c("significant", "")), all(gt_bare$genes$gene == ""))
+  sg <- interp_evidence_summary(intronic, list(gtex = gt))
+  stopifnot(level(sg, "Gene expression (eQTL)") == "Moderate", level(sg, "Tissue") == "Context",
+    grepl("strongest GENEA in Whole Blood, slope +0.30", sg$evidence[sg$question == "Gene expression (eQTL)"], fixed = TRUE) || !nzchar(srcs$look),
+    grepl("GTEx v11 eQTL (local)", sg$evidence[sg$question == "Gene expression (eQTL)"], fixed = TRUE),
+    grepl("ALT raises expression in every significant tissue; whole blood: significant", sg$evidence[sg$question == "Tissue"], fixed = TRUE))
+  quiet_gtex <- interp_evidence_summary(intronic, list(gtex = interp_gtex_local(interp_variant("chr1", 100L, "G", "T"), srcs)))
+  stopifnot(level(quiet_gtex, "Gene expression (eQTL)") == "None found",
+    grepl("not a significant cis-eQTL in any tissue", quiet_gtex$evidence[quiet_gtex$question == "Tissue"], fixed = TRUE))
+  # Genes reached through GTEx and through the pQTL scans join the linked genes.
+  lg2 <- interp_linked_genes(interp_empty_consequences(), list(gtex = gt, pqtl = pq))
+  stopifnot("ENSG00000000001" %in% lg2$gene_id, lg2$relation[lg2$gene_id == "ENSG00000000001"] == "eQTL target (GTEx)",
+    lg2$relation[lg2$gene_id == "ENSGACT"] == "cis-pQTL protein", !"ENSGB" %in% lg2$gene_id)
+  # The GTEx build script, when pyarrow is installed.
+  python <- unname(Sys.which("python3"))
+  if (nzchar(python) && system2(python, c("-c", shQuote("import pyarrow")), stdout = FALSE, stderr = FALSE) == 0L) {
+    gsrc <- file.path(work, "gtex_source"); dir.create(gsrc)
+    maker <- file.path(work, "make_gtex.py")
+    writeLines(c("import sys, gzip, pyarrow as pa, pyarrow.parquet as pq", "d = sys.argv[1]",
+      "pq.write_table(pa.table({'phenotype_id': ['ENSG00000000002.1', 'ENSG00000000001.5'], 'variant_id': ['chr1_300_T_C_b38', 'chr1_100_G_A_b38'],",
+      "  'start_distance': pa.array([7, -5], pa.int32()), 'af': pa.array([.1, .2], pa.float32()), 'ma_samples': pa.array([9, 9], pa.int32()), 'ma_count': pa.array([9, 9], pa.int32()),",
+      "  'pval_nominal': [1e-7, 1e-20], 'slope': pa.array([-.5, .3], pa.float32()), 'slope_se': pa.array([.1, .03], pa.float32()),",
+      "  'pval_nominal_threshold': [1e-4, 1e-4], 'min_pval_nominal': [1e-7, 1e-20], 'pval_beta': [1e-5, 1e-9]}), d + '/Whole_Blood.v99.eQTLs.signif_pairs.parquet')",
+      "with gzip.open(d + '/Whole_Blood.v99.eGenes.txt.gz', 'wt') as f:",
+      "    f.write('gene_id\\tgene_name\\tbiotype\\tvariant_id\\tslope\\tslope_se\\tpval_nominal\\taf\\tqval\\tpval_nominal_threshold\\tafc\\n')",
+      "    f.write('ENSG00000000002.1\\tGENEB\\tlncRNA\\tchr1_300_T_C_b38\\t-0.5\\t0.1\\t1e-7\\t0.1\\t0.01\\t1e-4\\t-0.6\\n')",
+      "    f.write('ENSG00000000001.5\\tGENEA\\tprotein_coding\\tchr1_100_G_A_b38\\t0.3\\t0.03\\t1e-20\\t0.2\\t0.001\\t1e-4\\t0.4\\n')"), maker)
+    stopifnot(system2(python, c(shQuote(maker), shQuote(gsrc))) == 0L)
+    built_pairs <- file.path(work, "gtex_built", "gtex_v99_eqtl_signif_pairs.b38.tsv.gz"); built_genes <- file.path(work, "gtex_built", "genes.tsv")
+    log <- system2(python, c("scripts/build_gtex_index.py", "--source", shQuote(gsrc), "--pairs", shQuote(built_pairs), "--genes", shQuote(built_genes),
+      "--bgzip", shQuote(bgzip), "--tabix", shQuote(tabix), "--memory", "64M", "--threads", "1", "--work", shQuote(work)), stdout = TRUE, stderr = TRUE)
+    stopifnot(file.exists(built_pairs), file.exists(paste0(built_pairs, ".tbi")), file.exists(built_genes), any(grepl("tissues: 1  pairs: 2  gene rows: 2", log, fixed = TRUE)),
+      identical(sub("\t.*$", "", readLines(built_genes)), c("ENSG00000000001", "ENSG00000000002")))
+    from_build <- srcs; from_build$gtex_pairs <- built_pairs; from_build$gtex_genes <- built_genes
+    gb <- interp_gtex_local(v, from_build)
+    stopifnot(gb$found, gb$release == "v99", nrow(gb$pairs) == 1L, abs(gb$pairs$slope_alt - .3) < 1e-6, gb$pairs$tissue == "Whole Blood", gb$pairs$p_nominal == 1e-20,
+      gb$pairs$tss_distance == -5L, !nzchar(srcs$look) || (gb$genes$gene == "GENEA" && gb$genes$lead_variant_in == 1L))
+  } else if (native) stop("--native needs python3 with pyarrow") else cat("pyarrow not found: GTEx build-script check skipped\n")
   st <- interp_local_status(srcs)
   stopifnot(st$available[st$source == "CADD v1.7"], st$available[st$source == "TOPMed multi-tissue cis-QTL"], !st$available[st$source == "SpliceAI 1.3.1"],
-    st$available[st$source == "GWAS Catalog"], st$available[st$source == "ClinVar VCF"])
+    st$available[st$source == "GWAS Catalog"], st$available[st$source == "ClinVar VCF"], st$available[st$source == "GTEx cis-eQTL"],
+    st$available[st$source == "cis-pQTL summary statistics"])
   # LD with nearby reported variants, from a small VCF: twelve samples, the target's ALT dosage 0,0,0,0,1,1,1,1,2,2,2,2.
   stopifnot(identical(interp_gt_dosage(c("0/0", "0|1", "1/1", "./.", "1", "0", "1/2", "2|2", "./1"), 1L), c(0, 1, 2, NA, 1, 0, 1, 0, NA)),
     identical(interp_gt_dosage(c("1/2", "2|2", "0/0"), 2L), c(1, 2, 0)))
@@ -789,8 +949,10 @@ if (nzchar(tabix) && file.exists(bgzip)) {
       grepl("no other reported variant with r2 >= 0.2", quiet_ld$evidence[quiet_ld$question == "Disease and traits"], fixed = TRUE))
     # Protein abundance: a published protein-level association at a variant in tight LD counts; clinical traits do not.
     pl <- dl[dl$question == "Protein abundance (pQTL)", ]
-    stopifnot(pl$level == "Moderate", grepl("through LD (r2 >= 0.8 in this cohort): protein x (rs150, r2 1.00)", pl$evidence, fixed = TRUE),
-      grepl("blood level of 1 protein(s)", pl$finding, fixed = TRUE), level(quiet_ld, "Protein abundance (pQTL)") == "Not assessed",
+    stopifnot(pl$level == "Moderate", # The protein of the published trait is in the assay table and encoded on another chromosome: trans.
+      grepl("through LD (r2 >= 0.8 in this cohort): protein x (rs150, r2 1.00, trans, PROTX is on chr2)", pl$evidence, fixed = TRUE),
+      grepl("blood level of 1 protein(s) in published GWAS; not fine-mapped to this variant (1 encoded elsewhere, trans).", pl$finding, fixed = TRUE),
+      row_of("rs150")$protein_locus == "trans, PROTX is on chr2", row_of("rs180")$protein_locus == "", level(quiet_ld, "Protein abundance (pQTL)") == "Not assessed",
       identical(interp_is_protein_trait(c("level of liver carboxylesterase 1 in blood", "Level of X in blood serum", "protein measurement",
         "high density lipoprotein cholesterol measurement", "apolipoprotein A 1 measurement")), c(TRUE, TRUE, FALSE, FALSE, FALSE)),
       interp_protein_name("level of liver carboxylesterase 1 in blood") == "liver carboxylesterase 1")

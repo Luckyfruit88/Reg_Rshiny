@@ -11,7 +11,8 @@ Sys.setenv(REGSHINY_CADD_SNV = "/nonexistent/cadd", REGSHINY_CADD_INDEL = "/none
   REGSHINY_TOPMED_QTL = "/nonexistent/topmed", REGSHINY_FHS_SQTL = "/nonexistent/a;/nonexistent/b", REGSHINY_FHS_EQTL = "/nonexistent/e",
   REGSHINY_SPLICEAI = "/nonexistent/spliceai", REGSHINY_GWAS_CATALOG = "/nonexistent/gwas", REGSHINY_CLINVAR_VCF = "/nonexistent/clinvar",
   REGSHINY_REACTOME = "/nonexistent/reactome", REGSHINY_MSIGDB = "/nonexistent/msigdb", REGSHINY_TISSUE_MODEL_EQTL = "/nonexistent/model",
-  REGSHINY_TISSUE_MODEL_SQTL = "/nonexistent/model")
+  REGSHINY_TISSUE_MODEL_SQTL = "/nonexistent/model", REGSHINY_PQTL_UKBPPP = "/nonexistent/pqtl", REGSHINY_PQTL_FHS = "/nonexistent/pqtl",
+  REGSHINY_PQTL_PROTEIN_MAP = "/nonexistent/map", REGSHINY_GTEX_EQTL = "/nonexistent/gtex", REGSHINY_GTEX_EGENES = "/nonexistent/genes")
 scratch <- tempfile("interpretation-ui-"); dir.create(scratch)
 backend_file <- normalizePath("src/interpretation_backend.R")
 fixture_backend <- file.path(scratch, "backend.R")
@@ -55,6 +56,24 @@ writeLines(c(
   '  list(available = TRUE, found = TRUE, ld = ld, window = 500000L, keep_r2 = .2, positions_in_window = 3L, positions_examined = 3L, truncated = FALSE,',
   '    samples = 100L, release = vcf, ran_at = "now")',
   '}',
+  '# Synthetic cis-pQTL scan and GTEx copy: the variant at 161 is in both, any other position in neither.',
+  'interp_pqtl <- function(variant, sources = NULL) {',
+  '  hit <- variant$pos1 == 161L',
+  '  a <- interp_pqtl_empty()[1, ]; a$study <- "UKB-PPP"; a$protein <- "PLUS"; a$gene <- "PLUS"; a$gene_id <- "ENSG00000000001"; a$assay_id <- ""; a$rs_id <- "rs77"',
+  '  a$beta_alt <- -.6; a$se <- .02; a$p_value <- 1e-30; a$log10_p <- -30; a$significance <- "experiment-wide"; a$alt_frequency <- .1; a$n <- 30000L; a$info <- 1; a$gene_distance <- 0L',
+  '  list(available = TRUE, found = hit, associations = if (hit) a else a[0, ], studies = data.frame(study = "UKB-PPP", label = "synthetic scan", available = TRUE,',
+  '    variant_tested = hit, proteins_tested = as.integer(hit), min_p = if (hit) 1e-30 else NA_real_, stringsAsFactors = FALSE), cut = interp_pqtl_cut(), source = "synthetic")',
+  '}',
+  'interp_gtex_local <- function(variant, sources = NULL) {',
+  '  out <- c(list(available = TRUE, found = FALSE, release = "v99", gene_table = TRUE), interp_gtex_local_empty(), list(source = "synthetic GTEx"))',
+  '  if (variant$pos1 != 161L) return(out)',
+  '  out$pairs <- data.frame(gene = "PLUS", gene_id = "ENSG00000000001.1", tissue = c("Whole Blood", "Liver"), slope_alt = c(-.4, -.2), slope_se = .05, p_nominal = c(1e-12, 1e-5),',
+  '    p_threshold = 1e-4, alt_frequency = .1, tss_distance = 60L, lead_variant = c(TRUE, FALSE), stringsAsFactors = FALSE)',
+  '  out$genes <- data.frame(gene = "PLUS", gene_id = "ENSG00000000001.1", biotype = "protein_coding", tissues_significant = 2L, tissues_tested = 40L,',
+  '    direction = "ALT lowers expression in every significant tissue", strongest_tissue = "Whole Blood", strongest_slope = -.4, strongest_p = 1e-12, lead_variant_in = 1L,',
+  '    whole_blood = "significant", tissues = "Whole Blood, Liver", stringsAsFactors = FALSE)',
+  '  out$found <- TRUE; out',
+  '}',
   'interp_spliceai <- function(variant, fasta, ...) {',
   '  if (!nzchar(fasta)) stop("SpliceAI needs the reference FASTA of the connected dataset.")',
   '  list(scores = interp_parse_spliceai(c("#h", paste0("chrT\\t", variant$pos1, "\\t.\\tA\\tG\\t.\\t.\\tSpliceAI=G|PLUS|0.00|0.00|0.05|0.93|3|4|9|-1")), variant),',
@@ -82,7 +101,8 @@ writeLines(c(
 
 # Static pieces.
 ui <- as.character(interpretation_ui("x"))
-for (id in c("x-public", "x-spliceai", "x-summary", "x-consequences", "x-context_plot", "x-gwas", "x-pathways", "x-local_sources"))
+for (id in c("x-public", "x-spliceai", "x-summary", "x-consequences", "x-context_plot", "x-gwas", "x-pathways", "x-local_sources", "x-pqtl_table",
+  "x-pqtl_status", "x-gtex_local_plot_box", "x-gtex_local_genes", "x-gtex_local_pairs"))
   stopifnot(grepl(paste0('id="', id, '"'), ui, fixed = TRUE))
 stopifnot(grepl("sends only the variant", ui, fixed = TRUE), grepl("not a clinical classification", ui, fixed = TRUE))
 cards <- as.character(interpretation_summary_cards(data.frame(question = c("Splicing", "Tissue"), level = c("Strong", "Not assessed"),
@@ -125,6 +145,12 @@ grDevices::png(png, width = 900, height = 700)
 bars <- interpretation_plot_expression(data.frame(gene = "G", tissue = c("Whole Blood", "Liver"), median_tpm = c(5, 50)), "G")
 stopifnot(identical(bars$tissue, c("Whole Blood", "Liver")), is.null(interpretation_plot_expression(data.frame(gene = character(), tissue = character(), median_tpm = numeric()), "G")))
 grDevices::dev.off()
+gtex_pairs <- data.frame(gene = "G", gene_id = "ENSG1.1", tissue = c("Whole Blood", "Liver", "Lung"), slope_alt = c(.3, -.2, .1), slope_se = .05,
+  lead_variant = c(TRUE, FALSE, NA), stringsAsFactors = FALSE)
+grDevices::png(png, width = 900, height = 700)
+drawn <- interpretation_plot_gtex(gtex_pairs, "ENSG1.1", "v99")
+stopifnot(identical(drawn$tissue, c("Liver", "Lung", "Whole Blood")), is.null(interpretation_plot_gtex(gtex_pairs, "ENSG2.1")), is.null(interpretation_plot_gtex(NULL, "")))
+grDevices::dev.off()
 
 await <- function(session, task, ready) {
   for (i in seq_len(200L)) {
@@ -154,19 +180,30 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   s <- isolate(summary_now())
   # Essential site plus the cohort's own bin-ratio association: Strong without any external source.
   stopifnot(nrow(s) == 7L, level(s, "Splicing") == "Strong", level(s, "Protein sequence") == "Strong", level(s, "Disease and traits") == "Not assessed",
-    level(s, "Pathway") == "Not assessed", grepl("bin ratio at donor:+:chrT:161", s$evidence[s$question == "Splicing"], fixed = TRUE))
+    level(s, "Pathway") == "Not assessed", grepl("bin ratio at donor:+:chrT:161", s$evidence[s$question == "Splicing"], fixed = TRUE),
+    # The local cis-pQTL scan and GTEx copy are read with the other local sources: a cis-pQTL of the gene whose splice site
+    # the variant destroys is Strong, and the gene joins the linked genes through both.
+    level(s, "Protein abundance (pQTL)") == "Strong", grepl("PLUS in UKB-PPP: -0.600 per ALT allele", s$evidence[s$question == "Protein abundance (pQTL)"], fixed = TRUE),
+    level(s, "Gene expression (eQTL)") == "Moderate", grepl("GTEx v99 eQTL (local): PLUS in 2 of 40 tested tissue(s)", s$evidence[s$question == "Gene expression (eQTL)"], fixed = TRUE),
+    level(s, "Tissue") == "Context", grepl("the gene's lead variant in 1 tissue(s)", s$evidence[s$question == "Tissue"], fixed = TRUE),
+    x$local$pathways$genes$relation == "overlaps; eQTL target (GTEx); cis-pQTL protein")
+  stopifnot(grepl("this variant was tested against 1 nearby protein(s); smallest p 1.0e-30", html_text(output$pqtl_status), fixed = TRUE),
+    grepl("significant cis-eQTL of 1 gene(s) in 2 tissue(s)", html_text(output$gtex_local_status), fixed = TRUE), isolate(gtex_gene()) == "ENSG00000000001.1",
+    is.null(output$gtex_gene_choice) || !nzchar(html_text(output$gtex_gene_choice)),
+    # Two tissues: the plot box is sized for the three-row minimum.
+    grepl("height:222px", html_text(output$gtex_local_plot_box), fixed = TRUE))
   header <- html_text(output$header)
   stopifnot(grepl("chrT:161:A:G", header, fixed = TRUE), grepl("GENCODE v48", header, fixed = TRUE), !grepl("does not match", header, fixed = TRUE))
   stopifnot(grepl("regshiny-level-strong", html_text(output$summary), fixed = TRUE), !length(readLines(request_log)))
   # The reading names the best-supported effect and the steps that have not been run.
-  stopifnot(grepl("Best-supported molecular effect: a change to the protein sequence and splicing (Strong)", html_text(output$reading), fixed = TRUE),
+  stopifnot(grepl("Best-supported molecular effect: a change to the protein sequence and protein abundance and splicing (Strong)", html_text(output$reading), fixed = TRUE),
     grepl("Not run yet: SpliceAI", html_text(output$reading), fixed = TRUE))
   stopifnot(grepl("has not been run", html_text(output$spliceai_status), fixed = TRUE))
   # Nothing is sent until the user asks.
   session$setInputs(public = 1L); await(session, public_task, function() !is.null(public_now()))
   p <- isolate(public_now()); s <- isolate(summary_now()); sent <- paste(readLines(request_log), collapse = "\n")
   stopifnot(p$open_targets$found, nrow(p$open_targets$gwas) == 1L, level(s, "Disease and traits") == "Strong", level(s, "Pathway") == "Context",
-    level(s, "Tissue") == "Context", level(s, "Protein abundance (pQTL)") == "None found", grepl("GTEx sQTL in 1 tissue", s$evidence[s$question == "Splicing"], fixed = TRUE),
+    level(s, "Tissue") == "Context", level(s, "Protein abundance (pQTL)") == "Strong", grepl("GTEx sQTL in 1 tissue", s$evidence[s$question == "Splicing"], fixed = TRUE),
     grepl("T_161_A_G", sent, fixed = TRUE), grepl("ENSG00000000001", sent, fixed = TRUE),
     # Only the variant and gene identifiers leave: no site table, sample count or cohort label.
     !grepl("bin ratio|donor:|800|FHS", sent))
@@ -188,7 +225,10 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   current(record(pos = 124L, ref = "G", alt = "A")); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 124L))
   stopifnot(is.null(isolate(public_now())), is.null(isolate(spliceai_now())), is.null(isolate(ld_now())))
   s <- isolate(summary_now())
-  stopifnot(isolate(local_now())$consequences$hgvs_p == "p.Ala2Thr", level(s, "Protein sequence") == "Moderate", level(s, "Disease and traits") == "Not assessed")
+  stopifnot(isolate(local_now())$consequences$hgvs_p == "p.Ala2Thr", level(s, "Protein sequence") == "Moderate", level(s, "Disease and traits") == "Not assessed",
+    # This position is in neither the scan nor GTEx.
+    level(s, "Protein abundance (pQTL)") == "Not assessed", level(s, "Gene expression (eQTL)") == "None found",
+    grepl("this variant is not in the scan", html_text(output$pqtl_status), fixed = TRUE), grepl("not a significant cis-eQTL of any gene", html_text(output$gtex_local_status), fixed = TRUE))
   # Going back shows the answers already fetched for that variant.
   current(record()); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 161L))
   stopifnot(!is.null(isolate(public_now())), !is.null(isolate(spliceai_now())), !is.null(isolate(ld_now())))

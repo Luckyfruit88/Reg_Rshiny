@@ -58,6 +58,13 @@ interpretation_ui <- function(id) {
         shiny::h5("FHS whole blood"),
         shiny::uiOutput(ns("fhs_status")),
         interpretation_table_output(ns("fhs_table")),
+        shiny::h5("GTEx cis-eQTL across tissues (local)"),
+        shiny::uiOutput(ns("gtex_local_status")),
+        shiny::uiOutput(ns("gtex_gene_choice")),
+        shiny::uiOutput(ns("gtex_local_plot_box")),
+        interpretation_table_output(ns("gtex_local_genes")),
+        interpretation_table_output(ns("gtex_local_pairs")),
+        shiny::p("Read from the local copy of the GTEx significant variant-gene pairs; nothing is sent. One row per gene in the first table and per gene and tissue in the second. Slopes are per ALT allele on GTEx's normalised expression. tissues_tested counts the tissues in which GTEx tested the gene at all, so a tissue missing from the list is either not significant there or did not test the gene; a tissue with few donors can miss an effect. lead_variant marks tissues where this variant is the gene's most significant variant, which is a hint, not fine-mapping. GTEx tissues differ in donors and sample size, so a count of tissues is descriptive."),
         shiny::h5("GTEx v10 (public query)"),
         interpretation_table_output(ns("gtex_qtl")),
         shiny::plotOutput(ns("expression_plot"), height = 900)),
@@ -82,9 +89,13 @@ interpretation_ui <- function(id) {
         shiny::h5("Pharmacogenomics"),
         interpretation_table_output(ns("pgx"))),
       bslib::nav_panel("Protein, genes and pathways",
+        shiny::h5("Plasma protein levels: cis-pQTL at this variant (local)"),
+        shiny::uiOutput(ns("pqtl_status")),
+        interpretation_table_output(ns("pqtl_table")),
+        shiny::p("Read from local copies of cis-pQTL summary statistics; nothing is sent. Each row is this variant tested against the plasma level of one protein encoded nearby, whatever the p-value, so a variant that was tested and is not associated is told apart from one that was not tested. beta_alt is the change per ALT allele in the scan's normalised protein level. significance: experiment-wide is p <= 1.7e-11 (5e-8 divided by the 2,923 proteins of UKB-PPP), genome-wide p <= 5e-8, suggestive p <= 1e-5. gene_distance is the distance from the variant to the protein's gene (0 inside it). An association shows that this variant, or one in linkage disequilibrium with it, goes with the protein level; a variant that changes the protein's sequence can also change how well the assay binds it. The FHS scan is a project file whose analysis model is not recorded with it."),
         shiny::h5("Genes linked to this variant"),
         interpretation_table_output(ns("linked_genes")),
-        shiny::p("overlaps: the variant lies in the gene. sQTL / eQTL target: the gene's splicing or expression is significantly associated with the variant in a TOPMed context. Pathways below are listed for each of these genes."),
+        shiny::p("overlaps: the variant lies in the gene. sQTL / eQTL target: the gene's splicing or expression is significantly associated with the variant in a TOPMed context or a GTEx tissue. cis-pQTL protein: the plasma level of the gene's protein is associated with the variant at p <= 5e-8. Pathways below are listed for each of these genes."),
         shiny::h5("Reactome pathways of the linked genes (local)"),
         interpretation_table_output(ns("local_reactome")),
         shiny::h5("Gene sets of the linked genes (MSigDB, local)"),
@@ -194,6 +205,28 @@ interpretation_plot_contexts <- function(pairs, heterogeneity, max_panels = 4L, 
       side = 3, line = .5, cex = .76, col = "#555555")
   }
   invisible(h)
+}
+
+# Slope of one gene's GTEx eQTL in every tissue where it is significant, with 95% intervals.
+interpretation_plot_gtex <- function(pairs, gene_id, release = "") {
+  x <- if (is.data.frame(pairs)) pairs[pairs$gene_id == gene_id & is.finite(pairs$slope_alt), , drop = FALSE] else NULL
+  if (is.null(x) || !nrow(x)) { graphics::plot.new(); graphics::text(.5, .5, "Not a significant GTEx cis-eQTL in any tissue"); return(invisible(NULL)) }
+  x <- x[order(x$slope_alt), , drop = FALSE]; y <- seq_len(nrow(x))
+  lo <- x$slope_alt - 1.96 * x$slope_se; hi <- x$slope_alt + 1.96 * x$slope_se
+  lim <- range(c(0, lo, hi), na.rm = TRUE)
+  size <- if (nrow(x) > 36L) .68 else if (nrow(x) > 24L) .8 else .92
+  old <- graphics::par(mar = c(4.4, 19, 3.6, 1), cex = 1, cex.axis = size, mgp = c(2.3, .7, 0)); on.exit(graphics::par(old))
+  graphics::plot(NA, xlim = lim + c(-.05, .05) * diff(lim), ylim = c(.5, nrow(x) + .5), yaxt = "n", ylab = "", xlab = "Slope per ALT allele")
+  graphics::axis(2, at = y, labels = x$tissue, las = 1)
+  graphics::abline(h = y, col = "#EEEEEE"); graphics::abline(v = 0, lty = 2, col = "#888888")
+  blood <- x$tissue == "Whole Blood"
+  graphics::segments(lo, y, hi, y, col = ifelse(blood, "#B7410E", "#1F4E79"), lwd = 2)
+  graphics::points(x$slope_alt, y, pch = ifelse(x$lead_variant %in% TRUE, 23, 19), col = ifelse(blood, "#B7410E", "#1F4E79"),
+    bg = ifelse(blood, "#B7410E", "#1F4E79"), cex = 1.2)
+  name <- if (nzchar(x$gene[[1L]])) x$gene[[1L]] else sub("\\..*$", "", gene_id)
+  graphics::title(main = trimws(paste0("GTEx ", release, " eQTL \u00b7 ", name, " \u00b7 ", nrow(x), " significant tissue(s)")), cex.main = 1, line = 2)
+  graphics::mtext("bar: 95% CI; whole blood in orange; diamond: the gene's lead variant in that tissue", side = 3, line = .5, cex = .76, col = "#555555")
+  invisible(x)
 }
 
 interpretation_plot_expression <- function(expression, gene) {
@@ -520,6 +553,54 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       rbind(if (nrow(f$sqtl)) cbind(qtl_type = "sQTL (isoform ratio)", f$sqtl) else NULL,
             if (nrow(f$eqtl)) cbind(qtl_type = "eQTL (gene)", f$eqtl) else NULL)
     }, empty = "No FHS whole-blood QTL row for this variant at the stored thresholds.")
+    gtex_local_now <- shiny::reactive({ g <- local_part("gtex"); if (is.null(g) || !isTRUE(g$available)) NULL else g })
+    output$gtex_local_status <- shiny::renderUI({
+      g <- gtex_local_now()
+      if (is.null(g)) return(shiny::p("The local GTEx copy is not readable from this session (see scripts/build_gtex_index.py)."))
+      if (!nrow(g$genes)) return(shiny::p(paste0("GTEx ", g$release, ": this variant is not a significant cis-eQTL of any gene in any tissue (or GTEx did not test it).")))
+      shiny::p(paste0("GTEx ", g$release, ": significant cis-eQTL of ", nrow(g$genes), " gene(s) in ", length(unique(g$pairs$tissue)), " tissue(s); ",
+        nrow(g$pairs), " gene-tissue pair(s).", if (!isTRUE(g$gene_table)) " The table of genes tested per tissue is not readable, so tissues_tested is empty." else ""))
+    })
+    gtex_gene <- shiny::reactive({
+      g <- gtex_local_now(); shiny::req(!is.null(g), nrow(g$genes) > 0L)
+      if (length(input$gtex_gene) == 1L && input$gtex_gene %in% g$genes$gene_id) input$gtex_gene else g$genes$gene_id[[1L]]
+    })
+    output$gtex_gene_choice <- shiny::renderUI({
+      g <- gtex_local_now()
+      if (is.null(g) || nrow(g$genes) < 2L) return(NULL)
+      label <- ifelse(nzchar(g$genes$gene), g$genes$gene, g$genes$gene_id)
+      shiny::selectInput(session$ns("gtex_gene"), "Gene shown in the plot", choices = stats::setNames(g$genes$gene_id,
+        paste0(label, " (", g$genes$tissues_significant, " tissue(s))")), selected = g$genes$gene_id[[1L]])
+    })
+    # The plot is as tall as its tissues need: two tissues do not get the space of fifty.
+    output$gtex_local_plot_box <- shiny::renderUI({
+      g <- gtex_local_now()
+      n <- if (is.null(g) || !nrow(g$genes)) 0L else sum(g$pairs$gene_id == gtex_gene())
+      shiny::plotOutput(session$ns("gtex_local_plot"), height = if (n) 150L + 24L * max(n, 3L) else 120L)
+    })
+    output$gtex_local_plot <- shiny::renderPlot({
+      g <- gtex_local_now()
+      if (is.null(g) || !nrow(g$genes)) return(interpretation_plot_gtex(NULL, ""))
+      interpretation_plot_gtex(g$pairs, gtex_gene(), g$release)
+    }, res = 96)
+    output$gtex_local_genes <- show_table(function() { g <- gtex_local_now(); if (is.null(g)) NULL else g$genes },
+      empty = "No significant GTEx cis-eQTL for this variant in the local copy.")
+    output$gtex_local_pairs <- show_table(function() { g <- gtex_local_now(); if (is.null(g)) NULL else g$pairs },
+      empty = "No significant GTEx gene-tissue pair for this variant.")
+    pqtl_now <- shiny::reactive({ q <- local_part("pqtl"); if (is.null(q) || !isTRUE(q$available)) NULL else q })
+    output$pqtl_status <- shiny::renderUI({
+      q <- pqtl_now()
+      if (is.null(q)) return(shiny::p("No local cis-pQTL copy is readable from this session (see scripts/build_pqtl_index.sh)."))
+      st <- q$studies[q$studies$available, , drop = FALSE]
+      shiny::tags$ul(lapply(seq_len(nrow(st)), function(i) shiny::tags$li(paste0(st$study[[i]], " (", st$label[[i]], "): ",
+        if (st$variant_tested[[i]]) paste0("this variant was tested against ", st$proteins_tested[[i]], " nearby protein(s); smallest p ",
+          backend$interp_fmt_p(st$min_p[[i]]), ".") else "this variant is not in the scan (no measured protein is encoded within its window, or the variant was not tested)."))))
+    })
+    # What is read first comes first: effect, p-value, and whether fine-mapping points at this variant.
+    pqtl_columns <- c("study", "protein", "beta_alt", "se", "p_value", "significance", "posterior_probability", "credible_set_size", "lead_variant",
+      "alt_frequency", "n", "gene", "gene_distance", "gene_id", "assay_id", "rs_id", "info", "window_variants", "log10_p")
+    output$pqtl_table <- show_table(function() { q <- pqtl_now(); if (is.null(q)) NULL else q$associations[, intersect(pqtl_columns, names(q$associations)), drop = FALSE] },
+      empty = "This variant is not in the local cis-pQTL scans.")
     public_part <- function(source, field, message = "Run the public query to fill this table.") function() {
       p <- public_now()
       shiny::validate(shiny::need(!is.null(p), message))
@@ -607,7 +688,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       x <- local_now(); p <- public_store()[[variant_key()]]; s <- spliceai_now()
       cat("Variant:", x$variant$id, "\nGENCODE release:", if (is.null(x$release)) "unavailable" else x$release, "\n")
       cat("Reference base(s) at the variant:", x$reference_base, "\n")
-      if (!is.null(x$local)) for (n in c("cadd", "known", "fhs", "topmed", "tissue", "gwas_catalog", "clinvar", "pathways")) if (inherits(x$local[[n]], "error"))
+      if (!is.null(x$local)) for (n in c("cadd", "known", "fhs", "topmed", "tissue", "gwas_catalog", "clinvar", "pqtl", "gtex", "pathways")) if (inherits(x$local[[n]], "error"))
         cat("Local source", n, "failed:", conditionMessage(x$local[[n]]), "\n")
       cat("Public query:", if (is.null(p)) "not run" else if (inherits(p, "error")) conditionMessage(p) else
         paste0("run at ", p$queried_at, "; sent variant ", p$variant, " and gene IDs ", paste(p$gene_ids, collapse = ", ")), "\n")
