@@ -2728,7 +2728,7 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     gene_of <- interp_bare_gene(e_pairs$gene_id); mapped <- if (is.null(e_pairs$fine_mapped)) rep(NA, nrow(e_pairs)) else e_pairs$fine_mapped
     out_of_sets <- vapply(unique(gene_of), function(g) { k <- gene_of == g; all(mapped[k] %in% TRUE) && all(is.na(e_pairs$pip[k]) | e_pairs$pip[k] < 0.1) }, logical(1))
     in_sets <- vapply(unique(gene_of), function(g) suppressWarnings(max(e_pairs$pip[gene_of == g], na.rm = TRUE)), numeric(1))
-    label <- vapply(unique(gene_of), function(g) name(e_pairs[gene_of == g, , drop = FALSE])[[1L]], character(1))
+    label <- vapply(unique(gene_of), function(g) { n <- e_pairs$gene[gene_of == g]; n <- n[nzchar(n)]; if (length(n)) n[[1L]] else g }, character(1))
     set_aside <- unname(label[out_of_sets]); set_aside_ids <- unique(gene_of)[out_of_sets]
     held <- is.finite(in_sets) & in_sets >= 0.1
     if (length(set_aside) || any(held)) evidence <- c(evidence, paste0("TOPMed SuSiE: ", paste(c(
