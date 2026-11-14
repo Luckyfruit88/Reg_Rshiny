@@ -751,8 +751,8 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
     acceptor_end <- function(k) if (minus) introns$start1[[k]] else introns$end1[[k]]
     flags <- paste(intersect(c("MANE_Select", "MANE_Plus_Clinical", "Ensembl_canonical", "basic"), model$tags), collapse = ";")
     scenarios <- list()
-    scenario <- function(use = NULL, retain = NULL, event, support, basis) scenarios[[length(scenarios) + 1L]] <<- list(use = use, retain = retain,
-      event = event, support = support, basis = basis)
+    scenario <- function(use = NULL, retain = NULL, event, support, basis, strength = 0) scenarios[[length(scenarios) + 1L]] <<- list(use = use, retain = retain,
+      event = event, support = support, basis = basis, strength = strength)
     # Splice sites of this transcript that the variant destroys, that the open result shows are used less with ALT,
     # or that SpliceAI predicts to weaken.
     lost <- data.frame(intron = integer(), site = character(), support = character(), strong = logical(), observed = logical(), stringsAsFactors = FALSE)
@@ -835,7 +835,9 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
       # An annotated intron of this transcript that the new one stands in for, and that is itself seen to fall with ALT.
       stood_in <- introns[introns$end1 >= use[[1L]] & introns$start1 <= use[[2L]], , drop = FALSE]
       fell <- falling$detail[paste(falling$start1, falling$end1) %in% paste(stood_in$start1, stood_in$end1)]
-      scenario(use = use, event = event, support = paste(unique(c(g$detail, hit$support, if (length(fell)) paste0("the annotated intron it replaces: ", fell))), collapse = "; "), basis = basis)
+      # Among several changes on one transcript, the one with the largest observed effect is listed first.
+      scenario(use = use, event = event, support = paste(unique(c(g$detail, hit$support, if (length(fell)) paste0("the annotated intron it replaces: ", fell))), collapse = "; "), basis = basis,
+        strength = if (any(g$observed)) max(abs(g$score[g$observed])) else max(abs(g$score)))
     }
     # A lost site with nothing to replace it: the two usual outcomes, as assumptions.
     for (j in setdiff(seq_len(nrow(lost)), replaced)) {
@@ -856,7 +858,7 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
       rows[[length(rows) + 1L]] <- data.frame(gene = tx$gene_name[[i]], transcript_id = id, transcript_flags = flags, event = sc$event, support = sc$support,
         basis = sc$basis, mrna_change = paste(c(if (removed) paste0(removed, " exonic nt removed"), if (kept) paste0(kept, " intronic nt kept")), collapse = ", "),
         coding_effect = result$coding_effect, protein_change = result$protein_change, protein_length_ref = result$protein_length_ref,
-        protein_length_new = result$protein_length_new, nmd = result$nmd, annotated_in = annotated_in(sc$use), stringsAsFactors = FALSE)
+        protein_length_new = result$protein_length_new, nmd = result$nmd, annotated_in = annotated_in(sc$use), strength = sc$strength, stringsAsFactors = FALSE)
     }
   }
   if (!length(rows)) return(out)
@@ -864,7 +866,7 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
   # Reference transcripts first, then the best-supported changes; the same outcome on several transcripts is kept once per gene.
   basis_rank <- match(out$basis, c("observed and predicted", "observed", "predicted", "weakly predicted", "assumed outcome"))
   flag_rank <- ifelse(grepl("MANE_Select", out$transcript_flags), 0L, ifelse(grepl("Ensembl_canonical", out$transcript_flags), 1L, ifelse(grepl("basic", out$transcript_flags), 2L, 3L)))
-  out <- out[order(flag_rank, basis_rank, out$gene, out$transcript_id), , drop = FALSE]
+  out <- out[order(flag_rank, basis_rank, -out$strength, out$gene, out$transcript_id), names(interp_splice_protein_empty()), drop = FALSE]
   out <- out[!duplicated(out[, c("gene", "event", "coding_effect", "protein_change", "nmd")]), , drop = FALSE]
   rownames(out) <- NULL
   utils::head(out, max_rows)

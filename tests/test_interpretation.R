@@ -270,6 +270,11 @@ long_intron <- transform(ev[1L, ], start1 = 151L, end1 = 300L)
 joined <- interp_splice_protein(far_variant, annotation_S, fetch, rbind(long_intron, transform(ev[5L, ], score = .42, detail = "SpliceAI donor gain 0.42")))
 stopifnot(nrow(joined) == 1L, joined$basis == "observed", grepl("SpliceAI donor gain 0.42", joined$support, fixed = TRUE), grepl("1 exon(s) left out", joined$event, fixed = TRUE),
   interp_splice_protein(far_variant, annotation_S, fetch, rbind(long_intron, ev[5L, ]))$basis == "observed and predicted")
+# Two observed changes on one transcript: the one with the larger effect comes first, whatever the order they arrive in.
+two <- rbind(transform(ev[1L, ], start1 = 161L, end1 = 300L, score = .4), transform(ev[1L, ], start1 = 151L, end1 = 200L, score = 1.5))
+stopifnot(identical(names(interp_splice_protein(far_variant, annotation_S, fetch, two)), names(interp_splice_protein_empty())),
+  grepl("^alternative donor", interp_splice_protein(far_variant, annotation_S, fetch, two)$event[[1L]]),
+  grepl("^exon skipping", interp_splice_protein(far_variant, annotation_S, fetch, transform(two, score = rev(score)))$event[[1L]]))
 # The mirrored transcript gives the mirrored events the same reading; a change that fits no transcript gives no row.
 mirror_events <- transform(ev, start1 = ifelse(is.na(ev$end1), NA_integer_, mirror(ev$end1)), end1 = ifelse(is.na(ev$start1), NA_integer_, mirror(ev$start1)),
   position = ifelse(is.na(ev$position), NA_integer_, mirror(ev$position)))
