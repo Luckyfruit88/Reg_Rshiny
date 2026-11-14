@@ -446,7 +446,11 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
           a <- new.env(parent = globalenv()); sys.source(annotation_file, envir = a)
           s <- new.env(parent = globalenv()); sys.source(splice_file, envir = s)
           v <- e$interp_variant(allele$chrom, allele$pos1, allele$ref, allele$alt)
-          q <- a$query_annotation(annotation, v$chrom, max(1L, v$pos1 - 5000L), v$pos1 + 5000L, allele$build)
+          # The variant's surroundings and the introns of the events, which can lie away from the variant.
+          w <- e$interp_splice_query_windows(v, events)
+          q <- e$interp_merge_annotation(lapply(seq_len(nrow(w)), function(i) {
+            one <- tryCatch(a$query_annotation(annotation, v$chrom, w$start1[[i]], w$end1[[i]], allele$build), error = function(err) if (i == 1L) stop(err) else NULL)
+            one }))
           list(table = e$interp_splice_protein(v, q, function(chrom, start1, end1) s$splice_fetch_reference(reference, chrom, start1, end1)$sequence, events),
             events = events)
         }, error = function(err) err)

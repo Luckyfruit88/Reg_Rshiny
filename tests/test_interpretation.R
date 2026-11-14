@@ -311,6 +311,18 @@ annotation_S4 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC"
 stretch <- interp_splice_protein(far_variant, annotation_S4, fetch, transform(bin_events, position = c(161L, 171L)))
 stopifnot(nrow(stretch) == 1L, stretch$mrna_change == "60 exonic nt removed, 10 intronic nt kept", grepl("donor site at 161 used less with ALT", stretch$support, fixed = TRUE),
   stretch$event == "alternative donor: intron chrS:171-300 in place of intron 2, 1 exon(s) left out", stretch$basis == "observed")
+# The annotation is read around the variant and around the introns of the events, which can lie away from it.
+far_events <- rbind(transform(ev[1L, ], start1 = 50151L, end1 = 50200L, score = .5), transform(ev[1L, ], start1 = 900001L, end1 = 1300000L, score = 2),
+  transform(ev[1L, ], start1 = 5000001L, end1 = 5000100L), transform(ev[5L, ], position = 20000L), transform(ev[2L, ], start1 = 151L, end1 = 200L))
+windows <- interp_splice_query_windows(interp_variant("chrS", 10000L, "A", "G"), far_events)
+stopifnot(identical(windows$start1, c(5000L, 899001L, 1299000L, 50150L, 150L, 19000L)), identical(windows$end1, c(15000L, 901001L, 1301000L, 50201L, 201L, 21000L)),
+  # The variant's own window first; then the rising introns, strongest first and a long one at its two ends; then the
+  # falling ones and the sites. An intron beyond reach and one inside a window already taken add nothing.
+  nrow(interp_splice_query_windows(interp_variant("chrS", 180L, "A", "G"), ev)) == 1L, nrow(interp_splice_query_windows(interp_variant("chrS", 180L, "A", "G"))) == 1L,
+  nrow(interp_splice_query_windows(interp_variant("chrS", 10000L, "A", "G"), far_events, max_windows = 2L)) == 2L)
+merged <- interp_merge_annotation(list(annotation_S, annotation_S3, NULL, annotation_S))
+stopifnot(identical(merged$transcripts$transcript_id, c("SP", "SNC")), nrow(merged$exons) == 5L, nrow(merged$features) == nrow(annotation_S$features),
+  is.null(interp_merge_annotation(list(NULL))), identical(interp_merge_annotation(list(annotation_S)), annotation_S))
 # An intron that another transcript of the query already has is named, whatever that transcript's type.
 annotation_S2 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC", "SPL", "chrS", "+", 101L, 360L, "", "retained_intron")),
   exons = rbind(annotation_S$exons, exon_rows("SNC", "SPL", "chrS", "+", c(101L, 301L), c(150L, 360L))), features = annotation_S$features)
@@ -1283,7 +1295,10 @@ stopifnot(identical(report$summary$question, c("Protein sequence", "Protein abun
   row$splice_outcome == "SPL SP: frameshift (assumed outcome); NMD predicted", row$shared_cause_pairs == 0L, row$sources_failed == "",
   # Gene names are filled through the caller's lookup when TOPMed pairs exist; a failing lookup is not fatal.
   !length(interp_local_report(interp_variant("chrS", 180L, "A", "G"), annotation_S, fetch, none, gene_names = function(ids) stop("no index"))$failed),
-  nrow(interp_report_row(interp_local_report(interp_variant("chrT", 6000L, "A", "G"), annotation_T, fetch, none))) == 1L)
+  nrow(interp_report_row(interp_local_report(interp_variant("chrT", 6000L, "A", "G"), annotation_T, fetch, none))) == 1L,
+  # The annotation can be given as a function of a window: the report asks for the variant's surroundings itself.
+  identical(interp_local_report(interp_variant("chrS", 161L, "G", "A"), function(chrom, start1, end1) { stopifnot(chrom == "chrS", start1 == 1L, end1 == 5161L); annotation_S },
+    fetch, none)$summary, report$summary))
 # The batch script checks its input before it reads any resource.
 rscript <- file.path(R.home("bin"), "Rscript")
 help <- suppressWarnings(system2(rscript, c("scripts/interpret_variants.R", "--help"), stdout = TRUE, stderr = TRUE))

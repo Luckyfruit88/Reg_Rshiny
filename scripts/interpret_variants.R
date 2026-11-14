@@ -52,8 +52,7 @@ for (id in todo) {
   f <- strsplit(id, ":", fixed = TRUE)[[1L]]; started <- Sys.time()
   row <- tryCatch({
     v <- e$interp_variant(f[[1L]], as.integer(f[[2L]]), f[[3L]], f[[4L]])
-    q <- a$query_annotation(annotation, v$chrom, max(1L, v$pos1 - 5000L), v$pos1 + 5000L, "GRCh38")
-    report <- e$interp_local_report(v, q, fetch, gene_names = gene_names)
+    report <- e$interp_local_report(v, function(chrom, start1, end1) a$query_annotation(annotation, chrom, start1, end1, "GRCh38"), fetch, gene_names = gene_names)
     if (nzchar(json_dir)) {
       full <- report; full$local <- lapply(full$local, plain); full$splice_protein <- plain(full$splice_protein); full$colocalisation <- plain(full$colocalisation)
       writeLines(jsonlite::toJSON(full, dataframe = "rows", auto_unbox = TRUE, na = "null", null = "null", digits = NA, pretty = TRUE),

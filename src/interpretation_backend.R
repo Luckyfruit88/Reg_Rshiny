@@ -668,6 +668,45 @@ interp_splice_events <- function(topmed_pairs = NULL, spliceai_sites = NULL, jun
   out <- do.call(rbind, rows); rownames(out) <- NULL; out
 }
 
+# Annotation windows a splice outcome needs: the variant's surroundings, and the introns and sites of the events
+# within `reach` of it, because the intron a variant acts on can lie far from the variant and belong to
+# transcripts that do not come near it. Rising introns first; at most `max_windows` windows of at most
+# `max_width` bases (an intron longer than that is covered at its two ends).
+interp_splice_query_windows <- function(variant, events = NULL, flank = 5000L, reach = 1000000L, max_windows = 6L, max_width = 250000L) {
+  w <- data.frame(start1 = max(1L, variant$pos1 - flank), end1 = variant$pos1 + flank)
+  add <- function(from, to) {
+    from <- max(1L, as.integer(from)); to <- as.integer(to)
+    if (any(from >= w$start1 & to <= w$end1) || nrow(w) >= max_windows) return(invisible())
+    w <<- rbind(w, data.frame(start1 = from, end1 = to))
+  }
+  if (is.data.frame(events) && nrow(events)) {
+    x <- events[!is.na(events$start1) & events$end1 >= variant$pos1 - reach & events$start1 <= variant$pos1 + reach, , drop = FALSE]
+    x <- x[order(x$effect != "gain", -abs(x$score)), , drop = FALSE]
+    for (i in seq_len(nrow(x))) {
+      if (x$end1[[i]] - x$start1[[i]] + 3L <= max_width) add(x$start1[[i]] - 1L, x$end1[[i]] + 1L) else {
+        add(x$start1[[i]] - 1000L, x$start1[[i]] + 1000L); add(x$end1[[i]] - 1000L, x$end1[[i]] + 1000L) }
+    }
+    for (p in events$position[!is.na(events$position) & abs(events$position - variant$pos1) <= reach]) add(p - 1000L, p + 1000L)
+  }
+  rownames(w) <- NULL; w
+}
+
+# Several query_annotation() results as one: every transcript once, with its exons, features and introns.
+interp_merge_annotation <- function(queries) {
+  queries <- queries[!vapply(queries, is.null, logical(1))]
+  if (!length(queries)) return(NULL)
+  out <- queries[[1L]]
+  for (q in queries[-1L]) {
+    fresh <- setdiff(q$transcripts$transcript_id, out$transcripts$transcript_id)
+    if (!length(fresh)) next
+    for (name in intersect(c("transcripts", "exons", "features", "introns"), names(q))) {
+      rows <- q[[name]][q[[name]]$transcript_id %in% fresh, , drop = FALSE]
+      out[[name]] <- if (is.null(out[[name]])) rows else rbind(out[[name]], rows[, names(out[[name]]), drop = FALSE])
+    }
+  }
+  out
+}
+
 interp_splice_protein_empty <- function() data.frame(gene = character(), transcript_id = character(), transcript_flags = character(), event = character(),
   support = character(), basis = character(), mrna_change = character(), coding_effect = character(), protein_change = character(),
   protein_length_ref = integer(), protein_length_new = integer(), nmd = character(), annotated_in = character(), stringsAsFactors = FALSE)
@@ -3329,10 +3368,13 @@ interp_tissue_sharing <- function(pairs, sources = interp_local_sources(), model
 # The local part of the tab in one call, for use outside the app (scripts/interpret_variants.R): consequences,
 # local sources, cross-context model, linked genes with their pathways and disease genes, the predicted splice
 # outcome, colocalisation, the evidence summary and its reading. `annotation` is a query_annotation() result
-# around the variant, `fetch(chrom, start1, end1)` returns reference sequence, `gene_names(ids)` (optional)
-# returns a gene_id / gene_name table. No public source, no SpliceAI, no genotype is read.
+# around the variant, or a function(chrom, start1, end1) that returns one: with the function, the transcripts of
+# introns that lie away from the variant are read too. `fetch(chrom, start1, end1)` returns reference sequence,
+# `gene_names(ids)` (optional) returns a gene_id / gene_name table. No public source, no SpliceAI, no genotype is read.
 interp_local_report <- function(variant, annotation, fetch, sources = interp_local_sources(), gene_names = NULL) {
   attempt <- function(expr) tryCatch(expr, error = function(e) e)
+  query <- if (is.function(annotation)) annotation else NULL
+  if (!is.null(query)) annotation <- query(variant$chrom, max(1L, variant$pos1 - 5000L), variant$pos1 + 5000L)
   consequences <- interp_consequences(variant, annotation, fetch)
   local <- interp_local_evidence(variant, sources)
   pairs <- if (interp_ok(local$topmed)) local$topmed$pairs else NULL
@@ -3344,7 +3386,10 @@ interp_local_report <- function(variant, annotation, fetch, sources = interp_loc
   genes <- interp_linked_genes(consequences, local)
   local$pathways <- attempt(interp_local_pathways(genes, sources))
   local$gene_disease <- attempt(interp_gene_disease(genes, sources))
-  splice_protein <- attempt(interp_splice_protein(variant, annotation, fetch, interp_splice_events(pairs)))
+  events <- interp_splice_events(pairs)
+  wide <- if (is.null(query)) annotation else attempt({ w <- interp_splice_query_windows(variant, events)
+    interp_merge_annotation(c(list(annotation), lapply(seq_len(nrow(w))[-1L], function(i) tryCatch(query(variant$chrom, w$start1[[i]], w$end1[[i]]), error = function(e) NULL)))) })
+  splice_protein <- attempt(interp_splice_protein(variant, if (interp_ok(wide)) wide else annotation, fetch, events))
   coloc <- attempt(interp_colocalise(variant, local, sources))
   summary <- interp_evidence_summary(consequences, local, splice_protein = if (interp_ok(splice_protein)) splice_protein else NULL,
     coloc = if (interp_ok(coloc)) coloc else NULL)
