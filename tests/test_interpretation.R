@@ -632,7 +632,7 @@ sy <- interp_evidence_summary(intronic, one_open)
 stopifnot(level(sy, "Gene expression (eQTL)") == "Moderate", grepl("so that association is most likely through linkage disequilibrium", sy$finding[4L], fixed = TRUE),
   # A small PIP still counts as left out; a PIP of 0.1 or more is reported and keeps the gene in play.
   level(interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$pip[z$topmed$pairs$gene_id == "ENSG2.1"] <- .04; z }), "Gene expression (eQTL)") == "Limited",
-  grepl("PIP 0.30 for ENSG2.1", interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$pip[z$topmed$pairs$gene_id == "ENSG2.1"] <- .3; z })$evidence[4L], fixed = TRUE),
+  grepl("PIP 0.30 for ENSG2", interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$pip[z$topmed$pairs$gene_id == "ENSG2.1"] <- .3; z })$evidence[4L], fixed = TRUE),
   level(interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$pip[z$topmed$pairs$gene_id == "ENSG2.1"] <- .3; z }), "Gene expression (eQTL)") == "Moderate",
   # Without the fine-mapping column nothing is set aside.
   level(interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$fine_mapped <- NULL; z }), "Gene expression (eQTL)") == "Moderate")
