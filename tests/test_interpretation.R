@@ -280,6 +280,37 @@ stopifnot(nrow(sm) == 3L, identical(sm$coding_effect, sp$coding_effect), identic
   # An intron that would keep more than 300 nt of intron in the transcript is not placed on it.
   !nrow(interp_splice_protein(far_variant, annotation_S, fetch, transform(ev[1L, ], start1 = 195L, end1 = 200L), max_kept_intron = 30L)),
   !nrow(interp_splice_protein(far_variant, annotation_T, fetch)), !nrow(interp_splice_protein(far_variant, list(transcripts = NULL), fetch)))
+# Splice sites of the open result: a site whose bin ratio falls with ALT is a weakened site of the transcript, a site
+# whose ratio rises is joined to the introns the annotation gives it. Flat sites and rows above the cut-off are left out.
+sp_bins <- data.frame(site_id = paste0("donor:+:chrS:", c(161L, 151L, 261L, 171L)), splice_site_type = "donor", splice_site_position = c(161L, 151L, 261L, 171L),
+  status = "OK", beta = c(-.3, .4, -.2, .5), p_permutation = c(1e-4, 1e-4, .4, 1e-4), n = 900L, bin_check = c("OK", "OK", "OK", "NO_DEPTH_DROP_AT_SITE"), stringsAsFactors = FALSE)
+bin_events <- interp_splice_events(NULL, NULL, NULL, sp_bins)
+stopifnot(nrow(bin_events) == 2L, all(bin_events$source == "this cohort"), all(bin_events$observed), identical(bin_events$effect, c("loss", "gain")),
+  identical(bin_events$position, c(161L, 151L)), all(is.na(bin_events$start1)),
+  bin_events$detail[[2L]] == "this cohort: donor site at 151 used more with ALT (bin ratio +0.400 per ALT allele, permutation p 1.0e-04)",
+  !nrow(interp_splice_events(NULL, NULL, NULL, simpleError("no bin ratio"))), !nrow(interp_splice_events(NULL, NULL, NULL, sp_bins[3:4, ])))
+# Alone, the weakened donor of the first exon gives the assumed outcome, said to rest on the cohort's own reads.
+lone <- interp_splice_protein(far_variant, annotation_S, fetch, bin_events[1L, ])
+stopifnot(nrow(lone) == 1L, lone$basis == "assumed outcome", grepl("this cohort: donor site at 161 used less with ALT", lone$support, fixed = TRUE))
+# The site used more is the donor of an intron of another annotated transcript: that intron is placed, observed, and the
+# weakened donor it stands in for is named with it. A site no annotated intron uses gives nothing.
+annotation_S3 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC", "SPL", "chrS", "+", 101L, 360L, "", "retained_intron")),
+  exons = rbind(annotation_S$exons, exon_rows("SNC", "SPL", "chrS", "+", c(101L, 201L), c(150L, 360L))), features = annotation_S$features)
+joined_site <- interp_splice_protein(far_variant, annotation_S3, fetch, bin_events)
+stopifnot(nrow(joined_site) == 1L, joined_site$event == "alternative donor: intron chrS:151-200 in place of intron 1", joined_site$basis == "observed",
+  joined_site$annotated_in == "SNC (retained_intron)", grepl("donor site at 151 used more with ALT", joined_site$support, fixed = TRUE),
+  grepl("donor site at 161 used less with ALT", joined_site$support, fixed = TRUE), joined_site$coding_effect == "premature stop",
+  nrow(interp_splice_protein(far_variant, annotation_S, fetch, bin_events[2L, ])) == 0L,
+  # On an essential site the cohort's line joins the variant's own; with SpliceAI on the same new donor it is observed and predicted.
+  grepl("the variant changes the essential donor site; this cohort: donor site at 161 used less with ALT",
+    interp_splice_protein(interp_variant("chrS", 161L, "G", "A"), annotation_S, fetch, bin_events[1L, ])$support, fixed = TRUE),
+  interp_splice_protein(far_variant, annotation_S3, fetch, rbind(bin_events, ev[5L, ]))$basis == "observed and predicted")
+# A donor further into the intron keeps intronic bases; the transcript's own weakened donor at the start of that stretch counts for it.
+annotation_S4 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC", "SPL", "chrS", "+", 101L, 360L, "", "retained_intron")),
+  exons = rbind(annotation_S$exons, exon_rows("SNC", "SPL", "chrS", "+", c(101L, 301L), c(170L, 360L))), features = annotation_S$features)
+stretch <- interp_splice_protein(far_variant, annotation_S4, fetch, transform(bin_events, position = c(161L, 171L)))
+stopifnot(nrow(stretch) == 1L, stretch$mrna_change == "60 exonic nt removed, 10 intronic nt kept", grepl("donor site at 161 used less with ALT", stretch$support, fixed = TRUE),
+  stretch$event == "alternative donor: intron chrS:171-300 in place of intron 2, 1 exon(s) left out", stretch$basis == "observed")
 # An intron that another transcript of the query already has is named, whatever that transcript's type.
 annotation_S2 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC", "SPL", "chrS", "+", 101L, 360L, "", "retained_intron")),
   exons = rbind(annotation_S$exons, exon_rows("SNC", "SPL", "chrS", "+", c(101L, 301L), c(150L, 360L))), features = annotation_S$features)

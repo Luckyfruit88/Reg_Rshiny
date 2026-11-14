@@ -220,8 +220,10 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   await(session, protein_task, function() !is.null(protein_now()))
   outcome <- isolate(splice_protein_table())
   stopifnot(nrow(outcome) == 1L, outcome$transcript_id == "TP", outcome$basis == "assumed outcome", outcome$event == "if the intron is retained (40 nt)",
-    outcome$support == "the variant changes the essential donor site", outcome$protein_length_ref == 39L, nzchar(outcome$coding_effect),
-    grepl("0 SpliceAI site(s) (SpliceAI not run)", html_text(output$splice_protein_status), fixed = TRUE),
+    # The open result's bin ratio at that donor falls with ALT: the cohort's own line joins the variant's.
+    outcome$support == "the variant changes the essential donor site; this cohort: donor site at 161 used less with ALT (bin ratio -0.400 per ALT allele, permutation p 1.0e-04)",
+    outcome$protein_length_ref == 39L, nzchar(outcome$coding_effect),
+    grepl("1 splice site(s) of the open result whose bin ratio moves with ALT, 0 SpliceAI site(s) (SpliceAI not run)", html_text(output$splice_protein_status), fixed = TRUE),
     grepl("1 outcome(s) on coding transcripts", html_text(output$splice_protein_status), fixed = TRUE),
     grepl("through splicing (assumed outcome), TP: if the intron is retained (40 nt); 40 intronic nt kept", isolate(summary_now())$evidence[[1L]], fixed = TRUE),
     level(isolate(summary_now()), "Protein sequence") == "Strong")
@@ -259,8 +261,8 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
     grepl("bin ratio -0.400", sites$observed_in_cohort, fixed = TRUE), grepl("SYNTHETIC SpliceAI", html_text(output$spliceai_status), fixed = TRUE))
   stopifnot(grepl("donor loss 0.93 at exon base 160", isolate(summary_now())$evidence[3L], fixed = TRUE))
   # The SpliceAI site joins the splice changes and the outcome is computed again with it.
-  await(session, protein_task, function() !is.null(protein_now()) && nrow(protein_now()$events) == 1L)
-  stopifnot(isolate(protein_now())$events$source == "SpliceAI", isolate(protein_now())$events$effect == "loss", nrow(isolate(splice_protein_table())) == 1L,
+  await(session, protein_task, function() !is.null(protein_now()) && nrow(protein_now()$events) == 2L)
+  stopifnot(identical(isolate(protein_now())$events$source, c("this cohort", "SpliceAI")), all(isolate(protein_now())$events$effect == "loss"), nrow(isolate(splice_protein_table())) == 1L,
     grepl("1 SpliceAI site(s);", html_text(output$splice_protein_status), fixed = TRUE))
   # The LD scan runs on request with the record's own VCF and feeds Disease and the pQTL question.
   stopifnot(is.null(isolate(ld_now())), grepl("Not computed for this variant yet", html_text(output$ld_status), fixed = TRUE))

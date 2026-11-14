@@ -36,7 +36,7 @@ interpretation_ui <- function(id) {
         shiny::h5("Protein consequence of the splice change (predicted)"),
         shiny::uiOutput(ns("splice_protein_status"), role = "status", `aria-live` = "polite"),
         interpretation_table_output(ns("splice_protein")),
-        shiny::p("For every splice change tied to this variant, the coding transcripts it fits are re-spliced from the reference sequence and translated from their annotated start codon. Changes come from three places: an intron that a TOPMed sQTL or a junction of the open result shows is used more with the ALT allele; a splice site SpliceAI predicts to appear (paired with the annotated site it would splice to) or to weaken; and an essential splice site the variant itself changes. basis says what supports the change: observed (RNA association), predicted (SpliceAI of at least 0.5, or an essential site), both, weakly predicted (SpliceAI 0.2 to 0.5), or assumed outcome, used when a site is lost and nothing shows what replaces it, in which case exon skipping and intron retention are both listed. coding_effect and protein_change compare the product with the annotated protein; nmd says whether the new stop codon lies more than 50 nt before the last exon junction, the usual condition for nonsense-mediated decay. annotated_in names transcripts of the selected GENCODE release that already contain the intron. The table says what the changed splice would encode. It does not say how much of the gene's RNA is spliced that way: read that from the RNA evidence. Transcripts longer than 2.5 Mb and changes that would keep more than 300 nt of intron are left out."),
+        shiny::p("For every splice change tied to this variant, the coding transcripts it fits are re-spliced from the reference sequence and translated from their annotated start codon. Changes come from four places: an intron that a TOPMed sQTL or a junction of the open result shows is used more with the ALT allele; a splice site of the open result whose bin ratio rises or falls with ALT (a site used more is joined to the introns the annotation gives it); a splice site SpliceAI predicts to appear (paired with the annotated site it would splice to) or to weaken; and an essential splice site the variant itself changes. basis says what supports the change: observed (RNA association), predicted (SpliceAI of at least 0.5, or an essential site), both, weakly predicted (SpliceAI 0.2 to 0.5), or assumed outcome, used when a site is lost and nothing shows what replaces it, in which case exon skipping and intron retention are both listed. coding_effect and protein_change compare the product with the annotated protein; nmd says whether the new stop codon lies more than 50 nt before the last exon junction, the usual condition for nonsense-mediated decay. annotated_in names transcripts of the selected GENCODE release that already contain the intron. The table says what the changed splice would encode. It does not say how much of the gene's RNA is spliced that way: read that from the RNA evidence. Transcripts longer than 2.5 Mb and changes that would keep more than 300 nt of intron are left out."),
         shiny::p("Consequences are computed here from the selected GENCODE release and the reference sequence, with Sequence Ontology terms and Ensembl VEP's severity order. donor_distance and acceptor_distance count into the intron from its 5' and 3' ends (1 = first or last intronic base); negative values are exonic bases counted from the exon edge. Insertions, deletions and multi-base changes are classified by what they overlap and get no protein change."),
         shiny::uiOutput(ns("predictors"))),
       bslib::nav_panel("Splicing",
@@ -429,7 +429,8 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       pairs <- if (!is.null(x$local) && !inherits(x$local$topmed, "error")) x$local$topmed$pairs else NULL
       sites <- tryCatch(spliceai_sites(), error = function(e) NULL)
       observed <- if (is.null(junctions)) NULL else tryCatch(junctions(), error = function(e) NULL)
-      backend$interp_splice_events(pairs, sites, observed)
+      bins <- if (is.null(bin_ratio)) NULL else tryCatch(bin_ratio(), error = function(e) NULL)
+      backend$interp_splice_events(pairs, sites, observed, bins)
     })
     protein_key <- shiny::reactive({
       ev <- splice_events_now()
@@ -556,10 +557,11 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       p <- protein_now(); ev <- tryCatch(splice_events_now(), error = function(e) NULL)
       if (inherits(p, "error")) return(shiny::p(paste0("Not computed: ", conditionMessage(p))))
       if (is.null(p)) return(shiny::p(if (is.null(ev)) "Waiting for the local sources." else "Re-splicing the transcripts this change fits..."))
-      ev <- p$events; seen <- ev$source != "SpliceAI"
-      shiny::p(paste0("Splice changes considered: ", sum(seen & ev$effect == "gain"), " intron(s) used more and ", sum(seen & ev$effect == "loss"),
-        " used less with ALT (", sum(ev$source == "TOPMed sQTL"), " from TOPMed sQTL, ", sum(ev$source == "this cohort"), " from the open result), ",
-        sum(!seen), " SpliceAI site(s)", if (!any(!seen) && is.null(spliceai_now())) " (SpliceAI not run)" else "",
+      ev <- p$events; intron <- !is.na(ev$start1); cohort_site <- !intron & ev$source == "this cohort"; predicted <- ev$source == "SpliceAI"
+      shiny::p(paste0("Splice changes considered: ", sum(intron & ev$effect == "gain"), " intron(s) used more and ", sum(intron & ev$effect == "loss"),
+        " used less with ALT (", sum(intron & ev$source == "TOPMed sQTL"), " from TOPMed sQTL, ", sum(intron & ev$source == "this cohort"), " from the open result), ",
+        sum(cohort_site), " splice site(s) of the open result whose bin ratio moves with ALT, ",
+        sum(predicted), " SpliceAI site(s)", if (!any(predicted) && is.null(spliceai_now())) " (SpliceAI not run)" else "",
         "; plus the variant's own essential splice sites. ", nrow(p$table), " outcome(s) on coding transcripts."))
     })
     # The outcome before its long justification.

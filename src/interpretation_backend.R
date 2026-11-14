@@ -621,9 +621,10 @@ interp_splice_events_empty <- function() data.frame(source = character(), effect
 # Splice changes reported or predicted for the variant, in one table:
 #   effect "gain" / "loss" with start1/end1: an intron (first to last intronic base) used more / less with ALT
 #     (a significant TOPMed sQTL intron by the sign of its slope, or a junction of the open result by the sign of its Model 1 slope);
-#   effect "gain" / "loss" with position: a splice site SpliceAI predicts to appear or weaken
-#     (position is the intronic base next to the site, as in interp_spliceai_sites()).
-interp_splice_events <- function(topmed_pairs = NULL, spliceai_sites = NULL, junctions = NULL, min_delta = 0.2) {
+#   effect "gain" / "loss" with position: a splice site used more or less with ALT in the open result (its bin
+#     ratio, 1 - intron reads / exon reads, rises or falls with the ALT dosage), or one SpliceAI predicts to
+#     appear or weaken (position is the intronic base next to the site, as in interp_spliceai_sites()).
+interp_splice_events <- function(topmed_pairs = NULL, spliceai_sites = NULL, junctions = NULL, bin_ratio = NULL, min_delta = 0.2) {
   rows <- list(interp_splice_events_empty())
   add <- function(...) rows[[length(rows) + 1L]] <<- data.frame(..., stringsAsFactors = FALSE)
   if (is.data.frame(topmed_pairs) && nrow(topmed_pairs)) {
@@ -648,6 +649,16 @@ interp_splice_events <- function(topmed_pairs = NULL, spliceai_sites = NULL, jun
       end1 = as.integer(x$intron_end1[[i]]), position = NA_integer_, score = x$beta[[i]], observed = TRUE,
       detail = sprintf("this cohort: junction used %s with ALT (%+.2f reads per 100 per ALT allele, permutation p %s)", if (x$beta[[i]] > 0) "more" else "less",
         x$beta[[i]], interp_fmt_p(x$p_permutation[[i]])))
+  }
+  if (is.data.frame(bin_ratio) && nrow(bin_ratio) && all(c("status", "p_permutation", "beta", "splice_site_type", "splice_site_position") %in% names(bin_ratio))) {
+    # The same rows as the cohort RNA evidence: fitted, below the table's Bonferroni cut-off, with a depth drop at the site.
+    x <- bin_ratio[bin_ratio$status == "OK" & is.finite(bin_ratio$p_permutation), , drop = FALSE]
+    flat <- if ("bin_check" %in% names(x)) grepl("NO_DEPTH_DROP_AT_SITE", x$bin_check, fixed = TRUE) else rep(FALSE, nrow(x))
+    x <- x[x$p_permutation <= 0.05 / max(1L, nrow(x)) & !flat & is.finite(x$beta) & x$beta != 0, , drop = FALSE]
+    for (i in seq_len(nrow(x))) add(source = "this cohort", effect = if (x$beta[[i]] > 0) "gain" else "loss", site_type = x$splice_site_type[[i]], start1 = NA_integer_,
+      end1 = NA_integer_, position = as.integer(x$splice_site_position[[i]]), score = x$beta[[i]], observed = TRUE,
+      detail = sprintf("this cohort: %s site at %d used %s with ALT (bin ratio %+.3f per ALT allele, permutation p %s)", x$splice_site_type[[i]],
+        as.integer(x$splice_site_position[[i]]), if (x$beta[[i]] > 0) "more" else "less", x$beta[[i]], interp_fmt_p(x$p_permutation[[i]])))
   }
   if (is.data.frame(spliceai_sites) && nrow(spliceai_sites)) {
     x <- spliceai_sites[is.finite(spliceai_sites$delta) & spliceai_sites$delta >= min_delta & is.finite(spliceai_sites$site_position), , drop = FALSE]
@@ -675,7 +686,8 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
   known <- do.call(rbind, lapply(seq_len(nrow(tx)), function(i) {
     ex <- interp_merge_intervals(annotation$exons[annotation$exons$transcript_id == tx$transcript_id[[i]], c("start1", "end1"), drop = FALSE])
     if (nrow(ex) < 2L) return(NULL)
-    data.frame(start1 = ex$end1[-nrow(ex)] + 1L, end1 = ex$start1[-1L] - 1L, label = paste0(tx$transcript_id[[i]], " (", tx$transcript_type[[i]], ")"), stringsAsFactors = FALSE)
+    data.frame(start1 = ex$end1[-nrow(ex)] + 1L, end1 = ex$start1[-1L] - 1L, label = paste0(tx$transcript_id[[i]], " (", tx$transcript_type[[i]], ")"),
+      strand = tx$strand[[i]], stringsAsFactors = FALSE)
   }))
   annotated_in <- function(use) if (is.null(use) || is.null(known)) "" else paste(known$label[known$start1 == use[[1L]] & known$end1 == use[[2L]]], collapse = ", ")
   for (i in seq_len(nrow(tx))) {
@@ -702,21 +714,28 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
     scenarios <- list()
     scenario <- function(use = NULL, retain = NULL, event, support, basis) scenarios[[length(scenarios) + 1L]] <<- list(use = use, retain = retain,
       event = event, support = support, basis = basis)
-    # Splice sites of this transcript that the variant destroys or that SpliceAI predicts to weaken.
-    lost <- data.frame(intron = integer(), site = character(), support = character(), strong = logical(), stringsAsFactors = FALSE)
+    # Splice sites of this transcript that the variant destroys, that the open result shows are used less with ALT,
+    # or that SpliceAI predicts to weaken.
+    lost <- data.frame(intron = integer(), site = character(), support = character(), strong = logical(), observed = logical(), stringsAsFactors = FALSE)
     where <- interp_locate(model, variant$start1)
     if (identical(where$region, "intron")) {
       k <- which(introns$start1 <= variant$start1 & introns$end1 >= variant$start1)
       if (length(k) && !is.na(where$donor_distance) && where$donor_distance <= 2L) lost <- rbind(lost, data.frame(intron = k[[1L]], site = "donor",
-        support = "the variant changes the essential donor site", strong = TRUE, stringsAsFactors = FALSE))
+        support = "the variant changes the essential donor site", strong = TRUE, observed = FALSE, stringsAsFactors = FALSE))
       if (length(k) && !is.na(where$acceptor_distance) && where$acceptor_distance <= 2L) lost <- rbind(lost, data.frame(intron = k[[1L]], site = "acceptor",
-        support = "the variant changes the essential acceptor site", strong = TRUE, stringsAsFactors = FALSE))
+        support = "the variant changes the essential acceptor site", strong = TRUE, observed = FALSE, stringsAsFactors = FALSE))
     }
     sites <- events[!is.na(events$position), , drop = FALSE]
     for (j in which(sites$effect == "loss")) for (k in seq_len(nrow(introns))) {
       at <- if (sites$site_type[[j]] == "donor") donor_end(k) else acceptor_end(k)
-      if (identical(as.integer(at), sites$position[[j]]) && !any(lost$intron == k & lost$site == sites$site_type[[j]]))
-        lost <- rbind(lost, data.frame(intron = k, site = sites$site_type[[j]], support = sites$detail[[j]], strong = sites$score[[j]] >= 0.5, stringsAsFactors = FALSE))
+      if (!identical(as.integer(at), sites$position[[j]])) next
+      seen_site <- which(lost$intron == k & lost$site == sites$site_type[[j]])
+      # One site, several kinds of support: the lines are joined.
+      if (length(seen_site)) {
+        lost$support[seen_site] <- paste(lost$support[seen_site], sites$detail[[j]], sep = "; "); lost$observed[seen_site] <- lost$observed[seen_site] | sites$observed[[j]]
+        lost$strong[seen_site] <- lost$strong[seen_site] | sites$observed[[j]] | sites$score[[j]] >= 0.5
+      } else lost <- rbind(lost, data.frame(intron = k, site = sites$site_type[[j]], support = sites$detail[[j]],
+        strong = sites$observed[[j]] || sites$score[[j]] >= 0.5, observed = sites$observed[[j]], stringsAsFactors = FALSE))
     }
     # Introns used more with ALT, as observed, and introns built from a predicted new site and the annotated site it would pair with.
     gained <- events[events$effect == "gain" & !is.na(events$start1), c("start1", "end1", "detail", "observed", "score"), drop = FALSE]
@@ -726,14 +745,22 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
     for (j in which(sites$effect == "gain")) {
       p <- sites$position[[j]]
       low_side <- (sites$site_type[[j]] == "donor") != minus
-      # A predicted site that is an end of an intron seen to rise with ALT supports that intron: the RNA shows what it pairs with.
+      watched <- isTRUE(sites$observed[[j]])
+      # A site that is an end of an intron seen to rise with ALT supports that intron: the RNA shows what it pairs with.
       same <- if (low_side) which(seen$start1 == p) else which(seen$end1 == p)
       if (length(same)) {
-        gained <- rbind(gained, data.frame(start1 = seen$start1[same], end1 = seen$end1[same], detail = sites$detail[[j]], observed = FALSE, score = sites$score[[j]],
-          strong = sites$score[[j]] >= 0.5, stringsAsFactors = FALSE))
+        gained <- rbind(gained, data.frame(start1 = seen$start1[same], end1 = seen$end1[same], detail = sites$detail[[j]], observed = watched, score = sites$score[[j]],
+          strong = watched || sites$score[[j]] >= 0.5, stringsAsFactors = FALSE))
         next
       }
-      # Otherwise a new donor pairs with the next annotated acceptor downstream; a new acceptor with the nearest annotated donor upstream.
+      if (watched) {
+        # A site of the open result is an annotated one: the annotation says which introns use it (same strand as this transcript).
+        mates <- if (is.null(known)) NULL else unique(known[known$strand == model$strand & (if (low_side) known$start1 == p else known$end1 == p), c("start1", "end1"), drop = FALSE])
+        if (!is.null(mates) && nrow(mates)) gained <- rbind(gained, data.frame(start1 = mates$start1, end1 = mates$end1, detail = sites$detail[[j]], observed = TRUE,
+          score = sites$score[[j]], strong = TRUE, stringsAsFactors = FALSE))
+        next
+      }
+      # Otherwise a predicted new donor pairs with the next annotated acceptor downstream; a new acceptor with the nearest annotated donor upstream.
       k <- if (low_side) which(introns$end1 > p) else which(introns$start1 < p)
       if (!length(k)) next
       k <- if (low_side) k[[1L]] else k[[length(k)]]
@@ -751,19 +778,20 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
       kept <- interp_interval_bases(interp_outside(respliced, exons)); removed <- interp_interval_bases(interp_outside(exons, respliced))
       if (kept > max_kept_intron) next
       skipped <- sum(exons$start1 >= use[[1L]] & exons$end1 <= use[[2L]])
-      # Which annotated intron it stands in for, and whether a site it leaves unused is one the variant weakens:
-      # the site that moved, or for a skipped exon the two sites of that exon.
+      # Which annotated intron it stands in for, and whether a site it leaves unused is one that is weakened: a site of this
+      # transcript that falls inside the new intron or at the edge of the intronic stretch it keeps, the shared ends apart.
       low_partner <- which(introns$start1 == use[[1L]]); high_partner <- which(introns$end1 == use[[2L]]); partner <- c(low_partner, high_partner)
       moved <- if (low_shared && high_shared) "" else if (low_shared != minus) "acceptor" else "donor"
-      high_site <- if (minus) "donor" else "acceptor"; low_site <- if (minus) "acceptor" else "donor"
-      answered <- if (low_shared && high_shared) which((lost$intron %in% low_partner & lost$site == high_site) | (lost$intron %in% high_partner & lost$site == low_site)) else
-        which(lost$intron %in% partner & lost$site == moved)
+      covered <- rbind(data.frame(start1 = use[[1L]], end1 = use[[2L]]), interp_outside(respliced, exons))
+      site_at <- vapply(seq_len(nrow(lost)), function(j) as.integer(if (lost$site[[j]] == "donor") donor_end(lost$intron[[j]]) else acceptor_end(lost$intron[[j]])), integer(1))
+      answered <- which(vapply(site_at, function(at) any(at >= covered$start1 & at <= covered$end1), logical(1)) &
+        !(low_shared & site_at == use[[1L]]) & !(high_shared & site_at == use[[2L]]))
       hit <- lost[answered, , drop = FALSE]; replaced <- c(replaced, answered)
       number <- function(k) if (minus) nrow(introns) - k + 1L else k    # intron number in transcript order
       event <- if (low_shared && high_shared) sprintf("exon skipping: %d exon(s) left out (%d nt)", skipped, removed) else
         sprintf("alternative %s: intron %s:%d-%d in place of intron %d%s", moved, chrom, use[[1L]], use[[2L]], number(partner[[1L]]),
           if (skipped) sprintf(", %d exon(s) left out", skipped) else "")
-      observed <- any(g$observed); predicted <- any(!g$observed & g$strong) || any(hit$strong)
+      observed <- any(g$observed) || any(hit$observed); predicted <- any(!g$observed & g$strong) || any(hit$strong & !hit$observed)
       basis <- if (observed && predicted) "observed and predicted" else if (observed) "observed" else if (predicted) "predicted" else "weakly predicted"
       # An annotated intron of this transcript that the new one stands in for, and that is itself seen to fall with ALT.
       stood_in <- introns[introns$end1 >= use[[1L]] & introns$start1 <= use[[2L]], , drop = FALSE]
