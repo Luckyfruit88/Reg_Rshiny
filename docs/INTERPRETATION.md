@@ -218,3 +218,22 @@ Rscript scripts/interpret_variants.R --variants variants.txt --annotation-db ann
 ## Exports
 
 **Interpretation JSON** holds everything shown (consequences, the predicted splice outcomes with the splice changes they were computed from, the colocalisation of the variant's molecular traits, every local and public table, SpliceAI, the LD table, the cohort RNA evidence used, the summary). **Evidence summary CSV** and **Consequences CSV** hold those two tables. Public and local reference content keeps its own terms of use; cite the sources.
+
+## References
+
+Methods
+
+- Wakefield J. Bayes factors for genome-wide association studies: comparison with P-values. *Genet Epidemiol* 2009;33:79–86. (approximate Bayes factors: single-signal posterior)
+- Giambartolomei C, et al. Bayesian test for colocalisation between pairs of genetic association studies using summary statistics. *PLoS Genet* 2014;10:e1004383. (colocalisation)
+- Wang G, Sarkar A, Carbonetto P, Stephens M. A simple new approach to variable selection in regression, with application to genetic fine mapping. *J R Stat Soc B* 2020;82:1273–1300. (SuSiE, as run on the TOPMed cis-QTLs)
+- Urbut SM, Wang G, Carbonetto P, Stephens M. Flexible statistical methods for estimating and testing effects in genomic studies with multiple conditions. *Nat Genet* 2019;51:187–195. (cross-context model)
+- Jaganathan K, et al. Predicting splicing from primary sequence with deep learning. *Cell* 2019;176:535–548. (SpliceAI)
+- Nagy E, Maquat LE. A rule for termination-codon position within intron-containing genes: when nonsense affects RNA abundance. *Trends Biochem Sci* 1998;23:198–199. (the 50 nt rule for nonsense-mediated decay)
+
+Data
+
+- Sun BB, et al. Plasma proteomic associations with genetics and health in the UK Biobank. *Nature* 2023;622:329–338. (UKB-PPP cis-pQTL summary statistics)
+- The GTEx Consortium. The GTEx Consortium atlas of genetic regulatory effects across human tissues. *Science* 2020;369:1318–1330; release v11 files from the GTEx Portal.
+- GENCODE (Frankish A, et al. *Nucleic Acids Res*), ClinVar (Landrum MJ, et al. *Nucleic Acids Res*), the NHGRI-EBI GWAS Catalog (Sollis E, et al. *Nucleic Acids Res* 2023;51:D977–D985), Reactome, MSigDB, CADD v1.7 and the Ensembl VEP cache: cite the release you used; each keeps its own terms of use.
+- TOPMed cis-QTL summary statistics and the Framingham Heart Study QTL and Olink files are project data on SCC and are cited as their owners direct.
+
