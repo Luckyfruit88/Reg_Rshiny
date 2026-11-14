@@ -2788,9 +2788,10 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     if (nrow(led)) {
       other <- ifelse(startsWith(led$trait_1, "eQTL "), led$trait_2, led$trait_1); mine <- ifelse(startsWith(led$trait_1, "eQTL "), led$trait_1, led$trait_2)
       keep <- share(other) >= 0.9 & mine %in% interp_not_led(coloc$traits); keep[is.na(keep)] <- FALSE
-      if (any(keep) && level == "Moderate") finding <- paste0(finding, " Colocalisation gives ", interp_join(interp_trait_words(unique(mine[keep])), ", ", max = 3),
-        " a different leading causal variant from ", interp_trait_words(other[keep][[1L]]), ", which this variant leads: ",
-        interp_through_ld(coloc$traits, unique(mine[keep])), ".")
+      # With SuSiE's verdict already in the finding, colocalisation only has to say that it agrees.
+      if (any(keep) && level %in% c("Moderate", "Limited")) finding <- paste0(finding, if (length(set_aside)) " Colocalisation agrees: " else " Colocalisation gives ",
+        interp_join(interp_trait_words(unique(mine[keep])), ", ", max = 3), if (length(set_aside)) " has" else "", " a different leading causal variant from ",
+        interp_trait_words(other[keep][[1L]]), ", which this variant leads", if (length(set_aside)) "." else paste0(": ", interp_through_ld(coloc$traits, unique(mine[keep])), "."))
     }
   }
   rows[[4L]] <- interp_summary_row("Gene expression (eQTL)", level, finding, evidence, sources)

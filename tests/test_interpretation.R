@@ -1184,7 +1184,8 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   stopifnot(identical(mapped_co$traits$susie, c("", "in no credible set", "")),
     interp_mechanism(mapped_local, NULL, mapped_co)[[3L]] ==
       "Another variant leads the expression of ENSGB: SuSiE, which allows several signals, places this variant in no credible set of it, so the association is through linkage disequilibrium.",
-    grepl("places this variant in no credible set of it, so the association is through linkage disequilibrium.",
+    # In the card SuSiE's verdict comes first and colocalisation is said to agree with it.
+    grepl("For ENSGB SuSiE leaves it out of every credible set (or gives it a PIP under 0.1), so that association is most likely through linkage disequilibrium. Colocalisation agrees: the expression of ENSGB has a different leading causal variant from the plasma level of PA, which this variant leads.",
       interp_evidence_summary(intronic, mapped_local, coloc = mapped_co)$finding[4L], fixed = TRUE),
     # A PIP in any context is reported with the trait; a phenotype without credible sets stays undetermined.
     interp_coloc_traits(list(topmed = list(available = TRUE, pairs = transform(co_pairs, pip = c(NA, .3, NA, NA)))))$susie[[2L]] == "in a credible set (PIP 0.30)",
