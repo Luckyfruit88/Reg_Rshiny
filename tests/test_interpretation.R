@@ -1057,8 +1057,16 @@ if (nzchar(tabix) && file.exists(bgzip)) {
     gt$genes$tissues[[1L]] == "Whole Blood, Lung, Brain Cortex", !nrow(interp_gtex_local(interp_variant("chr1", 100L, "G", "T"), srcs)$pairs),
     interp_gtex_local(interp_variant("chr1", 100L, "G", "T"), srcs)$available, !interp_gtex_local(v, none)$available)
   if (nzchar(srcs$look)) stopifnot(gt$gene_table, identical(gt$genes$gene, c("GENEA", "GENEB")), identical(gt$genes$tissues_tested, c(4L, 2L)),
-    identical(gt$genes$lead_variant_in, c(2L, 0L)), identical(gt$genes$whole_blood, c("significant", "not tested")), gt$genes$biotype[[2L]] == "lncRNA",
+    identical(gt$genes$lead_variant_in, c(2L, 0L)), identical(gt$genes$whole_blood, c("significant", "gene not tested")), gt$genes$biotype[[2L]] == "lncRNA",
     identical(gt$pairs$lead_variant[gt$pairs$gene == "GENEA"], c(TRUE, FALSE, TRUE)), identical(gt$pairs$gene, rep(c("GENEA", "GENEB"), c(3L, 2L))))
+  # A gene GTEx tested in whole blood without this pair being significant there: said as such, because the gene
+  # table does not say whether the variant itself was tested in that tissue.
+  no_blood_pair <- file.path(work, "gtex", "gtex_v12_eqtl_signif_pairs.b38.tsv.gz")
+  index(c("#chrom\tpos\tref\talt\tgene_id\ttissue\tslope\tslope_se\tpval_nominal\taf\tpval_nominal_threshold\tstart_distance",
+    gtex_row(100, "A", "ENSG00000000001.5", "Lung", .25, .05, 1e-6)), no_blood_pair, c("-s", "1", "-b", "2", "-e", "2", "-c", shQuote("#")))
+  quiet_blood <- srcs; quiet_blood$gtex_pairs <- no_blood_pair
+  if (nzchar(srcs$look)) stopifnot(interp_gtex_local(v, quiet_blood)$genes$whole_blood == "pair not significant (gene tested)",
+    grepl("whole blood: pair not significant (gene tested)", interp_evidence_summary(intronic, list(gtex = interp_gtex_local(v, quiet_blood)))$evidence[7L], fixed = TRUE))
   bare <- srcs; bare$gtex_genes <- "/missing"; gt_bare <- interp_gtex_local(v, bare)
   stopifnot(!gt_bare$gene_table, all(is.na(gt_bare$genes$tissues_tested)), identical(gt_bare$genes$whole_blood, c("significant", "")), all(gt_bare$genes$gene == ""))
   sg <- interp_evidence_summary(intronic, list(gtex = gt))

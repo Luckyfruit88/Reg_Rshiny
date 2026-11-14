@@ -2025,7 +2025,8 @@ interp_gtex_local <- function(variant, sources = interp_local_sources()) {
         tissue <- gsub("_", " ", vapply(g, `[[`, character(1), 5L)); lead <- vapply(g, `[[`, character(1), 8L) == variant_id
         row$gene <- g[[1L]][[3L]]; row$biotype <- g[[1L]][[4L]]; row$tissues_tested <- length(unique(tissue))
         row$lead_variant_in <- sum(lead & tissue %in% p$tissue)
-        if (!nzchar(row$whole_blood)) row$whole_blood <- if ("Whole Blood" %in% tissue) "tested, not significant" else "not tested"
+        # The gene table says whether GTEx tested the gene in the tissue, not whether it tested this variant there.
+        if (!nzchar(row$whole_blood)) row$whole_blood <- if ("Whole Blood" %in% tissue) "pair not significant (gene tested)" else "gene not tested"
         pairs$gene[pairs$gene_id == id] <- row$gene
         pairs$lead_variant[pairs$gene_id == id] <- p$tissue %in% tissue[lead]
       }
@@ -2864,7 +2865,7 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     evidence <- c(evidence, sprintf("GTEx %s %s: eQTL in %d tissue(s)%s (%s); %s; whole blood: %s%s", gl$release, gl_name(g), g$tissues_significant,
       ifelse(is.na(g$tissues_tested), "", paste0(" of the ", g$tissues_tested, " that tested the gene")),
       vapply(strsplit(g$tissues, ", ", fixed = TRUE), function(t) interp_join(t, ", ", max = 4), character(1)), g$direction,
-      ifelse(nzchar(g$whole_blood), g$whole_blood, "not significant or not tested"),
+      ifelse(nzchar(g$whole_blood), g$whole_blood, "pair not significant, or gene not tested"),
       ifelse(!is.na(g$lead_variant_in) & g$lead_variant_in > 0L, paste0("; the gene's lead variant in ", g$lead_variant_in, " tissue(s)"), "")))
     if (nrow(gl$genes) > 3L) evidence <- c(evidence, paste0("GTEx ", gl$release, ": ", nrow(gl$genes) - 3L, " more eQTL gene(s) in the table"))
     sources <- c(sources, trimws(paste("GTEx", gl$release, "(local)")))

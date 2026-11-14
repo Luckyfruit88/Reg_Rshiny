@@ -72,7 +72,7 @@ interpretation_ui <- function(id) {
         shiny::uiOutput(ns("gtex_local_plot_box")),
         interpretation_table_output(ns("gtex_local_genes")),
         interpretation_table_output(ns("gtex_local_pairs")),
-        shiny::p("Read from the local copy of the GTEx significant variant-gene pairs; nothing is sent. One row per gene in the first table and per gene and tissue in the second. Slopes are per ALT allele on GTEx's normalised expression. tissues_tested counts the tissues in which GTEx tested the gene at all, so a tissue missing from the list is either not significant there or did not test the gene; a tissue with few donors can miss an effect. lead_variant marks tissues where this variant is the gene's most significant variant, which is a hint, not fine-mapping. GTEx tissues differ in donors and sample size, so a count of tissues is descriptive."),
+        shiny::p("Read from the local copy of the GTEx significant variant-gene pairs; nothing is sent. One row per gene in the first table and per gene and tissue in the second. Slopes are per ALT allele on GTEx's normalised expression. tissues_tested counts the tissues in which GTEx tested the gene at all, so a tissue missing from the list is either not significant there or did not test the gene (or this variant, which the files do not record); a tissue with few donors can miss an effect. lead_variant marks tissues where this variant is the gene's most significant variant, which is a hint, not fine-mapping. GTEx tissues differ in donors and sample size, so a count of tissues is descriptive."),
         shiny::h5("GTEx v10 (public query)"),
         interpretation_table_output(ns("gtex_qtl")),
         shiny::plotOutput(ns("expression_plot"), height = 900)),
