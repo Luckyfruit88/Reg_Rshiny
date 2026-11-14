@@ -620,6 +620,22 @@ fine <- local; fine$topmed$pairs$pip[fine$topmed$pairs$qtl_type == "sQTL"][[1L]]
 fine$topmed$pairs$pip[fine$topmed$pairs$gene_id == "ENSG2.1"][[1L]] <- .7
 s3 <- interp_evidence_summary(intronic, fine)
 stopifnot(level(s3, "Splicing") == "Strong", level(s3, "Gene expression (eQTL)") == "Strong")
+# Expression with SuSiE's word on each gene: a variant left out of every credible set of all its eQTL genes is
+# indirect support (Limited); with one gene not fine-mapped, or an eQTL from a source without fine-mapping, it stays Moderate.
+left_out <- local; left_out$fhs <- list(sqtl = interp_fhs_empty(), eqtl = interp_fhs_empty())
+left_out$topmed$pairs <- transform(pairs, fine_mapped = ifelse(significant & qtl_type == "eQTL", TRUE, NA))
+sx <- interp_evidence_summary(intronic, left_out)
+stopifnot(level(sx, "Gene expression (eQTL)") == "Limited", grepl("leaves this variant out of every credible set", sx$finding[4L], fixed = TRUE),
+  grepl("TOPMed SuSiE: this variant is in no credible set, or has a PIP under 0.1, for the eQTL of", sx$evidence[4L], fixed = TRUE))
+one_open <- left_out; one_open$topmed$pairs$fine_mapped[one_open$topmed$pairs$gene_id == "ENSG3.1"] <- NA
+sy <- interp_evidence_summary(intronic, one_open)
+stopifnot(level(sy, "Gene expression (eQTL)") == "Moderate", grepl("so that association is most likely through linkage disequilibrium", sy$finding[4L], fixed = TRUE),
+  # A small PIP still counts as left out; a PIP of 0.1 or more is reported and keeps the gene in play.
+  level(interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$pip[z$topmed$pairs$gene_id == "ENSG2.1"] <- .04; z }), "Gene expression (eQTL)") == "Limited",
+  grepl("PIP 0.30 for ENSG2.1", interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$pip[z$topmed$pairs$gene_id == "ENSG2.1"] <- .3; z })$evidence[4L], fixed = TRUE),
+  level(interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$pip[z$topmed$pairs$gene_id == "ENSG2.1"] <- .3; z }), "Gene expression (eQTL)") == "Moderate",
+  # Without the fine-mapping column nothing is set aside.
+  level(interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$fine_mapped <- NULL; z }), "Gene expression (eQTL)") == "Moderate")
 # The offline ClinVar snapshot is used when the public query was not run.
 offline <- local; offline$known$clinvar_significance <- "pathogenic, likely_pathogenic"
 stopifnot(level(interp_evidence_summary(intronic, offline), "Disease and traits") == "Strong")

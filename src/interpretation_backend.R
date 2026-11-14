@@ -2721,6 +2721,20 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     sources <- c(sources, "TOPMed cis-eQTL")
   }
   e_fine <- topmed_eqtl && any(e_pairs$pip >= 0.5, na.rm = TRUE)
+  # What SuSiE, which allows several signals, says per gene: the variant's largest PIP over the significant contexts,
+  # and whether every one of those contexts has credible sets for the gene with the variant in none or under 0.1.
+  set_aside <- character(); set_aside_ids <- character()
+  if (topmed_eqtl) {
+    gene_of <- interp_bare_gene(e_pairs$gene_id); mapped <- if (is.null(e_pairs$fine_mapped)) rep(NA, nrow(e_pairs)) else e_pairs$fine_mapped
+    out_of_sets <- vapply(unique(gene_of), function(g) { k <- gene_of == g; all(mapped[k] %in% TRUE) && all(is.na(e_pairs$pip[k]) | e_pairs$pip[k] < 0.1) }, logical(1))
+    in_sets <- vapply(unique(gene_of), function(g) suppressWarnings(max(e_pairs$pip[gene_of == g], na.rm = TRUE)), numeric(1))
+    label <- vapply(unique(gene_of), function(g) name(e_pairs[gene_of == g, , drop = FALSE])[[1L]], character(1))
+    set_aside <- unname(label[out_of_sets]); set_aside_ids <- unique(gene_of)[out_of_sets]
+    held <- is.finite(in_sets) & in_sets >= 0.1
+    if (length(set_aside) || any(held)) evidence <- c(evidence, paste0("TOPMed SuSiE: ", paste(c(
+      if (length(set_aside)) paste0("this variant is in no credible set, or has a PIP under 0.1, for the eQTL of ", interp_join(set_aside, ", ", max = 6)),
+      if (any(held)) paste0("PIP ", paste(sprintf("%.2f for %s", in_sets[held], label[held]), collapse = ", "))), collapse = "; ")))
+  }
   fhs_eqtl <- !is.null(fhs) && nrow(fhs$eqtl) > 0L
   if (fhs_eqtl) {
     evidence <- c(evidence, sprintf("FHS whole-blood eQTL for %s (log10 p %.1f)", interp_join(fhs$eqtl$gene, ", ", max = 5), min(fhs$eqtl$log10_p)))
@@ -2756,6 +2770,15 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   finding <- switch(level, Strong = "Associated with expression, and fine-mapping gives this variant a posterior probability of at least 0.5.",
     Moderate = "Associated with expression; not fine-mapped to this variant.", `None found` = "No eQTL reported for this variant.",
     "No expression-QTL source was available.")
+  # Every eQTL gene of the variant fine-mapped by SuSiE with the variant left out, and no eQTL from a source without
+  # fine-mapping for any other gene: the association is most likely through linkage disequilibrium, which is indirect support.
+  others <- c(if (fhs_eqtl) setdiff(fhs$eqtl$gene, set_aside), if (gl_eqtl) setdiff(interp_bare_gene(gl$genes$gene_id), set_aside_ids), if (gtex_eqtl || ot_eqtl) "public")
+  if (level == "Moderate" && topmed_eqtl && length(set_aside_ids) == length(unique(interp_bare_gene(e_pairs$gene_id))) && !length(others)) {
+    level <- "Limited"
+    finding <- paste0("Associated with the expression of ", interp_join(set_aside, ", ", max = 5), ", but SuSiE, which allows several signals, leaves this variant out of ",
+      "every credible set (or gives it a PIP under 0.1): the association is most likely through linkage disequilibrium.")
+  } else if (level == "Moderate" && length(set_aside)) finding <- paste0("Associated with expression; not fine-mapped to this variant. For ", interp_join(set_aside, ", ", max = 5),
+    " SuSiE leaves it out of every credible set (or gives it a PIP under 0.1), so that association is most likely through linkage disequilibrium.")
   if (length(coloc_lines("eQTL"))) {
     evidence <- c(evidence, coloc_lines("eQTL")); sources <- c(sources, "colocalisation (computed here)")
     # An expression signal that this variant does not lead, and whose causal variant differs from a signal this
