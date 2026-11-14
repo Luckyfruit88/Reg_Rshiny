@@ -875,6 +875,8 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   stopifnot(t$available, nrow(t$contexts) == 12L, ctx("eQTL", "Lung")$pairs_tested == 2L, ctx("eQTL", "Lung")$significant_pairs == 1L,
     ctx("eQTL", "Monocytes")$tested == FALSE, ctx("sQTL", "PBMC")$tested == FALSE,
     lung$significant, lung$pip == .83, lung$credible_set == "1", lung$n_estimated == 1000L, lung$p_threshold == 1e-5, lung$slope_alt == .5,
+    # SuSiE has a credible set for this gene in lung; the whole-blood pair is significant but that context has no credible-set file.
+    isTRUE(lung$fine_mapped), is.na(pr("eQTL", "Lung", "ENSG2.1")$fine_mapped), is.na(pr("eQTL", "Whole blood", "ENSG1.1")$fine_mapped),
     # The ENSG2 gene failed FDR, so it has no threshold and cannot be significant.
     !pr("eQTL", "Lung", "ENSG2.1")$significant, is.na(pr("eQTL", "Lung", "ENSG2.1")$p_threshold),
     # PBMC: same gene, not significant, kept for the comparison; minor allele is REF there.
@@ -1010,12 +1012,17 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   p_moderate <- protein_row(intronic, list(pqtl = pq))
   stopifnot(p_moderate$level == "Moderate", grepl("not fine-mapped to this variant", p_moderate$finding, fixed = TRUE),
     grepl("posterior 0.00, 95% credible set of 1 of 2 variant(s), lead rs1b", p_moderate$evidence, fixed = TRUE))
-  # A posterior of at least 0.5 is what singles the variant out: Strong without any predicted consequence.
-  led <- pq; led$associations$posterior_probability[led$associations$study == "UKB-PPP" & led$associations$protein == acting] <- .83
+  # A single-signal posterior of at least 0.9 is what singles the variant out: Strong without any predicted consequence.
+  # Between 0.5 and 0.9 it is the leading candidate and the level stays Moderate.
+  led <- pq; led$associations$posterior_probability[led$associations$study == "UKB-PPP" & led$associations$protein == acting] <- .93
   led$associations$lead_variant[led$associations$study == "UKB-PPP" & led$associations$protein == acting] <- "this variant"
   p_pinned <- protein_row(intronic, list(pqtl = led))
-  stopifnot(p_pinned$level == "Strong", grepl("single-signal fine-mapping gives this variant a posterior probability of 0.83", p_pinned$finding, fixed = TRUE),
-    grepl("posterior 0.83, 95% credible set of 1 of 2 variant(s), this variant leads", p_pinned$evidence, fixed = TRUE))
+  stopifnot(p_pinned$level == "Strong", grepl("single-signal fine-mapping gives this variant a posterior probability of 0.93", p_pinned$finding, fixed = TRUE),
+    grepl("posterior 0.93, 95% credible set of 1 of 2 variant(s), this variant leads", p_pinned$evidence, fixed = TRUE))
+  nearly <- led; nearly$associations$posterior_probability[nearly$associations$study == "UKB-PPP" & nearly$associations$protein == acting] <- .68
+  p_nearly <- protein_row(intronic, list(pqtl = nearly))
+  stopifnot(p_nearly$level == "Moderate", grepl(paste0("makes this variant the leading candidate for ", acting, " (posterior 0.68) without settling it."), p_nearly$finding, fixed = TRUE),
+    !length(interp_mechanism(list(pqtl = nearly))) || !grepl("likely cause", interp_mechanism(list(pqtl = nearly))[[1L]], fixed = TRUE))
   only <- function(keep) { x <- pq; x$associations <- pa[pa$protein %in% keep, , drop = FALSE]; x }
   stopifnot(protein_row(intronic, list(pqtl = only(c("PROTB", "PROTC"))))$level == "Limited",
     protein_row(intronic, list(pqtl = only("PROTC")))$level == "None found",
@@ -1133,7 +1140,8 @@ if (nzchar(tabix) && file.exists(bgzip)) {
     mech[[1L]] == "Fine-mapping places this variant itself as the likely cause of the expression of GA (posterior 1.00); the plasma level of PA (posterior 1.00).",
     mech[[2L]] == "The splice change it is tied to (observed and predicted) would give SPL transcripts a premature stop, on an mRNA expected to be degraded.",
     mech[[3L]] == "One causal variant is shared by the expression of GA and the plasma level of PA (posterior 1.00).",
-    mech[[4L]] == "Another causal variant is behind the expression of ENSGB: this variant is associated with it through linkage disequilibrium.",
+    # Without SuSiE's word on that eQTL, a weaker signal of the variant's own cannot be ruled out.
+    mech[[4L]] == "Another variant leads the expression of ENSGB: this variant reaches it through linkage disequilibrium or through a separate, weaker signal of its own.",
     # An annotated intron is named with its transcript type; an assumed outcome is not turned into a mechanism.
     grepl("; the intron it favours belongs to SNC, annotated as retained intron.", interp_mechanism(NULL, splice_named, NULL), fixed = TRUE),
     !length(interp_mechanism(NULL, splice_assumed, NULL)), !length(interp_mechanism()),
@@ -1141,13 +1149,31 @@ if (nzchar(tabix) && file.exists(bgzip)) {
     interp_mechanism(list(topmed = list(available = TRUE, pairs = co_pairs)))[[1L]] ==
       "Fine-mapping does not single this variant out for any of its molecular associations; a neighbour in linkage disequilibrium may carry them.",
     grepl("likely cause of the expression of GA (posterior 0.90)", interp_mechanism(list(topmed = list(available = TRUE, pairs = transform(co_pairs, pip = c(.9, NA, .6, NA)))))[[1L]], fixed = TRUE),
-    grepl(paste0("the plasma level of ", acting, " (posterior 0.83)"), interp_mechanism(list(pqtl = led))[[1L]], fixed = TRUE))
+    grepl(paste0("the plasma level of ", acting, " (posterior 0.93)"), interp_mechanism(list(pqtl = led))[[1L]], fixed = TRUE))
+  # With SuSiE credible sets for that eQTL and the variant in none of them, linkage disequilibrium is what is left.
+  mapped_pairs <- transform(co_pairs, fine_mapped = c(NA, TRUE, NA, NA)); mapped_local <- co_local; mapped_local$topmed$pairs <- mapped_pairs
+  mapped_co <- interp_colocalise(v, mapped_local, co_src, window = 1000L, min_variants = 3L)
+  stopifnot(identical(mapped_co$traits$susie, c("", "in no credible set", "")),
+    interp_mechanism(mapped_local, NULL, mapped_co)[[3L]] ==
+      "Another variant leads the expression of ENSGB: SuSiE, which allows several signals, places this variant in no credible set of it, so the association is through linkage disequilibrium.",
+    grepl("places this variant in no credible set of it, so the association is through linkage disequilibrium.",
+      interp_evidence_summary(intronic, mapped_local, coloc = mapped_co)$finding[4L], fixed = TRUE),
+    # A PIP in any context is reported with the trait; a phenotype without credible sets stays undetermined.
+    interp_coloc_traits(list(topmed = list(available = TRUE, pairs = transform(co_pairs, pip = c(NA, .3, NA, NA)))))$susie[[2L]] == "in a credible set (PIP 0.30)",
+    interp_through_ld(NULL, "x") == "this variant reaches it through linkage disequilibrium or through a separate, weaker signal of its own",
+    # A small PIP inside a credible set also points to linkage disequilibrium; a PIP of 0.1 or more means the variant
+    # may carry a signal of its own there, and that trait is no longer counted as one it does not lead.
+    interp_through_ld(data.frame(label = c("a", "b"), susie = c("in no credible set", "in a credible set (PIP 0.05)"), susie_pip = c(NA, .05)), c("a", "b")) ==
+      "SuSiE, which allows several signals, gives this variant a PIP of at most 0.05 for them, so the association is most likely through linkage disequilibrium",
+    identical(interp_not_led(data.frame(label = c("a", "b", "c", "d"), this_variant_posterior = c(0, 0, .95, NA), susie_pip = c(NA, .6, NA, NA))), "a"),
+    !length(interp_not_led(NULL)))
   sc <- interp_evidence_summary(intronic, co_local, coloc = co)
   stopifnot(grepl("colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant (posterior 1.00; this variant's share of the shared signal 1.00)",
       sc$evidence[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
     grepl("colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant", sc$evidence[sc$question == "Protein abundance (pQTL)"], fixed = TRUE),
     grepl("colocalisation (computed here)", sc$sources[sc$question == "Protein abundance (pQTL)"], fixed = TRUE),
-    grepl("Colocalisation gives the expression of ENSGB a different causal variant from the plasma level of PA, which this variant leads", sc$finding[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
+    grepl("Colocalisation gives the expression of ENSGB a different leading causal variant from the plasma level of PA, which this variant leads: this variant reaches it through linkage disequilibrium or through a separate, weaker signal of its own.",
+      sc$finding[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
     interp_trait_words("sQTL CNIH4 intron 10-90 (Whole blood)") == "the splicing of CNIH4 (intron 10-90)",
     !grepl("colocalisation", sc$evidence[sc$question == "Splicing"], fixed = TRUE),
     !grepl("Colocalisation", interp_evidence_summary(intronic, co_local)$finding[4L], fixed = TRUE))
