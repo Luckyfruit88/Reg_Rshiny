@@ -270,6 +270,11 @@ long_intron <- transform(ev[1L, ], start1 = 151L, end1 = 300L)
 joined <- interp_splice_protein(far_variant, annotation_S, fetch, rbind(long_intron, transform(ev[5L, ], score = .42, detail = "SpliceAI donor gain 0.42")))
 stopifnot(nrow(joined) == 1L, joined$basis == "observed", grepl("SpliceAI donor gain 0.42", joined$support, fixed = TRUE), grepl("1 exon(s) left out", joined$event, fixed = TRUE),
   interp_splice_protein(far_variant, annotation_S, fetch, rbind(long_intron, ev[5L, ]))$basis == "observed and predicted")
+# Two observed changes on one transcript: the one with the larger effect comes first, whatever the order they arrive in.
+two <- rbind(transform(ev[1L, ], start1 = 161L, end1 = 300L, score = .4), transform(ev[1L, ], start1 = 151L, end1 = 200L, score = 1.5))
+stopifnot(identical(names(interp_splice_protein(far_variant, annotation_S, fetch, two)), names(interp_splice_protein_empty())),
+  grepl("^alternative donor", interp_splice_protein(far_variant, annotation_S, fetch, two)$event[[1L]]),
+  grepl("^exon skipping", interp_splice_protein(far_variant, annotation_S, fetch, transform(two, score = rev(score)))$event[[1L]]))
 # The mirrored transcript gives the mirrored events the same reading; a change that fits no transcript gives no row.
 mirror_events <- transform(ev, start1 = ifelse(is.na(ev$end1), NA_integer_, mirror(ev$end1)), end1 = ifelse(is.na(ev$start1), NA_integer_, mirror(ev$start1)),
   position = ifelse(is.na(ev$position), NA_integer_, mirror(ev$position)))
@@ -280,6 +285,49 @@ stopifnot(nrow(sm) == 3L, identical(sm$coding_effect, sp$coding_effect), identic
   # An intron that would keep more than 300 nt of intron in the transcript is not placed on it.
   !nrow(interp_splice_protein(far_variant, annotation_S, fetch, transform(ev[1L, ], start1 = 195L, end1 = 200L), max_kept_intron = 30L)),
   !nrow(interp_splice_protein(far_variant, annotation_T, fetch)), !nrow(interp_splice_protein(far_variant, list(transcripts = NULL), fetch)))
+# Splice sites of the open result: a site whose bin ratio falls with ALT is a weakened site of the transcript, a site
+# whose ratio rises is joined to the introns the annotation gives it. Flat sites and rows above the cut-off are left out.
+sp_bins <- data.frame(site_id = paste0("donor:+:chrS:", c(161L, 151L, 261L, 171L)), splice_site_type = "donor", splice_site_position = c(161L, 151L, 261L, 171L),
+  status = "OK", beta = c(-.3, .4, -.2, .5), p_permutation = c(1e-4, 1e-4, .4, 1e-4), n = 900L, bin_check = c("OK", "OK", "OK", "NO_DEPTH_DROP_AT_SITE"), stringsAsFactors = FALSE)
+bin_events <- interp_splice_events(NULL, NULL, NULL, sp_bins)
+stopifnot(nrow(bin_events) == 2L, all(bin_events$source == "this cohort"), all(bin_events$observed), identical(bin_events$effect, c("loss", "gain")),
+  identical(bin_events$position, c(161L, 151L)), all(is.na(bin_events$start1)),
+  bin_events$detail[[2L]] == "this cohort: donor site at 151 used more with ALT (bin ratio +0.400 per ALT allele, permutation p 1.0e-04)",
+  !nrow(interp_splice_events(NULL, NULL, NULL, simpleError("no bin ratio"))), !nrow(interp_splice_events(NULL, NULL, NULL, sp_bins[3:4, ])))
+# Alone, the weakened donor of the first exon gives the assumed outcome, said to rest on the cohort's own reads.
+lone <- interp_splice_protein(far_variant, annotation_S, fetch, bin_events[1L, ])
+stopifnot(nrow(lone) == 1L, lone$basis == "assumed outcome", grepl("this cohort: donor site at 161 used less with ALT", lone$support, fixed = TRUE))
+# The site used more is the donor of an intron of another annotated transcript: that intron is placed, observed, and the
+# weakened donor it stands in for is named with it. A site no annotated intron uses gives nothing.
+annotation_S3 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC", "SPL", "chrS", "+", 101L, 360L, "", "retained_intron")),
+  exons = rbind(annotation_S$exons, exon_rows("SNC", "SPL", "chrS", "+", c(101L, 201L), c(150L, 360L))), features = annotation_S$features)
+joined_site <- interp_splice_protein(far_variant, annotation_S3, fetch, bin_events)
+stopifnot(nrow(joined_site) == 1L, joined_site$event == "alternative donor: intron chrS:151-200 in place of intron 1", joined_site$basis == "observed",
+  joined_site$annotated_in == "SNC (retained_intron)", grepl("donor site at 151 used more with ALT", joined_site$support, fixed = TRUE),
+  grepl("donor site at 161 used less with ALT", joined_site$support, fixed = TRUE), joined_site$coding_effect == "premature stop",
+  nrow(interp_splice_protein(far_variant, annotation_S, fetch, bin_events[2L, ])) == 0L,
+  # On an essential site the cohort's line joins the variant's own; with SpliceAI on the same new donor it is observed and predicted.
+  grepl("the variant changes the essential donor site; this cohort: donor site at 161 used less with ALT",
+    interp_splice_protein(interp_variant("chrS", 161L, "G", "A"), annotation_S, fetch, bin_events[1L, ])$support, fixed = TRUE),
+  interp_splice_protein(far_variant, annotation_S3, fetch, rbind(bin_events, ev[5L, ]))$basis == "observed and predicted")
+# A donor further into the intron keeps intronic bases; the transcript's own weakened donor at the start of that stretch counts for it.
+annotation_S4 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC", "SPL", "chrS", "+", 101L, 360L, "", "retained_intron")),
+  exons = rbind(annotation_S$exons, exon_rows("SNC", "SPL", "chrS", "+", c(101L, 301L), c(170L, 360L))), features = annotation_S$features)
+stretch <- interp_splice_protein(far_variant, annotation_S4, fetch, transform(bin_events, position = c(161L, 171L)))
+stopifnot(nrow(stretch) == 1L, stretch$mrna_change == "60 exonic nt removed, 10 intronic nt kept", grepl("donor site at 161 used less with ALT", stretch$support, fixed = TRUE),
+  stretch$event == "alternative donor: intron chrS:171-300 in place of intron 2, 1 exon(s) left out", stretch$basis == "observed")
+# The annotation is read around the variant and around the introns of the events, which can lie away from it.
+far_events <- rbind(transform(ev[1L, ], start1 = 50151L, end1 = 50200L, score = .5), transform(ev[1L, ], start1 = 900001L, end1 = 1300000L, score = 2),
+  transform(ev[1L, ], start1 = 5000001L, end1 = 5000100L), transform(ev[5L, ], position = 20000L), transform(ev[2L, ], start1 = 151L, end1 = 200L))
+windows <- interp_splice_query_windows(interp_variant("chrS", 10000L, "A", "G"), far_events)
+stopifnot(identical(windows$start1, c(5000L, 899001L, 1299000L, 50150L, 150L, 19000L)), identical(windows$end1, c(15000L, 901001L, 1301000L, 50201L, 201L, 21000L)),
+  # The variant's own window first; then the rising introns, strongest first and a long one at its two ends; then the
+  # falling ones and the sites. An intron beyond reach and one inside a window already taken add nothing.
+  nrow(interp_splice_query_windows(interp_variant("chrS", 180L, "A", "G"), ev)) == 1L, nrow(interp_splice_query_windows(interp_variant("chrS", 180L, "A", "G"))) == 1L,
+  nrow(interp_splice_query_windows(interp_variant("chrS", 10000L, "A", "G"), far_events, max_windows = 2L)) == 2L)
+merged <- interp_merge_annotation(list(annotation_S, annotation_S3, NULL, annotation_S))
+stopifnot(identical(merged$transcripts$transcript_id, c("SP", "SNC")), nrow(merged$exons) == 5L, nrow(merged$features) == nrow(annotation_S$features),
+  is.null(interp_merge_annotation(list(NULL))), identical(interp_merge_annotation(list(annotation_S)), annotation_S))
 # An intron that another transcript of the query already has is named, whatever that transcript's type.
 annotation_S2 <- list(transcripts = rbind(annotation_S$transcripts, tx_row("SNC", "SPL", "chrS", "+", 101L, 360L, "", "retained_intron")),
   exons = rbind(annotation_S$exons, exon_rows("SNC", "SPL", "chrS", "+", c(101L, 301L), c(150L, 360L))), features = annotation_S$features)
@@ -577,6 +625,22 @@ fine <- local; fine$topmed$pairs$pip[fine$topmed$pairs$qtl_type == "sQTL"][[1L]]
 fine$topmed$pairs$pip[fine$topmed$pairs$gene_id == "ENSG2.1"][[1L]] <- .7
 s3 <- interp_evidence_summary(intronic, fine)
 stopifnot(level(s3, "Splicing") == "Strong", level(s3, "Gene expression (eQTL)") == "Strong")
+# Expression with SuSiE's word on each gene: a variant left out of every credible set of all its eQTL genes is
+# indirect support (Limited); with one gene not fine-mapped, or an eQTL from a source without fine-mapping, it stays Moderate.
+left_out <- local; left_out$fhs <- list(sqtl = interp_fhs_empty(), eqtl = interp_fhs_empty())
+left_out$topmed$pairs <- transform(pairs, fine_mapped = ifelse(significant & qtl_type == "eQTL", TRUE, NA))
+sx <- interp_evidence_summary(intronic, left_out)
+stopifnot(level(sx, "Gene expression (eQTL)") == "Limited", grepl("leaves this variant out of every credible set", sx$finding[4L], fixed = TRUE),
+  grepl("TOPMed SuSiE: this variant is in no credible set, or has a PIP under 0.1, for the eQTL of", sx$evidence[4L], fixed = TRUE))
+one_open <- left_out; one_open$topmed$pairs$fine_mapped[one_open$topmed$pairs$gene_id == "ENSG3.1"] <- NA
+sy <- interp_evidence_summary(intronic, one_open)
+stopifnot(level(sy, "Gene expression (eQTL)") == "Moderate", grepl("so that association is most likely through linkage disequilibrium", sy$finding[4L], fixed = TRUE),
+  # A small PIP still counts as left out; a PIP of 0.1 or more is reported and keeps the gene in play.
+  level(interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$pip[z$topmed$pairs$gene_id == "ENSG2.1"] <- .04; z }), "Gene expression (eQTL)") == "Limited",
+  grepl("PIP 0.30 for ENSG2", interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$pip[z$topmed$pairs$gene_id == "ENSG2.1"] <- .3; z })$evidence[4L], fixed = TRUE),
+  level(interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$pip[z$topmed$pairs$gene_id == "ENSG2.1"] <- .3; z }), "Gene expression (eQTL)") == "Moderate",
+  # Without the fine-mapping column nothing is set aside.
+  level(interp_evidence_summary(intronic, { z <- left_out; z$topmed$pairs$fine_mapped <- NULL; z }), "Gene expression (eQTL)") == "Moderate")
 # The offline ClinVar snapshot is used when the public query was not run.
 offline <- local; offline$known$clinvar_significance <- "pathogenic, likely_pathogenic"
 stopifnot(level(interp_evidence_summary(intronic, offline), "Disease and traits") == "Strong")
@@ -844,6 +908,8 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   stopifnot(t$available, nrow(t$contexts) == 12L, ctx("eQTL", "Lung")$pairs_tested == 2L, ctx("eQTL", "Lung")$significant_pairs == 1L,
     ctx("eQTL", "Monocytes")$tested == FALSE, ctx("sQTL", "PBMC")$tested == FALSE,
     lung$significant, lung$pip == .83, lung$credible_set == "1", lung$n_estimated == 1000L, lung$p_threshold == 1e-5, lung$slope_alt == .5,
+    # SuSiE has a credible set for this gene in lung; the whole-blood pair is significant but that context has no credible-set file.
+    isTRUE(lung$fine_mapped), is.na(pr("eQTL", "Lung", "ENSG2.1")$fine_mapped), is.na(pr("eQTL", "Whole blood", "ENSG1.1")$fine_mapped),
     # The ENSG2 gene failed FDR, so it has no threshold and cannot be significant.
     !pr("eQTL", "Lung", "ENSG2.1")$significant, is.na(pr("eQTL", "Lung", "ENSG2.1")$p_threshold),
     # PBMC: same gene, not significant, kept for the comparison; minor allele is REF there.
@@ -979,12 +1045,17 @@ if (nzchar(tabix) && file.exists(bgzip)) {
   p_moderate <- protein_row(intronic, list(pqtl = pq))
   stopifnot(p_moderate$level == "Moderate", grepl("not fine-mapped to this variant", p_moderate$finding, fixed = TRUE),
     grepl("posterior 0.00, 95% credible set of 1 of 2 variant(s), lead rs1b", p_moderate$evidence, fixed = TRUE))
-  # A posterior of at least 0.5 is what singles the variant out: Strong without any predicted consequence.
-  led <- pq; led$associations$posterior_probability[led$associations$study == "UKB-PPP" & led$associations$protein == acting] <- .83
+  # A single-signal posterior of at least 0.9 is what singles the variant out: Strong without any predicted consequence.
+  # Between 0.5 and 0.9 it is the leading candidate and the level stays Moderate.
+  led <- pq; led$associations$posterior_probability[led$associations$study == "UKB-PPP" & led$associations$protein == acting] <- .93
   led$associations$lead_variant[led$associations$study == "UKB-PPP" & led$associations$protein == acting] <- "this variant"
   p_pinned <- protein_row(intronic, list(pqtl = led))
-  stopifnot(p_pinned$level == "Strong", grepl("single-signal fine-mapping gives this variant a posterior probability of 0.83", p_pinned$finding, fixed = TRUE),
-    grepl("posterior 0.83, 95% credible set of 1 of 2 variant(s), this variant leads", p_pinned$evidence, fixed = TRUE))
+  stopifnot(p_pinned$level == "Strong", grepl("single-signal fine-mapping gives this variant a posterior probability of 0.93", p_pinned$finding, fixed = TRUE),
+    grepl("posterior 0.93, 95% credible set of 1 of 2 variant(s), this variant leads", p_pinned$evidence, fixed = TRUE))
+  nearly <- led; nearly$associations$posterior_probability[nearly$associations$study == "UKB-PPP" & nearly$associations$protein == acting] <- .68
+  p_nearly <- protein_row(intronic, list(pqtl = nearly))
+  stopifnot(p_nearly$level == "Moderate", grepl(paste0("makes this variant the leading candidate for ", acting, " (posterior 0.68) without settling it."), p_nearly$finding, fixed = TRUE),
+    !length(interp_mechanism(list(pqtl = nearly))) || !grepl("likely cause", interp_mechanism(list(pqtl = nearly))[[1L]], fixed = TRUE))
   only <- function(keep) { x <- pq; x$associations <- pa[pa$protein %in% keep, , drop = FALSE]; x }
   stopifnot(protein_row(intronic, list(pqtl = only(c("PROTB", "PROTC"))))$level == "Limited",
     protein_row(intronic, list(pqtl = only("PROTC")))$level == "None found",
@@ -1026,8 +1097,16 @@ if (nzchar(tabix) && file.exists(bgzip)) {
     gt$genes$tissues[[1L]] == "Whole Blood, Lung, Brain Cortex", !nrow(interp_gtex_local(interp_variant("chr1", 100L, "G", "T"), srcs)$pairs),
     interp_gtex_local(interp_variant("chr1", 100L, "G", "T"), srcs)$available, !interp_gtex_local(v, none)$available)
   if (nzchar(srcs$look)) stopifnot(gt$gene_table, identical(gt$genes$gene, c("GENEA", "GENEB")), identical(gt$genes$tissues_tested, c(4L, 2L)),
-    identical(gt$genes$lead_variant_in, c(2L, 0L)), identical(gt$genes$whole_blood, c("significant", "not tested")), gt$genes$biotype[[2L]] == "lncRNA",
+    identical(gt$genes$lead_variant_in, c(2L, 0L)), identical(gt$genes$whole_blood, c("significant", "gene not tested")), gt$genes$biotype[[2L]] == "lncRNA",
     identical(gt$pairs$lead_variant[gt$pairs$gene == "GENEA"], c(TRUE, FALSE, TRUE)), identical(gt$pairs$gene, rep(c("GENEA", "GENEB"), c(3L, 2L))))
+  # A gene GTEx tested in whole blood without this pair being significant there: said as such, because the gene
+  # table does not say whether the variant itself was tested in that tissue.
+  no_blood_pair <- file.path(work, "gtex", "gtex_v12_eqtl_signif_pairs.b38.tsv.gz")
+  index(c("#chrom\tpos\tref\talt\tgene_id\ttissue\tslope\tslope_se\tpval_nominal\taf\tpval_nominal_threshold\tstart_distance",
+    gtex_row(100, "A", "ENSG00000000001.5", "Lung", .25, .05, 1e-6)), no_blood_pair, c("-s", "1", "-b", "2", "-e", "2", "-c", shQuote("#")))
+  quiet_blood <- srcs; quiet_blood$gtex_pairs <- no_blood_pair
+  if (nzchar(srcs$look)) stopifnot(interp_gtex_local(v, quiet_blood)$genes$whole_blood == "pair not significant (gene tested)",
+    grepl("whole blood: pair not significant (gene tested)", interp_evidence_summary(intronic, list(gtex = interp_gtex_local(v, quiet_blood)))$evidence[7L], fixed = TRUE))
   bare <- srcs; bare$gtex_genes <- "/missing"; gt_bare <- interp_gtex_local(v, bare)
   stopifnot(!gt_bare$gene_table, all(is.na(gt_bare$genes$tissues_tested)), identical(gt_bare$genes$whole_blood, c("significant", "")), all(gt_bare$genes$gene == ""))
   sg <- interp_evidence_summary(intronic, list(gtex = gt))
@@ -1094,7 +1173,8 @@ if (nzchar(tabix) && file.exists(bgzip)) {
     mech[[1L]] == "Fine-mapping places this variant itself as the likely cause of the expression of GA (posterior 1.00); the plasma level of PA (posterior 1.00).",
     mech[[2L]] == "The splice change it is tied to (observed and predicted) would give SPL transcripts a premature stop, on an mRNA expected to be degraded.",
     mech[[3L]] == "One causal variant is shared by the expression of GA and the plasma level of PA (posterior 1.00).",
-    mech[[4L]] == "Another causal variant is behind the expression of ENSGB: this variant is associated with it through linkage disequilibrium.",
+    # Without SuSiE's word on that eQTL, a weaker signal of the variant's own cannot be ruled out.
+    mech[[4L]] == "Another variant leads the expression of ENSGB: this variant reaches it through linkage disequilibrium or through a separate, weaker signal of its own.",
     # An annotated intron is named with its transcript type; an assumed outcome is not turned into a mechanism.
     grepl("; the intron it favours belongs to SNC, annotated as retained intron.", interp_mechanism(NULL, splice_named, NULL), fixed = TRUE),
     !length(interp_mechanism(NULL, splice_assumed, NULL)), !length(interp_mechanism()),
@@ -1102,13 +1182,32 @@ if (nzchar(tabix) && file.exists(bgzip)) {
     interp_mechanism(list(topmed = list(available = TRUE, pairs = co_pairs)))[[1L]] ==
       "Fine-mapping does not single this variant out for any of its molecular associations; a neighbour in linkage disequilibrium may carry them.",
     grepl("likely cause of the expression of GA (posterior 0.90)", interp_mechanism(list(topmed = list(available = TRUE, pairs = transform(co_pairs, pip = c(.9, NA, .6, NA)))))[[1L]], fixed = TRUE),
-    grepl(paste0("the plasma level of ", acting, " (posterior 0.83)"), interp_mechanism(list(pqtl = led))[[1L]], fixed = TRUE))
+    grepl(paste0("the plasma level of ", acting, " (posterior 0.93)"), interp_mechanism(list(pqtl = led))[[1L]], fixed = TRUE))
+  # With SuSiE credible sets for that eQTL and the variant in none of them, linkage disequilibrium is what is left.
+  mapped_pairs <- transform(co_pairs, fine_mapped = c(NA, TRUE, NA, NA)); mapped_local <- co_local; mapped_local$topmed$pairs <- mapped_pairs
+  mapped_co <- interp_colocalise(v, mapped_local, co_src, window = 1000L, min_variants = 3L)
+  stopifnot(identical(mapped_co$traits$susie, c("", "in no credible set", "")),
+    interp_mechanism(mapped_local, NULL, mapped_co)[[3L]] ==
+      "Another variant leads the expression of ENSGB: SuSiE, which allows several signals, places this variant in no credible set of it, so the association is through linkage disequilibrium.",
+    # In the card SuSiE's verdict comes first and colocalisation is said to agree with it.
+    grepl("For ENSGB SuSiE leaves it out of every credible set (or gives it a PIP under 0.1), so that association is most likely through linkage disequilibrium. Colocalisation agrees: the expression of ENSGB has a different leading causal variant from the plasma level of PA, which this variant leads.",
+      interp_evidence_summary(intronic, mapped_local, coloc = mapped_co)$finding[4L], fixed = TRUE),
+    # A PIP in any context is reported with the trait; a phenotype without credible sets stays undetermined.
+    interp_coloc_traits(list(topmed = list(available = TRUE, pairs = transform(co_pairs, pip = c(NA, .3, NA, NA)))))$susie[[2L]] == "in a credible set (PIP 0.30)",
+    interp_through_ld(NULL, "x") == "this variant reaches it through linkage disequilibrium or through a separate, weaker signal of its own",
+    # A small PIP inside a credible set also points to linkage disequilibrium; a PIP of 0.1 or more means the variant
+    # may carry a signal of its own there, and that trait is no longer counted as one it does not lead.
+    interp_through_ld(data.frame(label = c("a", "b"), susie = c("in no credible set", "in a credible set (PIP 0.05)"), susie_pip = c(NA, .05)), c("a", "b")) ==
+      "SuSiE, which allows several signals, gives this variant a PIP of at most 0.05 for them, so the association is most likely through linkage disequilibrium",
+    identical(interp_not_led(data.frame(label = c("a", "b", "c", "d"), this_variant_posterior = c(0, 0, .95, NA), susie_pip = c(NA, .6, NA, NA))), "a"),
+    !length(interp_not_led(NULL)))
   sc <- interp_evidence_summary(intronic, co_local, coloc = co)
   stopifnot(grepl("colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant (posterior 1.00; this variant's share of the shared signal 1.00)",
       sc$evidence[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
     grepl("colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant", sc$evidence[sc$question == "Protein abundance (pQTL)"], fixed = TRUE),
     grepl("colocalisation (computed here)", sc$sources[sc$question == "Protein abundance (pQTL)"], fixed = TRUE),
-    grepl("Colocalisation gives the expression of ENSGB a different causal variant from the plasma level of PA, which this variant leads", sc$finding[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
+    grepl("Colocalisation gives the expression of ENSGB a different leading causal variant from the plasma level of PA, which this variant leads: this variant reaches it through linkage disequilibrium or through a separate, weaker signal of its own.",
+      sc$finding[sc$question == "Gene expression (eQTL)"], fixed = TRUE),
     interp_trait_words("sQTL CNIH4 intron 10-90 (Whole blood)") == "the splicing of CNIH4 (intron 10-90)",
     !grepl("colocalisation", sc$evidence[sc$question == "Splicing"], fixed = TRUE),
     !grepl("Colocalisation", interp_evidence_summary(intronic, co_local)$finding[4L], fixed = TRUE))
@@ -1218,7 +1317,10 @@ stopifnot(identical(report$summary$question, c("Protein sequence", "Protein abun
   row$splice_outcome == "SPL SP: frameshift (assumed outcome); NMD predicted", row$shared_cause_pairs == 0L, row$sources_failed == "",
   # Gene names are filled through the caller's lookup when TOPMed pairs exist; a failing lookup is not fatal.
   !length(interp_local_report(interp_variant("chrS", 180L, "A", "G"), annotation_S, fetch, none, gene_names = function(ids) stop("no index"))$failed),
-  nrow(interp_report_row(interp_local_report(interp_variant("chrT", 6000L, "A", "G"), annotation_T, fetch, none))) == 1L)
+  nrow(interp_report_row(interp_local_report(interp_variant("chrT", 6000L, "A", "G"), annotation_T, fetch, none))) == 1L,
+  # The annotation can be given as a function of a window: the report asks for the variant's surroundings itself.
+  identical(interp_local_report(interp_variant("chrS", 161L, "G", "A"), function(chrom, start1, end1) { stopifnot(chrom == "chrS", start1 == 1L, end1 == 5161L); annotation_S },
+    fetch, none)$summary, report$summary))
 # The batch script checks its input before it reads any resource.
 rscript <- file.path(R.home("bin"), "Rscript")
 help <- suppressWarnings(system2(rscript, c("scripts/interpret_variants.R", "--help"), stdout = TRUE, stderr = TRUE))

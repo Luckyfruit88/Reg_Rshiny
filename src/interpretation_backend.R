@@ -621,9 +621,10 @@ interp_splice_events_empty <- function() data.frame(source = character(), effect
 # Splice changes reported or predicted for the variant, in one table:
 #   effect "gain" / "loss" with start1/end1: an intron (first to last intronic base) used more / less with ALT
 #     (a significant TOPMed sQTL intron by the sign of its slope, or a junction of the open result by the sign of its Model 1 slope);
-#   effect "gain" / "loss" with position: a splice site SpliceAI predicts to appear or weaken
-#     (position is the intronic base next to the site, as in interp_spliceai_sites()).
-interp_splice_events <- function(topmed_pairs = NULL, spliceai_sites = NULL, junctions = NULL, min_delta = 0.2) {
+#   effect "gain" / "loss" with position: a splice site used more or less with ALT in the open result (its bin
+#     ratio, 1 - intron reads / exon reads, rises or falls with the ALT dosage), or one SpliceAI predicts to
+#     appear or weaken (position is the intronic base next to the site, as in interp_spliceai_sites()).
+interp_splice_events <- function(topmed_pairs = NULL, spliceai_sites = NULL, junctions = NULL, bin_ratio = NULL, min_delta = 0.2) {
   rows <- list(interp_splice_events_empty())
   add <- function(...) rows[[length(rows) + 1L]] <<- data.frame(..., stringsAsFactors = FALSE)
   if (is.data.frame(topmed_pairs) && nrow(topmed_pairs)) {
@@ -649,12 +650,61 @@ interp_splice_events <- function(topmed_pairs = NULL, spliceai_sites = NULL, jun
       detail = sprintf("this cohort: junction used %s with ALT (%+.2f reads per 100 per ALT allele, permutation p %s)", if (x$beta[[i]] > 0) "more" else "less",
         x$beta[[i]], interp_fmt_p(x$p_permutation[[i]])))
   }
+  if (is.data.frame(bin_ratio) && nrow(bin_ratio) && all(c("status", "p_permutation", "beta", "splice_site_type", "splice_site_position") %in% names(bin_ratio))) {
+    # The same rows as the cohort RNA evidence: fitted, below the table's Bonferroni cut-off, with a depth drop at the site.
+    x <- bin_ratio[bin_ratio$status == "OK" & is.finite(bin_ratio$p_permutation), , drop = FALSE]
+    flat <- if ("bin_check" %in% names(x)) grepl("NO_DEPTH_DROP_AT_SITE", x$bin_check, fixed = TRUE) else rep(FALSE, nrow(x))
+    x <- x[x$p_permutation <= 0.05 / max(1L, nrow(x)) & !flat & is.finite(x$beta) & x$beta != 0, , drop = FALSE]
+    for (i in seq_len(nrow(x))) add(source = "this cohort", effect = if (x$beta[[i]] > 0) "gain" else "loss", site_type = x$splice_site_type[[i]], start1 = NA_integer_,
+      end1 = NA_integer_, position = as.integer(x$splice_site_position[[i]]), score = x$beta[[i]], observed = TRUE,
+      detail = sprintf("this cohort: %s site at %d used %s with ALT (bin ratio %+.3f per ALT allele, permutation p %s)", x$splice_site_type[[i]],
+        as.integer(x$splice_site_position[[i]]), if (x$beta[[i]] > 0) "more" else "less", x$beta[[i]], interp_fmt_p(x$p_permutation[[i]])))
+  }
   if (is.data.frame(spliceai_sites) && nrow(spliceai_sites)) {
     x <- spliceai_sites[is.finite(spliceai_sites$delta) & spliceai_sites$delta >= min_delta & is.finite(spliceai_sites$site_position), , drop = FALSE]
     for (i in seq_len(nrow(x))) add(source = "SpliceAI", effect = sub("^.* ", "", x$effect[[i]]), site_type = x$site_type[[i]], start1 = NA_integer_, end1 = NA_integer_,
       position = as.integer(x$site_position[[i]]), score = x$delta[[i]], observed = FALSE, detail = sprintf("SpliceAI %s %.2f", x$effect[[i]], x$delta[[i]]))
   }
   out <- do.call(rbind, rows); rownames(out) <- NULL; out
+}
+
+# Annotation windows a splice outcome needs: the variant's surroundings, and the introns and sites of the events
+# within `reach` of it, because the intron a variant acts on can lie far from the variant and belong to
+# transcripts that do not come near it. Rising introns first; at most `max_windows` windows of at most
+# `max_width` bases (an intron longer than that is covered at its two ends).
+interp_splice_query_windows <- function(variant, events = NULL, flank = 5000L, reach = 1000000L, max_windows = 6L, max_width = 250000L) {
+  w <- data.frame(start1 = max(1L, variant$pos1 - flank), end1 = variant$pos1 + flank)
+  add <- function(from, to) {
+    from <- max(1L, as.integer(from)); to <- as.integer(to)
+    if (any(from >= w$start1 & to <= w$end1) || nrow(w) >= max_windows) return(invisible())
+    w <<- rbind(w, data.frame(start1 = from, end1 = to))
+  }
+  if (is.data.frame(events) && nrow(events)) {
+    x <- events[!is.na(events$start1) & events$end1 >= variant$pos1 - reach & events$start1 <= variant$pos1 + reach, , drop = FALSE]
+    x <- x[order(x$effect != "gain", -abs(x$score)), , drop = FALSE]
+    for (i in seq_len(nrow(x))) {
+      if (x$end1[[i]] - x$start1[[i]] + 3L <= max_width) add(x$start1[[i]] - 1L, x$end1[[i]] + 1L) else {
+        add(x$start1[[i]] - 1000L, x$start1[[i]] + 1000L); add(x$end1[[i]] - 1000L, x$end1[[i]] + 1000L) }
+    }
+    for (p in events$position[!is.na(events$position) & abs(events$position - variant$pos1) <= reach]) add(p - 1000L, p + 1000L)
+  }
+  rownames(w) <- NULL; w
+}
+
+# Several query_annotation() results as one: every transcript once, with its exons, features and introns.
+interp_merge_annotation <- function(queries) {
+  queries <- queries[!vapply(queries, is.null, logical(1))]
+  if (!length(queries)) return(NULL)
+  out <- queries[[1L]]
+  for (q in queries[-1L]) {
+    fresh <- setdiff(q$transcripts$transcript_id, out$transcripts$transcript_id)
+    if (!length(fresh)) next
+    for (name in intersect(c("transcripts", "exons", "features", "introns"), names(q))) {
+      rows <- q[[name]][q[[name]]$transcript_id %in% fresh, , drop = FALSE]
+      out[[name]] <- if (is.null(out[[name]])) rows else rbind(out[[name]], rows[, names(out[[name]]), drop = FALSE])
+    }
+  }
+  out
 }
 
 interp_splice_protein_empty <- function() data.frame(gene = character(), transcript_id = character(), transcript_flags = character(), event = character(),
@@ -675,7 +725,8 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
   known <- do.call(rbind, lapply(seq_len(nrow(tx)), function(i) {
     ex <- interp_merge_intervals(annotation$exons[annotation$exons$transcript_id == tx$transcript_id[[i]], c("start1", "end1"), drop = FALSE])
     if (nrow(ex) < 2L) return(NULL)
-    data.frame(start1 = ex$end1[-nrow(ex)] + 1L, end1 = ex$start1[-1L] - 1L, label = paste0(tx$transcript_id[[i]], " (", tx$transcript_type[[i]], ")"), stringsAsFactors = FALSE)
+    data.frame(start1 = ex$end1[-nrow(ex)] + 1L, end1 = ex$start1[-1L] - 1L, label = paste0(tx$transcript_id[[i]], " (", tx$transcript_type[[i]], ")"),
+      strand = tx$strand[[i]], stringsAsFactors = FALSE)
   }))
   annotated_in <- function(use) if (is.null(use) || is.null(known)) "" else paste(known$label[known$start1 == use[[1L]] & known$end1 == use[[2L]]], collapse = ", ")
   for (i in seq_len(nrow(tx))) {
@@ -700,23 +751,30 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
     acceptor_end <- function(k) if (minus) introns$start1[[k]] else introns$end1[[k]]
     flags <- paste(intersect(c("MANE_Select", "MANE_Plus_Clinical", "Ensembl_canonical", "basic"), model$tags), collapse = ";")
     scenarios <- list()
-    scenario <- function(use = NULL, retain = NULL, event, support, basis) scenarios[[length(scenarios) + 1L]] <<- list(use = use, retain = retain,
-      event = event, support = support, basis = basis)
-    # Splice sites of this transcript that the variant destroys or that SpliceAI predicts to weaken.
-    lost <- data.frame(intron = integer(), site = character(), support = character(), strong = logical(), stringsAsFactors = FALSE)
+    scenario <- function(use = NULL, retain = NULL, event, support, basis, strength = 0) scenarios[[length(scenarios) + 1L]] <<- list(use = use, retain = retain,
+      event = event, support = support, basis = basis, strength = strength)
+    # Splice sites of this transcript that the variant destroys, that the open result shows are used less with ALT,
+    # or that SpliceAI predicts to weaken.
+    lost <- data.frame(intron = integer(), site = character(), support = character(), strong = logical(), observed = logical(), stringsAsFactors = FALSE)
     where <- interp_locate(model, variant$start1)
     if (identical(where$region, "intron")) {
       k <- which(introns$start1 <= variant$start1 & introns$end1 >= variant$start1)
       if (length(k) && !is.na(where$donor_distance) && where$donor_distance <= 2L) lost <- rbind(lost, data.frame(intron = k[[1L]], site = "donor",
-        support = "the variant changes the essential donor site", strong = TRUE, stringsAsFactors = FALSE))
+        support = "the variant changes the essential donor site", strong = TRUE, observed = FALSE, stringsAsFactors = FALSE))
       if (length(k) && !is.na(where$acceptor_distance) && where$acceptor_distance <= 2L) lost <- rbind(lost, data.frame(intron = k[[1L]], site = "acceptor",
-        support = "the variant changes the essential acceptor site", strong = TRUE, stringsAsFactors = FALSE))
+        support = "the variant changes the essential acceptor site", strong = TRUE, observed = FALSE, stringsAsFactors = FALSE))
     }
     sites <- events[!is.na(events$position), , drop = FALSE]
     for (j in which(sites$effect == "loss")) for (k in seq_len(nrow(introns))) {
       at <- if (sites$site_type[[j]] == "donor") donor_end(k) else acceptor_end(k)
-      if (identical(as.integer(at), sites$position[[j]]) && !any(lost$intron == k & lost$site == sites$site_type[[j]]))
-        lost <- rbind(lost, data.frame(intron = k, site = sites$site_type[[j]], support = sites$detail[[j]], strong = sites$score[[j]] >= 0.5, stringsAsFactors = FALSE))
+      if (!identical(as.integer(at), sites$position[[j]])) next
+      seen_site <- which(lost$intron == k & lost$site == sites$site_type[[j]])
+      # One site, several kinds of support: the lines are joined.
+      if (length(seen_site)) {
+        lost$support[seen_site] <- paste(lost$support[seen_site], sites$detail[[j]], sep = "; "); lost$observed[seen_site] <- lost$observed[seen_site] | sites$observed[[j]]
+        lost$strong[seen_site] <- lost$strong[seen_site] | sites$observed[[j]] | sites$score[[j]] >= 0.5
+      } else lost <- rbind(lost, data.frame(intron = k, site = sites$site_type[[j]], support = sites$detail[[j]],
+        strong = sites$observed[[j]] || sites$score[[j]] >= 0.5, observed = sites$observed[[j]], stringsAsFactors = FALSE))
     }
     # Introns used more with ALT, as observed, and introns built from a predicted new site and the annotated site it would pair with.
     gained <- events[events$effect == "gain" & !is.na(events$start1), c("start1", "end1", "detail", "observed", "score"), drop = FALSE]
@@ -726,14 +784,22 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
     for (j in which(sites$effect == "gain")) {
       p <- sites$position[[j]]
       low_side <- (sites$site_type[[j]] == "donor") != minus
-      # A predicted site that is an end of an intron seen to rise with ALT supports that intron: the RNA shows what it pairs with.
+      watched <- isTRUE(sites$observed[[j]])
+      # A site that is an end of an intron seen to rise with ALT supports that intron: the RNA shows what it pairs with.
       same <- if (low_side) which(seen$start1 == p) else which(seen$end1 == p)
       if (length(same)) {
-        gained <- rbind(gained, data.frame(start1 = seen$start1[same], end1 = seen$end1[same], detail = sites$detail[[j]], observed = FALSE, score = sites$score[[j]],
-          strong = sites$score[[j]] >= 0.5, stringsAsFactors = FALSE))
+        gained <- rbind(gained, data.frame(start1 = seen$start1[same], end1 = seen$end1[same], detail = sites$detail[[j]], observed = watched, score = sites$score[[j]],
+          strong = watched || sites$score[[j]] >= 0.5, stringsAsFactors = FALSE))
         next
       }
-      # Otherwise a new donor pairs with the next annotated acceptor downstream; a new acceptor with the nearest annotated donor upstream.
+      if (watched) {
+        # A site of the open result is an annotated one: the annotation says which introns use it (same strand as this transcript).
+        mates <- if (is.null(known)) NULL else unique(known[known$strand == model$strand & (if (low_side) known$start1 == p else known$end1 == p), c("start1", "end1"), drop = FALSE])
+        if (!is.null(mates) && nrow(mates)) gained <- rbind(gained, data.frame(start1 = mates$start1, end1 = mates$end1, detail = sites$detail[[j]], observed = TRUE,
+          score = sites$score[[j]], strong = TRUE, stringsAsFactors = FALSE))
+        next
+      }
+      # Otherwise a predicted new donor pairs with the next annotated acceptor downstream; a new acceptor with the nearest annotated donor upstream.
       k <- if (low_side) which(introns$end1 > p) else which(introns$start1 < p)
       if (!length(k)) next
       k <- if (low_side) k[[1L]] else k[[length(k)]]
@@ -751,24 +817,27 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
       kept <- interp_interval_bases(interp_outside(respliced, exons)); removed <- interp_interval_bases(interp_outside(exons, respliced))
       if (kept > max_kept_intron) next
       skipped <- sum(exons$start1 >= use[[1L]] & exons$end1 <= use[[2L]])
-      # Which annotated intron it stands in for, and whether a site it leaves unused is one the variant weakens:
-      # the site that moved, or for a skipped exon the two sites of that exon.
+      # Which annotated intron it stands in for, and whether a site it leaves unused is one that is weakened: a site of this
+      # transcript that falls inside the new intron or at the edge of the intronic stretch it keeps, the shared ends apart.
       low_partner <- which(introns$start1 == use[[1L]]); high_partner <- which(introns$end1 == use[[2L]]); partner <- c(low_partner, high_partner)
       moved <- if (low_shared && high_shared) "" else if (low_shared != minus) "acceptor" else "donor"
-      high_site <- if (minus) "donor" else "acceptor"; low_site <- if (minus) "acceptor" else "donor"
-      answered <- if (low_shared && high_shared) which((lost$intron %in% low_partner & lost$site == high_site) | (lost$intron %in% high_partner & lost$site == low_site)) else
-        which(lost$intron %in% partner & lost$site == moved)
+      covered <- rbind(data.frame(start1 = use[[1L]], end1 = use[[2L]]), interp_outside(respliced, exons))
+      site_at <- vapply(seq_len(nrow(lost)), function(j) as.integer(if (lost$site[[j]] == "donor") donor_end(lost$intron[[j]]) else acceptor_end(lost$intron[[j]])), integer(1))
+      answered <- which(vapply(site_at, function(at) any(at >= covered$start1 & at <= covered$end1), logical(1)) &
+        !(low_shared & site_at == use[[1L]]) & !(high_shared & site_at == use[[2L]]))
       hit <- lost[answered, , drop = FALSE]; replaced <- c(replaced, answered)
       number <- function(k) if (minus) nrow(introns) - k + 1L else k    # intron number in transcript order
       event <- if (low_shared && high_shared) sprintf("exon skipping: %d exon(s) left out (%d nt)", skipped, removed) else
         sprintf("alternative %s: intron %s:%d-%d in place of intron %d%s", moved, chrom, use[[1L]], use[[2L]], number(partner[[1L]]),
           if (skipped) sprintf(", %d exon(s) left out", skipped) else "")
-      observed <- any(g$observed); predicted <- any(!g$observed & g$strong) || any(hit$strong)
+      observed <- any(g$observed) || any(hit$observed); predicted <- any(!g$observed & g$strong) || any(hit$strong & !hit$observed)
       basis <- if (observed && predicted) "observed and predicted" else if (observed) "observed" else if (predicted) "predicted" else "weakly predicted"
       # An annotated intron of this transcript that the new one stands in for, and that is itself seen to fall with ALT.
       stood_in <- introns[introns$end1 >= use[[1L]] & introns$start1 <= use[[2L]], , drop = FALSE]
       fell <- falling$detail[paste(falling$start1, falling$end1) %in% paste(stood_in$start1, stood_in$end1)]
-      scenario(use = use, event = event, support = paste(unique(c(g$detail, hit$support, if (length(fell)) paste0("the annotated intron it replaces: ", fell))), collapse = "; "), basis = basis)
+      # Among several changes on one transcript, the one with the largest observed effect is listed first.
+      scenario(use = use, event = event, support = paste(unique(c(g$detail, hit$support, if (length(fell)) paste0("the annotated intron it replaces: ", fell))), collapse = "; "), basis = basis,
+        strength = if (any(g$observed)) max(abs(g$score[g$observed])) else max(abs(g$score)))
     }
     # A lost site with nothing to replace it: the two usual outcomes, as assumptions.
     for (j in setdiff(seq_len(nrow(lost)), replaced)) {
@@ -789,7 +858,7 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
       rows[[length(rows) + 1L]] <- data.frame(gene = tx$gene_name[[i]], transcript_id = id, transcript_flags = flags, event = sc$event, support = sc$support,
         basis = sc$basis, mrna_change = paste(c(if (removed) paste0(removed, " exonic nt removed"), if (kept) paste0(kept, " intronic nt kept")), collapse = ", "),
         coding_effect = result$coding_effect, protein_change = result$protein_change, protein_length_ref = result$protein_length_ref,
-        protein_length_new = result$protein_length_new, nmd = result$nmd, annotated_in = annotated_in(sc$use), stringsAsFactors = FALSE)
+        protein_length_new = result$protein_length_new, nmd = result$nmd, annotated_in = annotated_in(sc$use), strength = sc$strength, stringsAsFactors = FALSE)
     }
   }
   if (!length(rows)) return(out)
@@ -797,7 +866,7 @@ interp_splice_protein <- function(variant, annotation, fetch, events = interp_sp
   # Reference transcripts first, then the best-supported changes; the same outcome on several transcripts is kept once per gene.
   basis_rank <- match(out$basis, c("observed and predicted", "observed", "predicted", "weakly predicted", "assumed outcome"))
   flag_rank <- ifelse(grepl("MANE_Select", out$transcript_flags), 0L, ifelse(grepl("Ensembl_canonical", out$transcript_flags), 1L, ifelse(grepl("basic", out$transcript_flags), 2L, 3L)))
-  out <- out[order(flag_rank, basis_rank, out$gene, out$transcript_id), , drop = FALSE]
+  out <- out[order(flag_rank, basis_rank, -out$strength, out$gene, out$transcript_id), names(interp_splice_protein_empty()), drop = FALSE]
   out <- out[!duplicated(out[, c("gene", "event", "coding_effect", "protein_change", "nmd")]), , drop = FALSE]
   rownames(out) <- NULL
   utils::head(out, max_rows)
@@ -1594,12 +1663,15 @@ interp_topmed_contexts <- function() c(Lung = "Lung", Monocyte = "Monocytes", Na
 interp_topmed_empty <- function() data.frame(qtl_type = character(), context = character(), phenotype = character(),
   gene_id = character(), gene = character(), alt_frequency = numeric(), n_estimated = integer(), slope_alt = numeric(),
   slope_se = numeric(), p_nominal = numeric(), p_threshold = numeric(), significant = logical(), pip = numeric(),
-  credible_set = character(), tss_distance = integer(), stringsAsFactors = FALSE)
+  credible_set = character(), tss_distance = integer(), fine_mapped = logical(), stringsAsFactors = FALSE)
 
 # Every tested pair of this variant in each context. `significant` uses the
 # phenotype's own permutation threshold (tensorQTL, FDR 5% across phenotypes);
 # `pip` is the SuSiE posterior inclusion probability where the variant is in a
-# credible set. Effects are per ALT allele on normalised phenotypes.
+# credible set; `fine_mapped` says whether SuSiE found any credible set for that
+# phenotype in that context (looked up for significant pairs), so that a variant
+# outside every set can be told from a phenotype without fine-mapping.
+# Effects are per ALT allele on normalised phenotypes.
 interp_topmed_qtl <- function(variant, sources = interp_local_sources(), keep_p = 1e-3, keep_top = 3L) {
   out <- list(available = FALSE, pairs = interp_topmed_empty(), contexts = data.frame(qtl_type = character(), context = character(),
     tested = logical(), pairs_tested = integer(), significant_pairs = integer(), min_p = numeric(), stringsAsFactors = FALSE))
@@ -1644,7 +1716,7 @@ interp_topmed_qtl <- function(variant, sources = interp_local_sources(), keep_p 
       x$p_threshold <- top$pval_nominal_threshold[match(x$gene_id, key)]
     }
     x$significant <- !is.na(x$p_threshold) & x$p_nominal <= x$p_threshold
-    x$pip <- NA_real_; x$credible_set <- ""
+    x$pip <- NA_real_; x$credible_set <- ""; x$fine_mapped <- NA
     cs <- file.path(base, "susie", paste0(context, ".", used, layout[[type]]$cs))
     if (interp_readable(cs)) {
       found <- interp_run_lines(unname(Sys.which("grep")), c("-F", paste0("\t", id, "\t"), cs))
@@ -1653,6 +1725,8 @@ interp_topmed_qtl <- function(variant, sources = interp_local_sources(), keep_p 
         k <- which(x$phenotype == f[[1L]])
         if (length(k) && length(f) >= 5L) { x$pip[k] <- as.numeric(f[[3L]]); x$credible_set[k] <- f[[5L]] }
       }
+      for (k in which(x$significant)) x$fine_mapped[[k]] <- is.finite(x$pip[[k]]) ||
+        length(interp_run_lines(unname(Sys.which("grep")), c("-m", "1", "-F", paste0(x$phenotype[[k]], "\t"), cs))) > 0L
     }
     summary[[length(summary) + 1L]] <- data.frame(qtl_type = type, context = label, tested = TRUE, pairs_tested = nrow(x),
       significant_pairs = sum(x$significant), min_p = min(x$p_nominal, na.rm = TRUE), stringsAsFactors = FALSE)
@@ -1997,7 +2071,8 @@ interp_gtex_local <- function(variant, sources = interp_local_sources()) {
         tissue <- gsub("_", " ", vapply(g, `[[`, character(1), 5L)); lead <- vapply(g, `[[`, character(1), 8L) == variant_id
         row$gene <- g[[1L]][[3L]]; row$biotype <- g[[1L]][[4L]]; row$tissues_tested <- length(unique(tissue))
         row$lead_variant_in <- sum(lead & tissue %in% p$tissue)
-        if (!nzchar(row$whole_blood)) row$whole_blood <- if ("Whole Blood" %in% tissue) "tested, not significant" else "not tested"
+        # The gene table says whether GTEx tested the gene in the tissue, not whether it tested this variant there.
+        if (!nzchar(row$whole_blood)) row$whole_blood <- if ("Whole Blood" %in% tissue) "pair not significant (gene tested)" else "gene not tested"
         pairs$gene[pairs$gene_id == id] <- row$gene
         pairs$lead_variant[pairs$gene_id == id] <- p$tissue %in% tissue[lead]
       }
@@ -2048,7 +2123,8 @@ interp_variant_key <- function(pos, a1, a2) paste(pos, pmin(a1, a2), pmax(a1, a2
 # The molecular traits this variant is associated with: per gene the strongest sQTL intron and the eQTL
 # (each in its strongest TOPMed context), and the proteins of the cis-pQTL scans.
 interp_coloc_traits <- function(local, max_qtl = 4L, max_protein = 2L) {
-  empty <- data.frame(kind = character(), label = character(), gene = character(), source = character(), phenotype = character(), p_value = numeric(), stringsAsFactors = FALSE)
+  empty <- data.frame(kind = character(), label = character(), gene = character(), source = character(), phenotype = character(), p_value = numeric(),
+    susie = character(), susie_pip = numeric(), stringsAsFactors = FALSE)
   rows <- list(empty)
   topmed <- if (interp_ok(local) && interp_ok(local$topmed) && isTRUE(local$topmed$available)) local$topmed$pairs else NULL
   if (!is.null(topmed) && nrow(topmed)) {
@@ -2057,9 +2133,17 @@ interp_coloc_traits <- function(local, max_qtl = 4L, max_protein = 2L) {
       x <- x[order(x$p_nominal), , drop = FALSE]
       x <- x[!duplicated(paste(x$qtl_type, interp_bare_gene(x$gene_id))), , drop = FALSE]
       x <- utils::head(x, max_qtl); name <- ifelse(nzchar(x$gene), x$gene, interp_bare_gene(x$gene_id))
+      # SuSiE on the same phenotype in any context: the variant's largest PIP, or that it is in no credible set
+      # although the phenotype has one where the pair is significant.
+      every <- topmed; key <- paste(every$qtl_type, interp_phenotype_key(every$qtl_type, every$phenotype))
+      mapped <- if (is.null(every$fine_mapped)) rep(NA, nrow(every)) else every$fine_mapped
+      same_trait <- function(i) key == paste(x$qtl_type[[i]], interp_phenotype_key(x$qtl_type[[i]], x$phenotype[[i]]))
+      susie_pip <- vapply(seq_len(nrow(x)), function(i) { best <- suppressWarnings(max(every$pip[same_trait(i)], na.rm = TRUE)); if (is.finite(best)) best else NA_real_ }, numeric(1))
+      susie <- vapply(seq_len(nrow(x)), function(i) if (is.finite(susie_pip[[i]])) sprintf("in a credible set (PIP %.2f)", susie_pip[[i]]) else
+        if (any(mapped[same_trait(i) & every$significant %in% TRUE] %in% TRUE)) "in no credible set" else "", character(1))
       rows[[2L]] <- data.frame(kind = x$qtl_type, label = paste0(x$qtl_type, " ", name, ifelse(x$qtl_type == "sQTL",
         sub("^[^:]+:([0-9]+):([0-9]+):.*$", " intron \\1-\\2", x$phenotype), ""), " (", x$context, ")"), gene = name, source = x$context, phenotype = x$phenotype,
-        p_value = x$p_nominal, stringsAsFactors = FALSE)
+        p_value = x$p_nominal, susie = susie, susie_pip = susie_pip, stringsAsFactors = FALSE)
     }
   }
   pqtl <- if (interp_ok(local) && interp_ok(local$pqtl) && isTRUE(local$pqtl$found)) local$pqtl$associations else NULL
@@ -2068,7 +2152,7 @@ interp_coloc_traits <- function(local, max_qtl = 4L, max_protein = 2L) {
     if (nrow(x)) {
       x <- x[order(x$log10_p), , drop = FALSE]; x <- utils::head(x[!duplicated(x$protein), , drop = FALSE], max_protein)
       rows[[3L]] <- data.frame(kind = "pQTL", label = paste0("pQTL ", x$protein, " (", x$study, ")"), gene = ifelse(nzchar(x$gene), x$gene, x$protein), source = x$study,
-        phenotype = x$protein, p_value = x$p_value, stringsAsFactors = FALSE)
+        phenotype = x$protein, p_value = x$p_value, susie = "", susie_pip = NA_real_, stringsAsFactors = FALSE)
     }
   }
   out <- do.call(rbind, rows); rownames(out) <- NULL; out
@@ -2461,12 +2545,17 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
         length(unique(w$study)) > 1L && length(unique(sign(w$beta_alt))) == 1L }, logical(1))]
       acting <- unique(wide$protein[wide$significance == "experiment-wide" & (wide$protein %in% mechanism | wide$gene %in% mechanism)])
       mapped <- wide[is.finite(wide$posterior_probability), , drop = FALSE]
-      pinned <- unique(mapped$protein[mapped$posterior_probability >= 0.5])
+      # Single-signal posteriors agree with SuSiE in 95% of TOPMed eQTL windows at 0.9 and in 89% at 0.5 (docs/INTERPRETATION.md).
+      pinned <- unique(mapped$protein[mapped$posterior_probability >= 0.9])
+      candidate <- mapped[mapped$posterior_probability >= 0.5 & mapped$posterior_probability < 0.9, , drop = FALSE]
       direct$level <- if (length(acting) || length(pinned)) "Strong" else "Moderate"
       direct$finding <- if (length(acting)) paste0("Associated in cis with the plasma level of ", interp_join(acting, ", "),
         ", and this variant is itself predicted to change that gene's product.") else if (length(pinned))
         paste0("Associated in cis with the plasma level of ", interp_join(pinned, ", "), ", and single-signal fine-mapping gives this variant a posterior probability of ",
           formatC(max(mapped$posterior_probability), format = "f", digits = 2), ".") else
+        if (nrow(candidate)) paste0("Associated in cis with the plasma level of ", interp_join(proteins, ", ", max = 5),
+          "; single-signal fine-mapping makes this variant the leading candidate for ", interp_join(candidate$protein, ", "), " (posterior ",
+          formatC(max(candidate$posterior_probability), format = "f", digits = 2), ") without settling it.") else
         paste0("Associated in cis with the plasma level of ", interp_join(proteins, ", ", max = 5), "; not fine-mapped to this variant.")
       direct$evidence <- c(paste0("cis-pQTL at this variant: ", paste(describe(utils::head(wide, 6L)), collapse = "; "),
         if (nrow(wide) > 6L) paste0("; +", nrow(wide) - 6L, " more") else ""),
@@ -2634,6 +2723,20 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     sources <- c(sources, "TOPMed cis-eQTL")
   }
   e_fine <- topmed_eqtl && any(e_pairs$pip >= 0.5, na.rm = TRUE)
+  # What SuSiE, which allows several signals, says per gene: the variant's largest PIP over the significant contexts,
+  # and whether every one of those contexts has credible sets for the gene with the variant in none or under 0.1.
+  set_aside <- character(); set_aside_ids <- character()
+  if (topmed_eqtl) {
+    gene_of <- interp_bare_gene(e_pairs$gene_id); mapped <- if (is.null(e_pairs$fine_mapped)) rep(NA, nrow(e_pairs)) else e_pairs$fine_mapped
+    out_of_sets <- vapply(unique(gene_of), function(g) { k <- gene_of == g; all(mapped[k] %in% TRUE) && all(is.na(e_pairs$pip[k]) | e_pairs$pip[k] < 0.1) }, logical(1))
+    in_sets <- vapply(unique(gene_of), function(g) suppressWarnings(max(e_pairs$pip[gene_of == g], na.rm = TRUE)), numeric(1))
+    label <- vapply(unique(gene_of), function(g) { n <- e_pairs$gene[gene_of == g]; n <- n[nzchar(n)]; if (length(n)) n[[1L]] else g }, character(1))
+    set_aside <- unname(label[out_of_sets]); set_aside_ids <- unique(gene_of)[out_of_sets]
+    held <- is.finite(in_sets) & in_sets >= 0.1
+    if (length(set_aside) || any(held)) evidence <- c(evidence, paste0("TOPMed SuSiE: ", paste(c(
+      if (length(set_aside)) paste0("this variant is in no credible set, or has a PIP under 0.1, for the eQTL of ", interp_join(set_aside, ", ", max = 6)),
+      if (any(held)) paste0("PIP ", paste(sprintf("%.2f for %s", in_sets[held], label[held]), collapse = ", "))), collapse = "; ")))
+  }
   fhs_eqtl <- !is.null(fhs) && nrow(fhs$eqtl) > 0L
   if (fhs_eqtl) {
     evidence <- c(evidence, sprintf("FHS whole-blood eQTL for %s (log10 p %.1f)", interp_join(fhs$eqtl$gene, ", ", max = 5), min(fhs$eqtl$log10_p)))
@@ -2669,18 +2772,28 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   finding <- switch(level, Strong = "Associated with expression, and fine-mapping gives this variant a posterior probability of at least 0.5.",
     Moderate = "Associated with expression; not fine-mapped to this variant.", `None found` = "No eQTL reported for this variant.",
     "No expression-QTL source was available.")
+  # Every eQTL gene of the variant fine-mapped by SuSiE with the variant left out, and no eQTL from a source without
+  # fine-mapping for any other gene: the association is most likely through linkage disequilibrium, which is indirect support.
+  others <- c(if (fhs_eqtl) setdiff(fhs$eqtl$gene, set_aside), if (gl_eqtl) setdiff(interp_bare_gene(gl$genes$gene_id), set_aside_ids), if (gtex_eqtl || ot_eqtl) "public")
+  if (level == "Moderate" && topmed_eqtl && length(set_aside_ids) == length(unique(interp_bare_gene(e_pairs$gene_id))) && !length(others)) {
+    level <- "Limited"
+    finding <- paste0("Associated with the expression of ", interp_join(set_aside, ", ", max = 5), ", but SuSiE, which allows several signals, leaves this variant out of ",
+      "every credible set (or gives it a PIP under 0.1): the association is most likely through linkage disequilibrium.")
+  } else if (level == "Moderate" && length(set_aside)) finding <- paste0("Associated with expression; not fine-mapped to this variant. For ", interp_join(set_aside, ", ", max = 5),
+    " SuSiE leaves it out of every credible set (or gives it a PIP under 0.1), so that association is most likely through linkage disequilibrium.")
   if (length(coloc_lines("eQTL"))) {
     evidence <- c(evidence, coloc_lines("eQTL")); sources <- c(sources, "colocalisation (computed here)")
     # An expression signal that this variant does not lead, and whose causal variant differs from a signal this
-    # variant does lead (posterior of at least 0.5 within that trait), is probably reached through LD.
+    # variant does lead (single-signal posterior of at least 0.9 within that trait).
     share <- function(label) { t <- coloc$traits; if (is.null(t$this_variant_posterior)) rep(NA_real_, length(label)) else t$this_variant_posterior[match(label, t$label)] }
     led <- coloc_pairs[coloc_pairs$reading == "two different causal variants" & (startsWith(coloc_pairs$trait_1, "eQTL ") != startsWith(coloc_pairs$trait_2, "eQTL ")), , drop = FALSE]
     if (nrow(led)) {
       other <- ifelse(startsWith(led$trait_1, "eQTL "), led$trait_2, led$trait_1); mine <- ifelse(startsWith(led$trait_1, "eQTL "), led$trait_1, led$trait_2)
-      keep <- share(other) >= 0.5 & share(mine) < 0.1; keep[is.na(keep)] <- FALSE
-      if (any(keep) && level == "Moderate") finding <- paste0(finding, " Colocalisation gives ", interp_join(interp_trait_words(mine[keep]), ", ", max = 3),
-        " a different causal variant from ", interp_trait_words(other[keep][[1L]]),
-        ", which this variant leads: that expression signal is probably carried by a neighbour in linkage disequilibrium.")
+      keep <- share(other) >= 0.9 & mine %in% interp_not_led(coloc$traits); keep[is.na(keep)] <- FALSE
+      # With SuSiE's verdict already in the finding, colocalisation only has to say that it agrees.
+      if (any(keep) && level %in% c("Moderate", "Limited")) finding <- paste0(finding, if (length(set_aside)) " Colocalisation agrees: " else " Colocalisation gives ",
+        interp_join(interp_trait_words(unique(mine[keep])), ", ", max = 3), if (length(set_aside)) " has" else "", " a different leading causal variant from ",
+        interp_trait_words(other[keep][[1L]]), ", which this variant leads", if (length(set_aside)) "." else paste0(": ", interp_through_ld(coloc$traits, unique(mine[keep])), "."))
     }
   }
   rows[[4L]] <- interp_summary_row("Gene expression (eQTL)", level, finding, evidence, sources)
@@ -2836,7 +2949,7 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     evidence <- c(evidence, sprintf("GTEx %s %s: eQTL in %d tissue(s)%s (%s); %s; whole blood: %s%s", gl$release, gl_name(g), g$tissues_significant,
       ifelse(is.na(g$tissues_tested), "", paste0(" of the ", g$tissues_tested, " that tested the gene")),
       vapply(strsplit(g$tissues, ", ", fixed = TRUE), function(t) interp_join(t, ", ", max = 4), character(1)), g$direction,
-      ifelse(nzchar(g$whole_blood), g$whole_blood, "not significant or not tested"),
+      ifelse(nzchar(g$whole_blood), g$whole_blood, "pair not significant, or gene not tested"),
       ifelse(!is.na(g$lead_variant_in) & g$lead_variant_in > 0L, paste0("; the gene's lead variant in ", g$lead_variant_in, " tissue(s)"), "")))
     if (nrow(gl$genes) > 3L) evidence <- c(evidence, paste0("GTEx ", gl$release, ": ", nrow(gl$genes) - 3L, " more eQTL gene(s) in the table"))
     sources <- c(sources, trimws(paste("GTEx", gl$release, "(local)")))
@@ -2890,6 +3003,30 @@ interp_overall_reading <- function(summary, done = list(public = FALSE, spliceai
   lines
 }
 
+# How a variant that does not lead a signal still comes to be associated with it. SuSiE allows several signals per
+# phenotype: when it has credible sets for every one of these traits and gives the variant no place or a PIP
+# under 0.1 in them, linkage disequilibrium is what is left; otherwise a separate, weaker signal of the variant's
+# own cannot be ruled out.
+interp_through_ld <- function(traits, labels) {
+  k <- if (is.null(traits) || is.null(traits$susie)) rep(NA_integer_, length(labels)) else match(labels, traits$label)
+  status <- ifelse(is.na(k), "", traits$susie[k]); pip <- if (is.null(traits$susie_pip)) rep(NA_real_, length(labels)) else traits$susie_pip[k]
+  it <- if (length(labels) > 1L) "them" else "it"
+  settled <- length(labels) > 0L && all(status == "in no credible set" | (is.finite(pip) & pip < 0.1))
+  if (settled && all(status == "in no credible set")) return(paste0("SuSiE, which allows several signals, places this variant in no credible set of ", it,
+    ", so the association is through linkage disequilibrium"))
+  if (settled) return(paste0("SuSiE, which allows several signals, gives this variant a PIP of at most ", formatC(max(pip, na.rm = TRUE), format = "f", digits = 2),
+    " for ", it, ", so the association is most likely through linkage disequilibrium"))
+  paste0("this variant reaches ", it, " through linkage disequilibrium or through a separate, weaker signal of its own")
+}
+
+# Traits of a colocalisation that this variant does not lead by either reckoning: a single-signal posterior
+# under 0.1 and no SuSiE PIP of 0.1 or more.
+interp_not_led <- function(traits) {
+  if (is.null(traits) || !nrow(traits) || is.null(traits$this_variant_posterior)) return(character())
+  pip <- if (is.null(traits$susie_pip)) rep(NA_real_, nrow(traits)) else traits$susie_pip
+  traits$label[is.finite(traits$this_variant_posterior) & traits$this_variant_posterior < 0.1 & (is.na(pip) | pip < 0.1)]
+}
+
 # A colocalisation trait label in words: "eQTL DEGS1 (Lung)" -> "the expression of DEGS1"; an intron keeps its coordinates.
 interp_trait_words <- function(label) {
   x <- sub(" \\([^()]*\\)$", "", label)
@@ -2900,13 +3037,14 @@ interp_trait_words <- function(label) {
 # What the fine-mapping, the splice outcome and the colocalisation add up to, in at most four sentences:
 # which signals this variant itself is the likely cause of, what the splice change would do to the protein,
 # which signals share that cause and which have another one. Built only from numbers already in the tables
-# (posterior probabilities of at least `lead`, decided colocalisation pairs); it adds no evidence of its own.
-interp_mechanism <- function(local = NULL, splice_protein = NULL, coloc = NULL, lead = 0.5) {
+# (a SuSiE PIP of at least `lead`, a single-signal posterior of at least `lead_single`, decided colocalisation
+# pairs); it adds no evidence of its own.
+interp_mechanism <- function(local = NULL, splice_protein = NULL, coloc = NULL, lead = 0.5, lead_single = 0.9) {
   phrase <- function(kind, gene, detail = "") paste0(switch(kind, sQTL = "the splicing of ", eQTL = "the expression of ", pQTL = "the plasma level of ", ""), gene, detail)
   led <- data.frame(kind = character(), gene = character(), text = character(), posterior = numeric(), stringsAsFactors = FALSE)
   add <- function(kind, gene, text, posterior) led <<- rbind(led, data.frame(kind = kind, gene = gene, text = text, posterior = posterior, stringsAsFactors = FALSE))
   traits <- if (interp_ok(coloc) && is.data.frame(coloc$traits) && nrow(coloc$traits) && !is.null(coloc$traits$this_variant_posterior)) coloc$traits else NULL
-  if (!is.null(traits)) for (i in which(is.finite(traits$this_variant_posterior) & traits$this_variant_posterior >= lead))
+  if (!is.null(traits)) for (i in which(is.finite(traits$this_variant_posterior) & traits$this_variant_posterior >= lead_single))
     add(traits$kind[[i]], traits$gene[[i]], phrase(traits$kind[[i]], traits$gene[[i]], if (traits$kind[[i]] == "sQTL")
       sub("^.* (intron [0-9]+-[0-9]+).*$", " (\\1)", traits$label[[i]]) else ""), traits$this_variant_posterior[[i]])
   topmed <- if (interp_ok(local) && interp_ok(local$topmed) && isTRUE(local$topmed$available)) local$topmed$pairs else NULL
@@ -2918,7 +3056,7 @@ interp_mechanism <- function(local = NULL, splice_protein = NULL, coloc = NULL, 
   }
   pqtl <- if (interp_ok(local) && interp_ok(local$pqtl) && isTRUE(local$pqtl$found)) local$pqtl$associations else NULL
   if (!is.null(pqtl)) {
-    x <- pqtl[is.finite(pqtl$posterior_probability) & pqtl$posterior_probability >= lead, , drop = FALSE]
+    x <- pqtl[is.finite(pqtl$posterior_probability) & pqtl$posterior_probability >= lead_single, , drop = FALSE]
     for (i in seq_len(nrow(x))) add("pQTL", x$protein[[i]], phrase("pQTL", x$protein[[i]]), x$posterior_probability[[i]])
   }
   led <- led[order(-led$posterior), , drop = FALSE]; led <- led[!duplicated(paste(led$kind, led$gene)), , drop = FALSE]
@@ -2943,12 +3081,11 @@ interp_mechanism <- function(local = NULL, splice_protein = NULL, coloc = NULL, 
     if (nrow(same)) lines <- c(lines, paste0("One causal variant is shared by ", interp_join(sprintf("%s and %s (posterior %.2f)", bare(same$trait_1), bare(same$trait_2),
       same$shared_cause), "; ", max = 3), "."))
     if (!is.null(traits) && nrow(led)) {
-      weak <- traits$label[is.finite(traits$this_variant_posterior) & traits$this_variant_posterior < 0.1]
-      strong <- traits$label[is.finite(traits$this_variant_posterior) & traits$this_variant_posterior >= lead]
+      weak <- interp_not_led(traits)
+      strong <- traits$label[is.finite(traits$this_variant_posterior) & traits$this_variant_posterior >= lead_single]
       apart <- pairs[pairs$reading == "two different causal variants" & ((pairs$trait_1 %in% weak & pairs$trait_2 %in% strong) | (pairs$trait_2 %in% weak & pairs$trait_1 %in% strong)), , drop = FALSE]
       other <- unique(c(apart$trait_1[apart$trait_1 %in% weak], apart$trait_2[apart$trait_2 %in% weak]))
-      if (length(other)) lines <- c(lines, paste0("Another causal variant is behind ", interp_join(bare(other), ", ", max = 4),
-        ": this variant is associated with ", if (length(other) > 1L) "them" else "it", " through linkage disequilibrium."))
+      if (length(other)) lines <- c(lines, paste0("Another variant leads ", interp_join(bare(other), ", ", max = 4), ": ", interp_through_ld(traits, other), "."))
     }
   }
   lines
@@ -3257,10 +3394,13 @@ interp_tissue_sharing <- function(pairs, sources = interp_local_sources(), model
 # The local part of the tab in one call, for use outside the app (scripts/interpret_variants.R): consequences,
 # local sources, cross-context model, linked genes with their pathways and disease genes, the predicted splice
 # outcome, colocalisation, the evidence summary and its reading. `annotation` is a query_annotation() result
-# around the variant, `fetch(chrom, start1, end1)` returns reference sequence, `gene_names(ids)` (optional)
-# returns a gene_id / gene_name table. No public source, no SpliceAI, no genotype is read.
+# around the variant, or a function(chrom, start1, end1) that returns one: with the function, the transcripts of
+# introns that lie away from the variant are read too. `fetch(chrom, start1, end1)` returns reference sequence,
+# `gene_names(ids)` (optional) returns a gene_id / gene_name table. No public source, no SpliceAI, no genotype is read.
 interp_local_report <- function(variant, annotation, fetch, sources = interp_local_sources(), gene_names = NULL) {
   attempt <- function(expr) tryCatch(expr, error = function(e) e)
+  query <- if (is.function(annotation)) annotation else NULL
+  if (!is.null(query)) annotation <- query(variant$chrom, max(1L, variant$pos1 - 5000L), variant$pos1 + 5000L)
   consequences <- interp_consequences(variant, annotation, fetch)
   local <- interp_local_evidence(variant, sources)
   pairs <- if (interp_ok(local$topmed)) local$topmed$pairs else NULL
@@ -3272,7 +3412,10 @@ interp_local_report <- function(variant, annotation, fetch, sources = interp_loc
   genes <- interp_linked_genes(consequences, local)
   local$pathways <- attempt(interp_local_pathways(genes, sources))
   local$gene_disease <- attempt(interp_gene_disease(genes, sources))
-  splice_protein <- attempt(interp_splice_protein(variant, annotation, fetch, interp_splice_events(pairs)))
+  events <- interp_splice_events(pairs)
+  wide <- if (is.null(query)) annotation else attempt({ w <- interp_splice_query_windows(variant, events)
+    interp_merge_annotation(c(list(annotation), lapply(seq_len(nrow(w))[-1L], function(i) tryCatch(query(variant$chrom, w$start1[[i]], w$end1[[i]]), error = function(e) NULL)))) })
+  splice_protein <- attempt(interp_splice_protein(variant, if (interp_ok(wide)) wide else annotation, fetch, events))
   coloc <- attempt(interp_colocalise(variant, local, sources))
   summary <- interp_evidence_summary(consequences, local, splice_protein = if (interp_ok(splice_protein)) splice_protein else NULL,
     coloc = if (interp_ok(coloc)) coloc else NULL)

@@ -20,7 +20,7 @@ interpretation_ui <- function(id) {
     shiny::uiOutput(ns("summary")),
     shiny::tags$details(class = "regshiny-definitions", shiny::tags$summary("How the levels are assigned"),
       shiny::tags$ul(
-        shiny::tags$li(shiny::strong("Strong"), ": direct or fine-mapped evidence that this variant is responsible (a protein-truncating or essential splice-site change on the reference transcript; an RNA association together with a prediction or a posterior probability of at least 0.5; a splice change that is both observed and predicted and alters the protein of the reference transcript; a cis-pQTL with a posterior probability of at least 0.5, or for the protein of a gene the variant itself changes; ClinVar pathogenic without a benign assertion; a GWAS credible set with posterior probability of at least 0.5)."),
+        shiny::tags$li(shiny::strong("Strong"), ": direct or fine-mapped evidence that this variant is responsible (a protein-truncating or essential splice-site change on the reference transcript; an RNA association together with a prediction or a posterior probability of at least 0.5; a splice change that is both observed and predicted and alters the protein of the reference transcript; a cis-pQTL with a single-signal posterior probability of at least 0.9, or for the protein of a gene the variant itself changes; ClinVar pathogenic without a benign assertion; a GWAS credible set with posterior probability of at least 0.5)."),
         shiny::tags$li(shiny::strong("Moderate"), ": an association or a prediction, but not both. A QTL alone can be a neighbour in linkage disequilibrium."),
         shiny::tags$li(shiny::strong("Limited"), ": weak or indirect support only."),
         shiny::tags$li(shiny::strong("None found"), ": the sources were consulted and report nothing. ", shiny::strong("Not assessed"), ": the sources needed were unavailable or not queried."),
@@ -36,7 +36,7 @@ interpretation_ui <- function(id) {
         shiny::h5("Protein consequence of the splice change (predicted)"),
         shiny::uiOutput(ns("splice_protein_status"), role = "status", `aria-live` = "polite"),
         interpretation_table_output(ns("splice_protein")),
-        shiny::p("For every splice change tied to this variant, the coding transcripts it fits are re-spliced from the reference sequence and translated from their annotated start codon. Changes come from three places: an intron that a TOPMed sQTL or a junction of the open result shows is used more with the ALT allele; a splice site SpliceAI predicts to appear (paired with the annotated site it would splice to) or to weaken; and an essential splice site the variant itself changes. basis says what supports the change: observed (RNA association), predicted (SpliceAI of at least 0.5, or an essential site), both, weakly predicted (SpliceAI 0.2 to 0.5), or assumed outcome, used when a site is lost and nothing shows what replaces it, in which case exon skipping and intron retention are both listed. coding_effect and protein_change compare the product with the annotated protein; nmd says whether the new stop codon lies more than 50 nt before the last exon junction, the usual condition for nonsense-mediated decay. annotated_in names transcripts of the selected GENCODE release that already contain the intron. The table says what the changed splice would encode. It does not say how much of the gene's RNA is spliced that way: read that from the RNA evidence. Transcripts longer than 2.5 Mb and changes that would keep more than 300 nt of intron are left out."),
+        shiny::p("For every splice change tied to this variant, the coding transcripts it fits are re-spliced from the reference sequence and translated from their annotated start codon. Changes come from four places: an intron that a TOPMed sQTL or a junction of the open result shows is used more with the ALT allele; a splice site of the open result whose bin ratio rises or falls with ALT (a site used more is joined to the introns the annotation gives it); a splice site SpliceAI predicts to appear (paired with the annotated site it would splice to) or to weaken; and an essential splice site the variant itself changes. basis says what supports the change: observed (RNA association), predicted (SpliceAI of at least 0.5, or an essential site), both, weakly predicted (SpliceAI 0.2 to 0.5), or assumed outcome, used when a site is lost and nothing shows what replaces it, in which case exon skipping and intron retention are both listed. coding_effect and protein_change compare the product with the annotated protein; nmd says whether the new stop codon lies more than 50 nt before the last exon junction, the usual condition for nonsense-mediated decay. annotated_in names transcripts of the selected GENCODE release that already contain the intron. The table says what the changed splice would encode. It does not say how much of the gene's RNA is spliced that way: read that from the RNA evidence. Transcripts longer than 2.5 Mb and changes that would keep more than 300 nt of intron are left out."),
         shiny::p("Consequences are computed here from the selected GENCODE release and the reference sequence, with Sequence Ontology terms and Ensembl VEP's severity order. donor_distance and acceptor_distance count into the intron from its 5' and 3' ends (1 = first or last intronic base); negative values are exonic bases counted from the exon edge. Insertions, deletions and multi-base changes are classified by what they overlap and get no protein change."),
         shiny::uiOutput(ns("predictors"))),
       bslib::nav_panel("Splicing",
@@ -59,7 +59,7 @@ interpretation_ui <- function(id) {
         shiny::h5("Do the signals share a cause? (colocalisation)"),
         shiny::uiOutput(ns("coloc_status"), role = "status", `aria-live` = "polite"),
         interpretation_table_output(ns("coloc_table")),
-        shiny::p("When the variant is associated with more than one molecular trait (per gene its strongest sQTL intron and its eQTL, each in the TOPMed context where it is strongest, and the proteins of the cis-pQTL scans), each pair of traits is compared over the variants within 1 Mb that both were tested on, from their full summary statistics (Giambartolomei et al. 2014, as in coloc). shared_cause is the posterior probability that one variant causes both signals, distinct_causes that each has its own; the remaining columns are the probabilities that only one trait, or neither, has a signal there. this_variant_share is this variant's part of the shared signal, and leading_variant the variant with the largest part. A shared cause links the traits, for instance expression and protein level; distinct causes for a signal this variant leads and another one say that the other association is probably reached through linkage disequilibrium. The method assumes at most one causal variant per trait in the region, uses no LD reference, and takes prior probabilities of 1e-4 for each trait and 1e-5 for a shared variant; cohorts of different ancestry or several independent signals push it towards distinct causes. Two introns of one gene are not compared: their ratios move against each other by construction."),
+        shiny::p("When the variant is associated with more than one molecular trait (per gene its strongest sQTL intron and its eQTL, each in the TOPMed context where it is strongest, and the proteins of the cis-pQTL scans), each pair of traits is compared over the variants within 1 Mb that both were tested on, from their full summary statistics (Giambartolomei et al. 2014, as in coloc). shared_cause is the posterior probability that one variant causes both signals, distinct_causes that each has its own; the remaining columns are the probabilities that only one trait, or neither, has a signal there. this_variant_share is this variant's part of the shared signal, and leading_variant the variant with the largest part. The line above gives, per trait, this variant's posterior if the trait had one signal, and beside it what SuSiE (which allows several signals) says for the same TOPMed phenotype; where the two differ the trait has more than one signal and SuSiE is the one to follow. A shared cause links the traits, for instance expression and protein level; distinct causes for a signal this variant leads and another one say that the other association is probably reached through linkage disequilibrium. The method assumes at most one causal variant per trait in the region, uses no LD reference, and takes prior probabilities of 1e-4 for each trait and 1e-5 for a shared variant; cohorts of different ancestry or several independent signals push it towards distinct causes. Two introns of one gene are not compared: their ratios move against each other by construction."),
         shiny::h5("Tested pairs"),
         interpretation_table_output(ns("topmed_pairs")),
         shiny::p("Kept: every significant pair, every pair in a SuSiE credible set (pip), pairs with nominal p below 0.001, the three smallest p per context, and every context's row of a phenotype that is significant somewhere. n_estimated is derived from the minor-allele count and frequency."),
@@ -72,7 +72,7 @@ interpretation_ui <- function(id) {
         shiny::uiOutput(ns("gtex_local_plot_box")),
         interpretation_table_output(ns("gtex_local_genes")),
         interpretation_table_output(ns("gtex_local_pairs")),
-        shiny::p("Read from the local copy of the GTEx significant variant-gene pairs; nothing is sent. One row per gene in the first table and per gene and tissue in the second. Slopes are per ALT allele on GTEx's normalised expression. tissues_tested counts the tissues in which GTEx tested the gene at all, so a tissue missing from the list is either not significant there or did not test the gene; a tissue with few donors can miss an effect. lead_variant marks tissues where this variant is the gene's most significant variant, which is a hint, not fine-mapping. GTEx tissues differ in donors and sample size, so a count of tissues is descriptive."),
+        shiny::p("Read from the local copy of the GTEx significant variant-gene pairs; nothing is sent. One row per gene in the first table and per gene and tissue in the second. Slopes are per ALT allele on GTEx's normalised expression. tissues_tested counts the tissues in which GTEx tested the gene at all, so a tissue missing from the list is either not significant there or did not test the gene (or this variant, which the files do not record); a tissue with few donors can miss an effect. lead_variant marks tissues where this variant is the gene's most significant variant, which is a hint, not fine-mapping. GTEx tissues differ in donors and sample size, so a count of tissues is descriptive."),
         shiny::h5("GTEx v10 (public query)"),
         interpretation_table_output(ns("gtex_qtl")),
         shiny::plotOutput(ns("expression_plot"), height = 900)),
@@ -429,7 +429,8 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       pairs <- if (!is.null(x$local) && !inherits(x$local$topmed, "error")) x$local$topmed$pairs else NULL
       sites <- tryCatch(spliceai_sites(), error = function(e) NULL)
       observed <- if (is.null(junctions)) NULL else tryCatch(junctions(), error = function(e) NULL)
-      backend$interp_splice_events(pairs, sites, observed)
+      bins <- if (is.null(bin_ratio)) NULL else tryCatch(bin_ratio(), error = function(e) NULL)
+      backend$interp_splice_events(pairs, sites, observed, bins)
     })
     protein_key <- shiny::reactive({
       ev <- splice_events_now()
@@ -445,7 +446,11 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
           a <- new.env(parent = globalenv()); sys.source(annotation_file, envir = a)
           s <- new.env(parent = globalenv()); sys.source(splice_file, envir = s)
           v <- e$interp_variant(allele$chrom, allele$pos1, allele$ref, allele$alt)
-          q <- a$query_annotation(annotation, v$chrom, max(1L, v$pos1 - 5000L), v$pos1 + 5000L, allele$build)
+          # The variant's surroundings and the introns of the events, which can lie away from the variant.
+          w <- e$interp_splice_query_windows(v, events)
+          q <- e$interp_merge_annotation(lapply(seq_len(nrow(w)), function(i) {
+            one <- tryCatch(a$query_annotation(annotation, v$chrom, w$start1[[i]], w$end1[[i]], allele$build), error = function(err) if (i == 1L) stop(err) else NULL)
+            one }))
           list(table = e$interp_splice_protein(v, q, function(chrom, start1, end1) s$splice_fetch_reference(reference, chrom, start1, end1)$sequence, events),
             events = events)
         }, error = function(err) err)
@@ -556,10 +561,11 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       p <- protein_now(); ev <- tryCatch(splice_events_now(), error = function(e) NULL)
       if (inherits(p, "error")) return(shiny::p(paste0("Not computed: ", conditionMessage(p))))
       if (is.null(p)) return(shiny::p(if (is.null(ev)) "Waiting for the local sources." else "Re-splicing the transcripts this change fits..."))
-      ev <- p$events; seen <- ev$source != "SpliceAI"
-      shiny::p(paste0("Splice changes considered: ", sum(seen & ev$effect == "gain"), " intron(s) used more and ", sum(seen & ev$effect == "loss"),
-        " used less with ALT (", sum(ev$source == "TOPMed sQTL"), " from TOPMed sQTL, ", sum(ev$source == "this cohort"), " from the open result), ",
-        sum(!seen), " SpliceAI site(s)", if (!any(!seen) && is.null(spliceai_now())) " (SpliceAI not run)" else "",
+      ev <- p$events; intron <- !is.na(ev$start1); cohort_site <- !intron & ev$source == "this cohort"; predicted <- ev$source == "SpliceAI"
+      shiny::p(paste0("Splice changes considered: ", sum(intron & ev$effect == "gain"), " intron(s) used more and ", sum(intron & ev$effect == "loss"),
+        " used less with ALT (", sum(intron & ev$source == "TOPMed sQTL"), " from TOPMed sQTL, ", sum(intron & ev$source == "this cohort"), " from the open result), ",
+        sum(cohort_site), " splice site(s) of the open result whose bin ratio moves with ALT, ",
+        sum(predicted), " SpliceAI site(s)", if (!any(predicted) && is.null(spliceai_now())) " (SpliceAI not run)" else "",
         "; plus the variant's own essential splice sites. ", nrow(p$table), " outcome(s) on coding transcripts."))
     })
     # The outcome before its long justification.
@@ -629,8 +635,10 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       if (inherits(co, "error")) return(shiny::div(class = "alert alert-danger", paste("Colocalisation failed:", conditionMessage(co))))
       if (is.null(co)) return(shiny::p(paste0("Comparing ", nrow(traits), " traits: ", paste(traits$label, collapse = "; "), "...")))
       share <- co$traits$this_variant_posterior
+      susie <- if (is.null(co$traits$susie)) rep("", nrow(co$traits)) else co$traits$susie
       shiny::p(paste0(nrow(co$traits), " trait(s), with this variant's posterior probability within each trait's own signal: ", paste0(co$traits$label,
-        ifelse(is.finite(share), sprintf(" %.2f", share), " not tested there"), collapse = "; "), ". ", nrow(co$pairs), " pair(s) compared within ", round(co$window / 1e6, 1),
+        ifelse(is.finite(share), sprintf(" %.2f", share), " not tested there"), ifelse(nzchar(susie), paste0(" (SuSiE: ", susie, ")"), ""), collapse = "; "), ". ",
+        nrow(co$pairs), " pair(s) compared within ", round(co$window / 1e6, 1),
         " Mb; ", sum(co$pairs$reading == "one shared causal variant"), " with one shared causal variant, ", sum(co$pairs$reading == "two different causal variants"),
         " with different ones. Computed at ", co$ran_at, "."))
     })
