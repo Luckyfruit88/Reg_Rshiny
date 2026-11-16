@@ -3,6 +3,8 @@
 # local and public resources report about it, and a rule-based evidence summary.
 # Read-only: nothing here reads a BAM, changes a saved result or refits Model 1.
 
+sys.source("src/interpretation_summary_contract.R", envir = environment())
+
 # ---- Sequence helpers -------------------------------------------------------
 interp_complement <- function(x) chartr("ACGTNacgtn", "TGCANtgcan", x)
 
@@ -2425,11 +2427,15 @@ interp_rna_evidence <- function(bin_ratio = NULL, junctions = NULL) {
   out
 }
 
-interp_summary_row <- function(question, level, finding, evidence = character(), sources = character())
-  data.frame(question = question, level = level, finding = finding, evidence = paste(evidence[nzchar(evidence)], collapse = " | "),
+interp_summary_row <- function(question, level, finding, evidence = character(), sources = character()) {
+  out <- data.frame(question = question, level = level, finding = finding, evidence = paste(evidence[nzchar(evidence)], collapse = " | "),
     sources = paste(unique(sources[nzchar(sources)]), collapse = "; "), stringsAsFactors = FALSE)
+  attr(out, "evidence_items") <- interp_evidence_items(evidence)
+  out
+}
 
-interp_evidence_summary <- function(consequences, local = NULL, public = NULL, spliceai = NULL, rna = NULL, ld = NULL, splice_protein = NULL, coloc = NULL) {
+interp_evidence_summary <- function(consequences, local = NULL, public = NULL, spliceai = NULL, rna = NULL, ld = NULL, splice_protein = NULL, coloc = NULL, structured = FALSE, splice_protein_step = "local") {
+  ev_tag <- interp_evidence_tag; ev_c <- interp_evidence_combine
   rows <- list()
   # Colocalisation lines for one kind of trait (sQTL, eQTL, pQTL): the decided pairs it takes part in.
   coloc_pairs <- if (interp_ok(coloc) && is.data.frame(coloc$pairs) && nrow(coloc$pairs)) coloc$pairs[coloc$pairs$reading %in%
@@ -2440,10 +2446,10 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     x <- coloc_pairs[first | second, , drop = FALSE]
     if (!nrow(x)) return(character())
     more <- nrow(x) - 3L; x <- utils::head(x, 3L)
-    c(sprintf("colocalisation, %s and %s: %s (posterior %.2f%s)", x$trait_1, x$trait_2, x$reading,
+    ev_c(ev_tag(sprintf("colocalisation, %s and %s: %s (posterior %.2f%s)", x$trait_1, x$trait_2, x$reading,
       ifelse(x$reading == "one shared causal variant", x$shared_cause, x$distinct_causes),
-      ifelse(x$reading == "one shared causal variant" & is.finite(x$this_variant_share), sprintf("; this variant's share of the shared signal %.2f", x$this_variant_share), "")),
-      if (more > 0L) paste0("colocalisation: ", more, " more decided pair(s) with a ", kind, " in the table"))
+      ifelse(x$reading == "one shared causal variant" & is.finite(x$this_variant_share), sprintf("; this variant's share of the shared signal %.2f", x$this_variant_share), "")), "colocalisation", "local", "evidence"),ev_tag(
+      if (more > 0L) paste0("colocalisation: ", more, " more decided pair(s) with a ", kind, " in the table"), "colocalisation", "local", "context"))
   }
   rank_up <- function(current, new) interp_levels()[[min(match(current, interp_levels()), match(new, interp_levels()))]]
   genic <- consequences[!consequences$most_severe %in% c("upstream_gene_variant", "downstream_gene_variant"), , drop = FALSE]
@@ -2471,13 +2477,13 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     n_gene <- sum(consequences$gene_id == top$gene_id)
     where <- sprintf("%s in %s, %d of %d transcripts", top$most_severe, top$gene_name, n_severe, n_gene)
     hgvs <- trimws(paste(ref_top$hgvs_c, ref_top$hgvs_p))
-    evidence <- c(where, if (nzchar(hgvs)) paste0("reference transcript ", ref_top$transcript_id, ": ", ref_top$consequence, " ", hgvs) else "",
-      if (is.finite(cadd)) sprintf("CADD PHRED %.1f", cadd) else "")
+    evidence <- ev_c(ev_tag(where, "gencode", "local", "evidence"),ev_tag( if (nzchar(hgvs)) paste0("reference transcript ", ref_top$transcript_id, ": ", ref_top$consequence, " ", hgvs) else "", "gencode", "local", "evidence"),ev_tag(
+      if (is.finite(cadd)) sprintf("CADD PHRED %.1f", cadd) else "", "cadd", "local", "evidence"))
     predictors <- if (!is.null(ot)) ot$predictors else NULL
     am <- if (!is.null(predictors)) predictors[predictors$method == "AlphaMissense", , drop = FALSE] else NULL
-    if (!is.null(am) && nrow(am)) evidence <- c(evidence, sprintf("AlphaMissense %s (%.3f)", am$assessment[[1L]], am$score[[1L]]))
+    if (!is.null(am) && nrow(am)) evidence <- ev_c(evidence,ev_tag( sprintf("AlphaMissense %s (%.3f)", am$assessment[[1L]], am$score[[1L]]), "open_targets", "public", "evidence"))
     revel <- if (!is.null(myv)) myv$revel else NA_real_
-    if (is.finite(revel)) evidence <- c(evidence, sprintf("REVEL %.2f", revel))
+    if (is.finite(revel)) evidence <- ev_c(evidence,ev_tag( sprintf("REVEL %.2f", revel), "myvariant", "public", "evidence"))
     # An essential splice site of an intron in a UTR or a non-coding transcript
     # (c.-N+1, c.*N+1, n.N+1) does not by itself change the protein sequence.
     outside_cds <- function(x) x$most_severe %in% c("splice_donor_variant", "splice_acceptor_variant") & grepl("^(c\\.[-*]|n\\.)", x$hgvs_c)
@@ -2508,10 +2514,10 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     if (!is.null(sp) && nrow(sp)) {
       best <- sp[1L, ]; on_reference <- grepl("MANE_Select|Ensembl_canonical", best$transcript_flags)
       via <- switch(best$basis, `observed and predicted` = if (on_reference) "Strong" else "Moderate", observed = "Moderate", predicted = "Moderate", "Limited")
-      evidence <- c(evidence, paste0("through splicing (", best$basis, "), ", best$transcript_id, ": ", best$event, "; ", best$mrna_change, "; ", best$coding_effect,
+      evidence <- ev_c(evidence,ev_tag( paste0("through splicing (", best$basis, "), ", best$transcript_id, ": ", best$event, "; ", best$mrna_change, "; ", best$coding_effect,
         if (nzchar(best$nmd)) paste0("; nonsense-mediated decay ", best$nmd) else "",
-        if (nzchar(best$annotated_in)) paste0("; this intron is annotated in ", best$annotated_in) else ""),
-        if (nrow(sp) > 1L) paste0(nrow(sp) - 1L, " more splice outcome(s) in the table"))
+        if (nzchar(best$annotated_in)) paste0("; this intron is annotated in ", best$annotated_in) else ""), "splice_outcome", splice_protein_step, "evidence"),ev_tag(
+        if (nrow(sp) > 1L) paste0(nrow(sp) - 1L, " more splice outcome(s) in the table"), "splice_outcome", splice_protein_step, "context"))
       if (match(via, interp_levels()) < match(level, interp_levels()) || level == "None found") {
         finding <- paste0(if (level == "None found") "The variant itself does not change the protein sequence. " else paste0(finding, " "),
           "Through the splice change (", best$basis, "): ", sub("^(.)", "\\L\\1", best$protein_change, perl = TRUE),
@@ -2557,16 +2563,16 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
           "; single-signal fine-mapping makes this variant the leading candidate for ", interp_join(candidate$protein, ", "), " (posterior ",
           formatC(max(candidate$posterior_probability), format = "f", digits = 2), ") without settling it.") else
         paste0("Associated in cis with the plasma level of ", interp_join(proteins, ", ", max = 5), "; not fine-mapped to this variant.")
-      direct$evidence <- c(paste0("cis-pQTL at this variant: ", paste(describe(utils::head(wide, 6L)), collapse = "; "),
-        if (nrow(wide) > 6L) paste0("; +", nrow(wide) - 6L, " more") else ""),
+      direct$evidence <- ev_c(ev_tag(paste0("cis-pQTL at this variant: ", paste(describe(utils::head(wide, 6L)), collapse = "; "),
+        if (nrow(wide) > 6L) paste0("; +", nrow(wide) - 6L, " more") else ""), "pqtl", "local", "evidence"),ev_tag(
         if (nrow(mapped)) paste0("single-signal fine-mapping of the cis window (one causal variant assumed): ", paste(sprintf(
           "%s in %s posterior %.2f, 95%% credible set of %d of %d variant(s)%s", mapped$protein, mapped$study, mapped$posterior_probability, mapped$credible_set_size,
-          mapped$window_variants, ifelse(mapped$lead_variant == "this variant", ", this variant leads", paste0(", lead ", mapped$lead_variant))), collapse = "; ")),
-        if (length(replicated)) paste0("seen in both scans in the same direction: ", interp_join(replicated, ", ", max = 6)), scope)
+          mapped$window_variants, ifelse(mapped$lead_variant == "this variant", ", this variant leads", paste0(", lead ", mapped$lead_variant))), collapse = "; ")), "pqtl_finemap", "local", "evidence"),ev_tag(
+        if (length(replicated)) paste0("seen in both scans in the same direction: ", interp_join(replicated, ", ", max = 6)), "pqtl", "local", "evidence"),ev_tag( scope, "pqtl", "local", "context"))
     } else if (nrow(suggestive)) {
       direct$level <- "Limited"
       direct$finding <- paste0("Only a suggestive cis association with the plasma level of ", interp_join(suggestive$protein, ", ", max = 5), " (p between 5e-8 and 1e-5).")
-      direct$evidence <- c(paste0("suggestive cis-pQTL: ", paste(describe(utils::head(suggestive, 6L)), collapse = "; ")), scope)
+      direct$evidence <- ev_c(ev_tag(paste0("suggestive cis-pQTL: ", paste(describe(utils::head(suggestive, 6L)), collapse = "; ")), "pqtl", "local", "evidence"),ev_tag( scope, "pqtl", "local", "context"))
     } else {
       direct$level <- "None found"
       direct$finding <- paste0("No cis-pQTL at this variant: ", scope, ", smallest p ", interp_fmt_p(min(tested$min_p)), ".")
@@ -2580,11 +2586,11 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   locus_of <- function(x) if (is.null(x) || !nrow(x)) character() else if (is.null(x$protein_locus)) rep("", nrow(x)) else
     ifelse(is.na(x$protein_locus), "", x$protein_locus)
   where <- function(x) { l <- locus_of(x); ifelse(nzchar(l), paste0(", ", l), "") }
-  local_lines <- c(
+  local_lines <- ev_c(ev_tag(
     if (!is.null(protein_here) && nrow(protein_here)) paste0("GWAS Catalog, at this variant: ",
-      interp_join(unique(paste0(interp_protein_name(protein_here$mapped_trait), sub("^, (.*)$", " (\\1)", where(protein_here)))), ", ", max = 6)),
+      interp_join(unique(paste0(interp_protein_name(protein_here$mapped_trait), sub("^, (.*)$", " (\\1)", where(protein_here)))), ", ", max = 6)), "gwas_catalog", "local", "evidence"),ev_tag(
     if (!is.null(protein_ld) && nrow(protein_ld)) paste0("GWAS Catalog, through LD (r2 >= 0.8 in this cohort): ",
-      interp_join(unique(sprintf("%s (%s, r2 %.2f%s)", interp_protein_name(protein_ld$mapped_trait), protein_ld$rs_id, protein_ld$r2, where(protein_ld))), ", ", max = 6)))
+      interp_join(unique(sprintf("%s (%s, r2 %.2f%s)", interp_protein_name(protein_ld$mapped_trait), protein_ld$rs_id, protein_ld$r2, where(protein_ld))), ", ", max = 6)), "cohort_ld", "ld", "evidence"))
   local_sources <- c(if (length(local_lines)) "GWAS Catalog", if (!is.null(protein_ld) && nrow(protein_ld)) "cohort WGS genotypes")
   published <- unique(data.frame(protein = c(interp_protein_name(protein_here$mapped_trait), interp_protein_name(protein_ld$mapped_trait)),
     locus = c(locus_of(protein_here), locus_of(protein_ld)), stringsAsFactors = FALSE))
@@ -2606,8 +2612,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", level,
       sprintf("In %d pQTL credible set(s), %d in cis; leading set: %s in %s (%s), posterior probability %.2f.", nrow(pq), sum(cis),
         best$gene[[1L]], best$biosample[[1L]], if (best_cis[[1L]]) "cis" else "trans", best_pip[[1L]]),
-      c(sprintf("%s in %s: PIP %.2f, beta %+.2f, p %s%s", head(best$gene, 6L), head(best$biosample, 6L), head(best_pip, 6L),
-        head(best$beta, 6L), interp_fmt_p(head(best$p_value, 6L)), ifelse(head(best_cis, 6L), "", " (trans)")), direct$evidence, local_lines),
+      ev_c(ev_tag(sprintf("%s in %s: PIP %.2f, beta %+.2f, p %s%s", head(best$gene, 6L), head(best$biosample, 6L), head(best_pip, 6L),
+        head(best$beta, 6L), interp_fmt_p(head(best$p_value, 6L)), ifelse(head(best_cis, 6L), "", " (trans)")), "open_targets", "public", "evidence"), direct$evidence, local_lines),
       c("Open Targets", direct$sources, local_sources))
   } else if (direct_hit || length(local_lines)) {
     # An association with a protein level, in a cis-pQTL scan or published: Moderate unless the variant is also predicted to act on that gene.
@@ -2618,11 +2624,11 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       if (length(local_lines)) paste0(if (in_scan) " Also a" else "A", "ssociated with the blood level of ", nrow(published),
         " protein(s) in published GWAS", if (in_scan) "" else "; not fine-mapped to this variant", published_note, ".") else "")
     rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", level, finding,
-      c(direct$evidence, local_lines, if (!ot_queried) "pQTL credible sets not consulted: public query not run"), c(direct$sources, local_sources))
+      ev_c(direct$evidence, local_lines,ev_tag( if (!ot_queried) "pQTL credible sets not consulted: public query not run", "open_targets", "public", "notice")), c(direct$sources, local_sources))
   } else if (ot_queried || identical(direct$level, "None found")) {
     rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "None found", trimws(paste(
       if (identical(direct$level, "None found")) direct$finding else "", if (ot_queried) "Not in any pQTL credible set in Open Targets." else "")),
-      if (!ot_queried) "pQTL credible sets not consulted: public query not run" else character(), c(direct$sources, if (ot_queried) "Open Targets"))
+      ev_tag(if (!ot_queried) "pQTL credible sets not consulted: public query not run" else character(), "open_targets", "public", "notice"), c(direct$sources, if (ot_queried) "Open Targets"))
   } else {
     rows[[2L]] <- interp_summary_row("Protein abundance (pQTL)", "Not assessed", paste0(
       if (!is.null(pq_local)) "This variant is not in the local cis-pQTL scans (no measured protein is encoded within their window, or the variant was not tested). " else "",
@@ -2633,6 +2639,7 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
 
   if (length(coloc_lines("pQTL"))) {
     rows[[2L]]$evidence <- paste(c(rows[[2L]]$evidence[nzchar(rows[[2L]]$evidence)], coloc_lines("pQTL")), collapse = " | ")
+    attr(rows[[2L]], "evidence_items") <- rbind(attr(rows[[2L]], "evidence_items"), interp_evidence_items(coloc_lines("pQTL")))
     rows[[2L]]$sources <- paste(unique(c(strsplit(rows[[2L]]$sources, "; ", fixed = TRUE)[[1L]], "colocalisation (computed here)")), collapse = "; ")
   }
 
@@ -2644,8 +2651,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     "splice_polypyrimidine_tract_variant") %in% splice_terms)
   if (essential || region) {
     hit <- genic[grepl("splice_", genic$consequence), , drop = FALSE]
-    evidence <- c(evidence, sprintf("annotation: %s in %d transcript(s) of %s", interp_join(setdiff(splice_terms[grepl("^splice_", splice_terms)], ""), ", "),
-      nrow(hit), interp_join(hit$gene_name, ", ")))
+    evidence <- ev_c(evidence,ev_tag( sprintf("annotation: %s in %d transcript(s) of %s", interp_join(setdiff(splice_terms[grepl("^splice_", splice_terms)], ""), ", "),
+      nrow(hit), interp_join(hit$gene_name, ", ")), "gencode", "local", "evidence"))
     sources <- c(sources, src)
   }
   sai <- if (interp_ok(spliceai) && is.data.frame(spliceai$scores) && nrow(spliceai$scores)) spliceai$scores else NULL
@@ -2654,44 +2661,44 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     s <- sai[which.max(sai$max_delta), ]
     kinds <- c(acceptor_gain = "acceptor gain", acceptor_loss = "acceptor loss", donor_gain = "donor gain", donor_loss = "donor loss")
     parts <- vapply(names(kinds), function(k) if (s[[k]] >= 0.1) sprintf("%s %.2f at exon base %d", kinds[[k]], s[[k]], s[[paste0(k, "_pos1")]]) else "", character(1))
-    evidence <- c(evidence, paste0("SpliceAI (", s$gene, "): ", if (any(nzchar(parts))) paste(parts[nzchar(parts)], collapse = ", ") else
-      sprintf("largest change %.2f", sai_max)))
+    evidence <- ev_c(evidence,ev_tag( paste0("SpliceAI (", s$gene, "): ", if (any(nzchar(parts))) paste(parts[nzchar(parts)], collapse = ", ") else
+      sprintf("largest change %.2f", sai_max)), "spliceai", "spliceai", "evidence"))
     sources <- c(sources, "SpliceAI")
   }
   observed <- interp_ok(rna) && isTRUE(rna$supported)
-  if (observed) { evidence <- c(evidence, paste0("this cohort: ", head(rna$details, 3L))); sources <- c(sources, "Model 1 of this result") }
+  if (observed) { evidence <- ev_c(evidence,ev_tag( paste0("this cohort: ", head(rna$details, 3L)), "cohort_rna", "local", "evidence")); sources <- c(sources, "Model 1 of this result") }
   s_pairs <- if (!is.null(topmed)) topmed$pairs[topmed$pairs$qtl_type == "sQTL" & topmed$pairs$significant, , drop = FALSE] else NULL
   topmed_sqtl <- !is.null(s_pairs) && nrow(s_pairs) > 0L
   finemapped <- topmed_sqtl && any(s_pairs$pip >= 0.5, na.rm = TRUE)
   if (topmed_sqtl) {
     best <- s_pairs[which.min(s_pairs$p_nominal), ]
-    evidence <- c(evidence, sprintf("TOPMed sQTL significant in %d of %d contexts (%s); strongest %s, slope %+.2f, p %s%s",
+    evidence <- ev_c(evidence,ev_tag( sprintf("TOPMed sQTL significant in %d of %d contexts (%s); strongest %s, slope %+.2f, p %s%s",
       length(unique(s_pairs$context)), sum(topmed$contexts$qtl_type == "sQTL" & topmed$contexts$tested), interp_join(s_pairs$context, ", "),
       best$context, best$slope_alt, interp_fmt_p(best$p_nominal),
-      if (any(is.finite(s_pairs$pip))) sprintf("; highest SuSiE PIP %.2f", max(s_pairs$pip, na.rm = TRUE)) else ""))
+      if (any(is.finite(s_pairs$pip))) sprintf("; highest SuSiE PIP %.2f", max(s_pairs$pip, na.rm = TRUE)) else ""), "topmed", "local", "evidence"))
     sources <- c(sources, "TOPMed cis-sQTL")
   }
   replicated <- if (!is.null(fhs) && nrow(fhs$sqtl)) interp_fhs_replicated(fhs$sqtl) else NULL
   replicated <- if (!is.null(replicated)) replicated[replicated$cis, , drop = FALSE] else NULL
   fhs_sqtl <- !is.null(replicated) && nrow(replicated) > 0L
   if (fhs_sqtl) {
-    evidence <- c(evidence, sprintf("FHS whole-blood isoform ratio: %d transcript(s) of %s replicate; strongest %s, log10 p %.1f (discovery) and %.1f (replication)",
-      nrow(replicated), interp_join(replicated$gene, ", "), replicated$feature[[1L]], replicated$log10_p_discovery[[1L]], replicated$log10_p_replication[[1L]]))
+    evidence <- ev_c(evidence,ev_tag( sprintf("FHS whole-blood isoform ratio: %d transcript(s) of %s replicate; strongest %s, log10 p %.1f (discovery) and %.1f (replication)",
+      nrow(replicated), interp_join(replicated$gene, ", "), replicated$feature[[1L]], replicated$log10_p_discovery[[1L]], replicated$log10_p_replication[[1L]]), "fhs", "local", "evidence"))
     sources <- c(sources, "FHS sQTL")
   }
   g_sqtl <- if (!is.null(gtex)) gtex$qtl[gtex$qtl$qtl_type == "sQTL", , drop = FALSE] else NULL
   gtex_sqtl <- !is.null(g_sqtl) && nrow(g_sqtl) > 0L
   if (gtex_sqtl) {
-    evidence <- c(evidence, sprintf("GTEx sQTL in %d tissue(s) for %s; smallest p %s (%s)", length(unique(g_sqtl$tissue)),
-      interp_join(g_sqtl$gene, ", ", max = 4), interp_fmt_p(min(g_sqtl$p_value)), g_sqtl$tissue[[which.min(g_sqtl$p_value)]]))
+    evidence <- ev_c(evidence,ev_tag( sprintf("GTEx sQTL in %d tissue(s) for %s; smallest p %s (%s)", length(unique(g_sqtl$tissue)),
+      interp_join(g_sqtl$gene, ", ", max = 4), interp_fmt_p(min(g_sqtl$p_value)), g_sqtl$tissue[[which.min(g_sqtl$p_value)]]), "gtex", "public", "evidence"))
     sources <- c(sources, "GTEx")
   }
   ot_s <- if (!is.null(ot)) ot$qtl[ot$qtl$qtl_type %in% c("sqtl", "tuqtl") & ot$qtl$posterior_probability >= 0.5 &
     !is.na(ot$qtl$posterior_probability), , drop = FALSE] else NULL
   ot_sqtl <- !is.null(ot_s) && nrow(ot_s) > 0L
   if (ot_sqtl) {
-    evidence <- c(evidence, sprintf("Open Targets: %d splicing or transcript-usage QTL credible set(s) with PIP >= 0.5 (%s in %s, PIP %.2f)",
-      nrow(ot_s), ot_s$gene[[1L]], ot_s$biosample[[1L]], ot_s$posterior_probability[[1L]]))
+    evidence <- ev_c(evidence,ev_tag( sprintf("Open Targets: %d splicing or transcript-usage QTL credible set(s) with PIP >= 0.5 (%s in %s, PIP %.2f)",
+      nrow(ot_s), ot_s$gene[[1L]], ot_s$biosample[[1L]], ot_s$posterior_probability[[1L]]), "open_targets", "public", "evidence"))
     sources <- c(sources, "Open Targets")
   }
   associated <- observed || topmed_sqtl || fhs_sqtl || gtex_sqtl
@@ -2707,8 +2714,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       "Predicted to alter splicing; no RNA association was found in the sources consulted.",
     Limited = "Near a splice site or weakly predicted; no RNA association found.",
     `None found` = "No splicing effect predicted or observed.", "No splicing source was available.")
-  if (is.null(sai)) evidence <- c(evidence, "SpliceAI not run")
-  if (length(coloc_lines("sQTL"))) { evidence <- c(evidence, coloc_lines("sQTL")); sources <- c(sources, "colocalisation (computed here)") }
+  if (is.null(sai)) evidence <- ev_c(evidence,ev_tag( "SpliceAI not run", "spliceai", "spliceai", "notice"))
+  if (length(coloc_lines("sQTL"))) { evidence <- ev_c(evidence, coloc_lines("sQTL")); sources <- c(sources, "colocalisation (computed here)") }
   rows[[3L]] <- interp_summary_row("Splicing", level, finding, evidence, sources)
 
   # 4. Expression.
@@ -2718,8 +2725,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   name <- function(x) ifelse(nzchar(x$gene), x$gene, x$gene_id)
   if (topmed_eqtl) {
     best <- e_pairs[which.min(e_pairs$p_nominal), ]
-    evidence <- c(evidence, sprintf("TOPMed eQTL for %s in %s; strongest %s in %s, slope %+.2f, p %s", interp_join(name(e_pairs), ", ", max = 5),
-      interp_join(e_pairs$context, ", "), name(best), best$context, best$slope_alt, interp_fmt_p(best$p_nominal)))
+    evidence <- ev_c(evidence,ev_tag( sprintf("TOPMed eQTL for %s in %s; strongest %s in %s, slope %+.2f, p %s", interp_join(name(e_pairs), ", ", max = 5),
+      interp_join(e_pairs$context, ", "), name(best), best$context, best$slope_alt, interp_fmt_p(best$p_nominal)), "topmed", "local", "evidence"))
     sources <- c(sources, "TOPMed cis-eQTL")
   }
   e_fine <- topmed_eqtl && any(e_pairs$pip >= 0.5, na.rm = TRUE)
@@ -2733,20 +2740,20 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     label <- vapply(unique(gene_of), function(g) { n <- e_pairs$gene[gene_of == g]; n <- n[nzchar(n)]; if (length(n)) n[[1L]] else g }, character(1))
     set_aside <- unname(label[out_of_sets]); set_aside_ids <- unique(gene_of)[out_of_sets]
     held <- is.finite(in_sets) & in_sets >= 0.1
-    if (length(set_aside) || any(held)) evidence <- c(evidence, paste0("TOPMed SuSiE: ", paste(c(
+    if (length(set_aside) || any(held)) evidence <- ev_c(evidence,ev_tag( paste0("TOPMed SuSiE: ", paste(c(
       if (length(set_aside)) paste0("this variant is in no credible set, or has a PIP under 0.1, for the eQTL of ", interp_join(set_aside, ", ", max = 6)),
-      if (any(held)) paste0("PIP ", paste(sprintf("%.2f for %s", in_sets[held], label[held]), collapse = ", "))), collapse = "; ")))
+      if (any(held)) paste0("PIP ", paste(sprintf("%.2f for %s", in_sets[held], label[held]), collapse = ", "))), collapse = "; ")), "topmed", "local", "evidence"))
   }
   fhs_eqtl <- !is.null(fhs) && nrow(fhs$eqtl) > 0L
   if (fhs_eqtl) {
-    evidence <- c(evidence, sprintf("FHS whole-blood eQTL for %s (log10 p %.1f)", interp_join(fhs$eqtl$gene, ", ", max = 5), min(fhs$eqtl$log10_p)))
+    evidence <- ev_c(evidence,ev_tag( sprintf("FHS whole-blood eQTL for %s (log10 p %.1f)", interp_join(fhs$eqtl$gene, ", ", max = 5), min(fhs$eqtl$log10_p)), "fhs", "local", "evidence"))
     sources <- c(sources, "FHS eQTL")
   }
   g_eqtl <- if (!is.null(gtex)) gtex$qtl[gtex$qtl$qtl_type == "eQTL", , drop = FALSE] else NULL
   gtex_eqtl <- !is.null(g_eqtl) && nrow(g_eqtl) > 0L
   if (gtex_eqtl) {
-    evidence <- c(evidence, sprintf("GTEx eQTL in %d tissue(s) for %s; smallest p %s (%s)", length(unique(g_eqtl$tissue)),
-      interp_join(g_eqtl$gene, ", ", max = 4), interp_fmt_p(min(g_eqtl$p_value)), g_eqtl$tissue[[which.min(g_eqtl$p_value)]]))
+    evidence <- ev_c(evidence,ev_tag( sprintf("GTEx eQTL in %d tissue(s) for %s; smallest p %s (%s)", length(unique(g_eqtl$tissue)),
+      interp_join(g_eqtl$gene, ", ", max = 4), interp_fmt_p(min(g_eqtl$p_value)), g_eqtl$tissue[[which.min(g_eqtl$p_value)]]), "gtex", "public", "evidence"))
     sources <- c(sources, "GTEx")
   }
   gl <- if (interp_ok(local) && interp_ok(local$gtex) && isTRUE(local$gtex$available)) local$gtex else NULL
@@ -2754,17 +2761,17 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   gl_name <- function(g) ifelse(nzchar(g$gene), g$gene, g$gene_id)
   if (gl_eqtl) {
     g <- gl$genes
-    evidence <- c(evidence, sprintf("GTEx %s eQTL (local): %s; strongest %s in %s, slope %+.2f, p %s", gl$release,
+    evidence <- ev_c(evidence,ev_tag( sprintf("GTEx %s eQTL (local): %s; strongest %s in %s, slope %+.2f, p %s", gl$release,
       interp_join(sprintf("%s in %d%s tissue(s)", gl_name(g), g$tissues_significant, ifelse(is.na(g$tissues_tested), "", paste0(" of ", g$tissues_tested, " tested"))), ", ", max = 5),
-      gl_name(g)[[1L]], g$strongest_tissue[[1L]], g$strongest_slope[[1L]], interp_fmt_p(g$strongest_p[[1L]])))
+      gl_name(g)[[1L]], g$strongest_tissue[[1L]], g$strongest_slope[[1L]], interp_fmt_p(g$strongest_p[[1L]])), "gtex_local", "local", "evidence"))
     sources <- c(sources, trimws(paste("GTEx", gl$release, "(local)")))
   }
   ot_e <- if (!is.null(ot)) ot$qtl[ot$qtl$qtl_type %in% c("eqtl", "sceqtl"), , drop = FALSE] else NULL
   ot_eqtl <- !is.null(ot_e) && nrow(ot_e) > 0L
   ot_fine <- ot_eqtl && any(ot_e$posterior_probability >= 0.5, na.rm = TRUE)
   if (ot_eqtl) {
-    evidence <- c(evidence, sprintf("Open Targets: %d eQTL credible set(s), highest PIP %.2f (%s, %s)", nrow(ot_e),
-      max(ot_e$posterior_probability, na.rm = TRUE), ot_e$gene[[1L]], ot_e$biosample[[1L]]))
+    evidence <- ev_c(evidence,ev_tag( sprintf("Open Targets: %d eQTL credible set(s), highest PIP %.2f (%s, %s)", nrow(ot_e),
+      max(ot_e$posterior_probability, na.rm = TRUE), ot_e$gene[[1L]], ot_e$biosample[[1L]]), "open_targets", "public", "evidence"))
     sources <- c(sources, "Open Targets")
   }
   any_e <- topmed_eqtl || fhs_eqtl || gtex_eqtl || gl_eqtl || ot_eqtl
@@ -2782,7 +2789,7 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   } else if (level == "Moderate" && length(set_aside)) finding <- paste0("Associated with expression; not fine-mapped to this variant. For ", interp_join(set_aside, ", ", max = 5),
     " SuSiE leaves it out of every credible set (or gives it a PIP under 0.1), so that association is most likely through linkage disequilibrium.")
   if (length(coloc_lines("eQTL"))) {
-    evidence <- c(evidence, coloc_lines("eQTL")); sources <- c(sources, "colocalisation (computed here)")
+    evidence <- ev_c(evidence, coloc_lines("eQTL")); sources <- c(sources, "colocalisation (computed here)")
     # An expression signal that this variant does not lead, and whose causal variant differs from a signal this
     # variant does lead (single-signal posterior of at least 0.9 within that trait).
     share <- function(label) { t <- coloc$traits; if (is.null(t$this_variant_posterior)) rep(NA_real_, length(label)) else t$this_variant_posterior[match(label, t$label)] }
@@ -2818,7 +2825,7 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   }
   significance <- unique(significance[nzchar(significance)])
   if (length(significance)) {
-    evidence <- c(evidence, paste0("ClinVar: ", interp_join(significance, ", ", max = 6), detail))
+    evidence <- ev_c(evidence,ev_tag( paste0("ClinVar: ", interp_join(significance, ", ", max = 6), detail), if (!is.null(myv) && nrow(myv$clinvar)) "myvariant" else "clinvar_local", if (!is.null(myv) && nrow(myv$clinvar)) "public" else "local", "evidence"))
     pathogenic <- any(grepl("^(likely )?pathogenic", significance))
     benign <- any(grepl("benign", significance))
     level <- rank_up(level, if (pathogenic && !benign) "Strong" else if (pathogenic || any(grepl("risk|drug|association|protective|affects|conflicting", significance))) "Moderate" else "Limited")
@@ -2828,8 +2835,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     top <- g[order(-pip, g$log10_p), , drop = FALSE]; top_pip <- sort(pip, decreasing = TRUE)
     traits <- ifelse(nzchar(top$diseases), top$diseases, top$trait)
     keep <- !duplicated(traits)
-    evidence <- c(evidence, sprintf("GWAS credible sets: %d (%d with PIP >= 0.5, %d with PIP >= 0.1); top: %s", ot$summary$gwas_total,
-      sum(pip >= 0.5), sum(pip >= 0.1), paste(sprintf("%s (PIP %.2f)", head(traits[keep], 5L), head(top_pip[keep], 5L)), collapse = ", ")))
+    evidence <- ev_c(evidence,ev_tag( sprintf("GWAS credible sets: %d (%d with PIP >= 0.5, %d with PIP >= 0.1); top: %s", ot$summary$gwas_total,
+      sum(pip >= 0.5), sum(pip >= 0.1), paste(sprintf("%s (PIP %.2f)", head(traits[keep], 5L), head(top_pip[keep], 5L)), collapse = ", ")), "open_targets", "public", "evidence"))
     sources <- c(sources, "Open Targets")
     level <- rank_up(level, if (any(pip >= 0.5)) "Strong" else if (any(pip >= 0.1)) "Moderate" else "Limited")
   }
@@ -2837,8 +2844,8 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     a <- catalog$associations
     genome_wide <- is.finite(a$p_value) & a$p_value <= 5e-8
     traits <- unique(ifelse(nzchar(a$mapped_trait), a$mapped_trait, a$trait))
-    evidence <- c(evidence, sprintf("GWAS Catalog: %d association(s) reported at this position, %d at p <= 5e-8, %d distinct trait(s); strongest: %s",
-      nrow(a), sum(genome_wide), length(traits), interp_join(traits, "; ", max = 5)))
+    evidence <- ev_c(evidence,ev_tag( sprintf("GWAS Catalog: %d association(s) reported at this position, %d at p <= 5e-8, %d distinct trait(s); strongest: %s",
+      nrow(a), sum(genome_wide), length(traits), interp_join(traits, "; ", max = 5)), "gwas_catalog", "local", "evidence"))
     sources <- c(sources, trimws(paste("GWAS Catalog", catalog$release)))
     # A published association at the variant itself; alone it does not single the variant out from its LD neighbours.
     level <- rank_up(level, if (any(genome_wide)) "Moderate" else "Limited")
@@ -2851,15 +2858,15 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
     scan <- sprintf("%d GWAS Catalog variant(s) within %d kb%s, %d samples", ld$positions_examined, round(ld$window / 1000),
       if (isTRUE(ld$truncated)) paste0(" (nearest of ", ld$positions_in_window, ")") else "", ld$samples)
     if (nrow(tight)) {
-      evidence <- c(evidence, sprintf("LD in this cohort: r2 >= 0.8 with %d other reported variant(s) (%d association(s), %d at p <= 5e-8) for %s",
-        length(unique(tight$rs_id)), nrow(tight), sum(wide(tight)), name(tight)))
+      evidence <- ev_c(evidence,ev_tag( sprintf("LD in this cohort: r2 >= 0.8 with %d other reported variant(s) (%d association(s), %d at p <= 5e-8) for %s",
+        length(unique(tight$rs_id)), nrow(tight), sum(wide(tight)), name(tight)), "cohort_ld", "ld", "evidence"))
       level <- rank_up(level, if (any(wide(tight))) "Moderate" else "Limited")
     }
     if (nrow(loose)) {
-      evidence <- c(evidence, sprintf("LD in this cohort: r2 %.1f-0.8 with %d more reported variant(s) for %s", ld$keep_r2, length(unique(loose$rs_id)), name(loose)))
+      evidence <- ev_c(evidence,ev_tag( sprintf("LD in this cohort: r2 %.1f-0.8 with %d more reported variant(s) for %s", ld$keep_r2, length(unique(loose$rs_id)), name(loose)), "cohort_ld", "ld", "evidence"))
       level <- rank_up(level, "Limited")
     }
-    if (!nrow(x)) evidence <- c(evidence, sprintf("LD in this cohort: no other reported variant with r2 >= %.1f (%s)", ld$keep_r2, scan))
+    if (!nrow(x)) evidence <- ev_c(evidence,ev_tag( sprintf("LD in this cohort: no other reported variant with r2 >= %.1f (%s)", ld$keep_r2, scan), "cohort_ld", "ld", "evidence"))
     sources <- c(sources, "cohort WGS genotypes")
   }
   # Disease genes among the linked genes: context for where a change in those genes leads, not evidence about this variant.
@@ -2869,7 +2876,7 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       vapply(strsplit(utils::head(gd$genes$conditions, 4L), "; ", fixed = TRUE), function(x) sub(" \\([0-9]+\\)$", "", x[[1L]]), character(1))), collapse = "; "),
     if (nrow(gd$genes) > 4L) paste0("; +", nrow(gd$genes) - 4L, " more") else "") else character()
   if (!is.null(ot) && nrow(ot$pharmacogenomics)) {
-    evidence <- c(evidence, paste0("Pharmacogenomics: ", interp_join(ot$pharmacogenomics$drugs, ", ", max = 6)))
+    evidence <- ev_c(evidence,ev_tag( paste0("Pharmacogenomics: ", interp_join(ot$pharmacogenomics$drugs, ", ", max = 6)), "open_targets", "public", "evidence"))
     level <- rank_up(level, "Moderate"); sources <- c(sources, "Open Targets")
   }
   consulted <- c(if (!is.null(clinvar_local)) clinvar_local$source else if (!is.null(known)) "ClinVar 2023-10 (VEP cache)",
@@ -2878,14 +2885,14 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
   # ClinVar and published associations are both needed before saying "none".
   local_complete <- !is.null(catalog) && (!is.null(clinvar_local) || !is.null(myv))
   if (level == "None found" && !ot_queried && !local_complete) level <- "Not assessed"
-  if (!ot_queried) evidence <- c(evidence, "GWAS fine-mapping (credible sets) not consulted: public query not run")
+  if (!ot_queried) evidence <- ev_c(evidence,ev_tag( "GWAS fine-mapping (credible sets) not consulted: public query not run", "open_targets", "public", "notice"))
   finding <- switch(level, Strong = "Reported as disease-causing, or fine-mapped as the likely causal variant of a GWAS signal.",
     Moderate = "Linked to a disease, trait or drug response, without being singled out as causal.",
     Limited = "Present in ClinVar or in GWAS records with weak support for this variant.",
     `None found` = paste0("No clinical record and no published GWAS association for this variant in ", interp_join(consulted, ", "), "."),
     if (length(consulted)) paste0("Only ", interp_join(consulted, ", "), " could be consulted and reports nothing; run the public query for GWAS and curated evidence.") else
       "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.")
-  rows[[5L]] <- interp_summary_row("Disease and traits", level, finding, c(evidence, gene_context),
+  rows[[5L]] <- interp_summary_row("Disease and traits", level, finding, ev_c(evidence, ev_tag(gene_context, "gene_disease", "local", "context")),
     c(if (length(evidence) > !ot_queried) sources else consulted, if (length(gene_context)) gd$source))
 
   # 6. Pathway (context for the genes the variant acts through; not evidence about the variant).
@@ -2909,11 +2916,11 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
           interp_join(pretty(m$gene_set[order(m$genes_in_set)]), ", ", max = 3) else "no pathway annotation"
         if (!nrow(r) && !nrow(m)) { bare <- c(bare, label[[i]]); next }
         finding <- c(finding, paste0(label[[i]], " (", g$relation[[i]], "): ", named))
-        evidence <- c(evidence, sprintf("%s: %d Reactome pathway(s), %d gene set(s)", label[[i]], nrow(r), nrow(m)))
+        evidence <- ev_c(evidence,ev_tag( sprintf("%s: %d Reactome pathway(s), %d gene set(s)", label[[i]], nrow(r), nrow(m)), "local_pathways", "local", "context"))
       }
-      if (length(bare)) evidence <- c(evidence, paste0("no pathway annotation: ", interp_join(bare, ", ")))
+      if (length(bare)) evidence <- ev_c(evidence,ev_tag( paste0("no pathway annotation: ", interp_join(bare, ", ")), "local_pathways", "local", "context"))
       if (!length(finding)) finding <- "None of the linked genes has a pathway annotation in the local sources."
-      if (nrow(lp$genes) > 6L) evidence <- c(evidence, paste0(nrow(lp$genes) - 6L, " more linked gene(s) in the table"))
+      if (nrow(lp$genes) > 6L) evidence <- ev_c(evidence,ev_tag( paste0(nrow(lp$genes) - 6L, " more linked gene(s) in the table"), "local_pathways", "local", "context"))
       sources <- c(sources, lp$source)
     }
     if (!is.null(genes)) {
@@ -2921,9 +2928,9 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
         top <- unique(genes$pathways$top_level[genes$pathways$gene == gene])
         paste0(gene, ": ", if (length(top)) interp_join(top, ", ", max = 5) else "no Reactome pathway")
       }, character(1))
-      evidence <- c(evidence, sprintf("Open Targets, %s: %d Reactome pathway(s), %d GO term(s), %d associated disease(s)", genes$genes$gene,
+      evidence <- ev_c(evidence,ev_tag( sprintf("Open Targets, %s: %d Reactome pathway(s), %d GO term(s), %d associated disease(s)", genes$genes$gene,
         vapply(genes$genes$gene, function(gene) sum(genes$pathways$gene == gene), integer(1)),
-        vapply(genes$genes$gene, function(gene) sum(genes$go$gene == gene), integer(1)), genes$genes$associated_diseases))
+        vapply(genes$genes$gene, function(gene) sum(genes$go$gene == gene), integer(1)), genes$genes$associated_diseases), "open_targets_gene", "public", "context", gene_id = genes$genes$gene_id, gene = genes$genes$gene))
       sources <- c(sources, "Reactome and GO via Open Targets")
     }
     rows[[6L]] <- interp_summary_row("Pathway", "Context", paste(finding, collapse = " · "), evidence, sources)
@@ -2939,39 +2946,42 @@ interp_evidence_summary <- function(consequences, local = NULL, public = NULL, s
       # The trained cross-context model's reading of the same gene or intron, when a model is available.
       tissue <- if (interp_ok(local) && interp_ok(local$tissue) && isTRUE(local$tissue$available)) local$tissue$phenotypes else NULL
       modelled <- if (!is.null(tissue) && nrow(tissue)) tissue$summary[match(paste(h$qtl_type, h$phenotype), paste(tissue$qtl_type, tissue$phenotype))] else rep(NA_character_, nrow(h))
-      evidence <- c(evidence, sprintf("TOPMed %s %s%s: %s%s", h$qtl_type, ifelse(nzchar(h$gene), h$gene, h$gene_id), what, h$pattern,
-        ifelse(is.na(modelled), "", paste0("; model: ", modelled))))
+      evidence <- ev_c(evidence,ev_tag( sprintf("TOPMed %s %s%s: %s%s", h$qtl_type, ifelse(nzchar(h$gene), h$gene, h$gene_id), what, h$pattern,
+        ifelse(is.na(modelled), "", paste0("; model: ", modelled))), "topmed", "local", "evidence"))
       sources <- c(sources, "TOPMed cis-QTL (6 contexts)", if (any(!is.na(modelled))) "cross-context model")
     }
   }
   if (gl_eqtl) {
     g <- utils::head(gl$genes, 3L)
-    evidence <- c(evidence, sprintf("GTEx %s %s: eQTL in %d tissue(s)%s (%s); %s; whole blood: %s%s", gl$release, gl_name(g), g$tissues_significant,
+    evidence <- ev_c(evidence,ev_tag( sprintf("GTEx %s %s: eQTL in %d tissue(s)%s (%s); %s; whole blood: %s%s", gl$release, gl_name(g), g$tissues_significant,
       ifelse(is.na(g$tissues_tested), "", paste0(" of the ", g$tissues_tested, " that tested the gene")),
       vapply(strsplit(g$tissues, ", ", fixed = TRUE), function(t) interp_join(t, ", ", max = 4), character(1)), g$direction,
       ifelse(nzchar(g$whole_blood), g$whole_blood, "pair not significant, or gene not tested"),
-      ifelse(!is.na(g$lead_variant_in) & g$lead_variant_in > 0L, paste0("; the gene's lead variant in ", g$lead_variant_in, " tissue(s)"), "")))
-    if (nrow(gl$genes) > 3L) evidence <- c(evidence, paste0("GTEx ", gl$release, ": ", nrow(gl$genes) - 3L, " more eQTL gene(s) in the table"))
+      ifelse(!is.na(g$lead_variant_in) & g$lead_variant_in > 0L, paste0("; the gene's lead variant in ", g$lead_variant_in, " tissue(s)"), "")), "gtex_local", "local", "evidence"))
+    if (nrow(gl$genes) > 3L) evidence <- ev_c(evidence,ev_tag( paste0("GTEx ", gl$release, ": ", nrow(gl$genes) - 3L, " more eQTL gene(s) in the table"), "gtex_local", "local", "context"))
     sources <- c(sources, trimws(paste("GTEx", gl$release, "(local)")))
   } else if (!is.null(gl)) {
-    evidence <- c(evidence, paste0("GTEx ", gl$release, " (local): not a significant cis-eQTL in any tissue"))
+    evidence <- ev_c(evidence,ev_tag( paste0("GTEx ", gl$release, " (local): not a significant cis-eQTL in any tissue"), "gtex_local", "local", "evidence"))
     sources <- c(sources, trimws(paste("GTEx", gl$release, "(local)")))
   }
   if (!is.null(gtex) && nrow(gtex$qtl)) {
-    evidence <- c(evidence, sprintf("GTEx: QTL in %d of 50 tissues; whole blood %s", length(unique(gtex$qtl$tissue)),
-      if ("Whole Blood" %in% gtex$qtl$tissue) "included" else "not among them"))
+    evidence <- ev_c(evidence,ev_tag( sprintf("GTEx: QTL in %d of 50 tissues; whole blood %s", length(unique(gtex$qtl$tissue)),
+      if ("Whole Blood" %in% gtex$qtl$tissue) "included" else "not among them"), "gtex", "public", "evidence"))
     sources <- c(sources, "GTEx")
   }
   spec <- if (!is.null(gtex)) interp_tissue_specificity(gtex$expression) else NULL
   if (!is.null(spec) && nrow(spec)) {
-    evidence <- c(evidence, sprintf("%s expression: highest in %s (%.0f TPM); whole blood %.1f TPM, rank %d of %d; tau %.2f", spec$gene, spec$top_tissue,
-      spec$top_median_tpm, spec$whole_blood_tpm, spec$whole_blood_rank, spec$tissues, spec$tau))
+    evidence <- ev_c(evidence,ev_tag( sprintf("%s expression: highest in %s (%.0f TPM); whole blood %.1f TPM, rank %d of %d; tau %.2f", spec$gene, spec$top_tissue,
+      spec$top_median_tpm, spec$whole_blood_tpm, spec$whole_blood_rank, spec$tissues, spec$tau), "gtex_gene", "public", "context", gene = spec$gene))
     sources <- c(sources, "GTEx")
   }
   rows[[7L]] <- if (length(evidence)) interp_summary_row("Tissue", "Context",
     "Where the effect and the gene are seen; this cohort's RNA is whole blood.", evidence, sources) else
     interp_summary_row("Tissue", "Not assessed", "No tissue source was available or the variant is not a QTL in any of them.")
-  out <- do.call(rbind, rows); rownames(out) <- NULL; out
+  items <- lapply(rows, attr, "evidence_items")
+  rows <- lapply(rows, function(x) { attr(x, "evidence_items") <- NULL; x })
+  out <- do.call(rbind, rows); rownames(out) <- NULL
+  if (structured) list(summary = out, items = items) else out
 }
 
 # The summary in a few sentences: the best-supported molecular effect, what else

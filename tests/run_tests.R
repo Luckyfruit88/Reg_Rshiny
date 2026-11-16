@@ -22,6 +22,8 @@ suites <- list(
   suite("tests/test_splice_evidence.R", full = "--native"),
   # Indexed-source checks run where tabix, bgzip and look exist (SCC); elsewhere they are skipped and say so.
   suite("tests/test_interpretation.R"),
+  suite("tests/test_summary_contract.R"),
+  suite("tests/test_summary_states.R"),
   suite("tests/test_data_sources.R", full = "--native"),
   suite("tests/test_autoload.R", unit = "app.R"),
   suite("tests/test_frontend_contract.R"),

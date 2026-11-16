@@ -3,20 +3,27 @@
 # run only when the user asks. Nothing here changes RNA counts, Model 1 or a
 # saved result.
 
+sys.source("src/interpretation_summary_contract.R", envir = environment())
+sys.source("src/interpretation_summary_ui.R", envir = environment())
+
 interpretation_ui <- function(id) {
   ns <- shiny::NS(id)
+  steps <- interp_request_steps(); button <- function(k) paste0(steps$label[match(k, steps$key)], steps$duration[match(k, steps$key)])
   shiny::tagList(
     shiny::uiOutput(ns("header"), role = "status", `aria-live` = "polite"),
     shiny::div(class = "regshiny-actions",
-      bslib::input_task_button(ns("public"), "Query public databases"),
-      bslib::input_task_button(ns("spliceai"), "Run SpliceAI (about 1-2 min)"),
-      bslib::input_task_button(ns("ld"), "LD with GWAS variants (about 30 s)"),
+      bslib::input_task_button(ns("public"), button("public")),
+      bslib::input_task_button(ns("spliceai"), button("spliceai")),
+      bslib::input_task_button(ns("ld"), button("ld")),
       shiny::downloadButton(ns("download_json"), "Interpretation JSON"),
       shiny::downloadButton(ns("download_summary"), "Evidence summary CSV")),
+    shiny::uiOutput(ns("request_states"), role = "status", `aria-live` = "polite"),
+    shiny::helpText("Source links open an external site only when clicked and carry only public variant or gene identifiers."),
     shiny::helpText("Local sources are read automatically. A public query sends only the variant's chromosome, position and alleles, and the Ensembl IDs of the genes it overlaps, to Open Targets, GTEx and MyVariant.info. No sample, genotype or cohort information is sent. SpliceAI and the LD scan run on SCC and send nothing."),
     shiny::uiOutput(ns("public_status"), role = "status", `aria-live` = "polite"),
     shiny::h5("Evidence summary"),
     shiny::uiOutput(ns("reading")),
+    shiny::radioButtons(ns("summary_view"), "Evidence view", choices = c("Table", "Map"), selected = "Table", inline = TRUE),
     shiny::uiOutput(ns("summary")),
     shiny::tags$details(class = "regshiny-definitions", shiny::tags$summary("How the levels are assigned"),
       shiny::tags$ul(
@@ -137,20 +144,8 @@ interpretation_level_class <- function(level) switch(level, Strong = "regshiny-l
 
 # One card per question. The first `shown` evidence lines are visible; the rest open on request, so a
 # variant with many sources still fits on a screen.
-interpretation_summary_cards <- function(summary, shown = 4L) {
-  shiny::div(class = "regshiny-evidence", lapply(seq_len(nrow(summary)), function(i) {
-    evidence <- strsplit(summary$evidence[[i]], " | ", fixed = TRUE)[[1L]]
-    first <- utils::head(evidence, shown); rest <- evidence[-seq_len(shown)]
-    shiny::div(class = "regshiny-evidence-row",
-      shiny::div(class = "regshiny-evidence-head",
-        shiny::strong(summary$question[[i]]),
-        shiny::span(class = paste("regshiny-level", interpretation_level_class(summary$level[[i]])), summary$level[[i]])),
-      shiny::p(summary$finding[[i]]),
-      if (length(first)) shiny::tags$ul(lapply(first, shiny::tags$li)),
-      if (length(rest)) shiny::tags$details(class = "regshiny-evidence-more",
-        shiny::tags$summary(paste0(length(rest), " more evidence line", if (length(rest) > 1L) "s" else "")), shiny::tags$ul(lapply(rest, shiny::tags$li))),
-      if (nzchar(summary$sources[[i]])) shiny::p(class = "regshiny-evidence-source", paste("Sources:", summary$sources[[i]])))
-  }))
+interpretation_summary_cards <- function(summary, shown = interp_summary_visible_evidence(), ...) {
+  interpretation_summary_table(summary, shown = shown, ...)
 }
 
 # Table placeholder of the tab. The class lets the stylesheet keep the "no rows"
@@ -501,9 +496,36 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       get_table <- function(f) if (is.null(f)) NULL else tryCatch(f(), error = function(e) NULL)
       backend$interp_rna_evidence(get_table(bin_ratio), get_table(junctions))
     })
-    summary_now <- shiny::reactive({
+    summary_detail <- shiny::reactive({
       x <- local_now()
-      backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now(), ld_now(), splice_protein_table(), coloc_now())
+      backend$interp_evidence_summary(x$consequences, x$local, public_now(), spliceai_now(), rna_now(), ld_now(), splice_protein_table(), coloc_now(), structured = TRUE,
+        splice_protein_step = if (!is.null(protein_now()) && !inherits(protein_now(), "error") && any(protein_now()$events$source == "SpliceAI")) "spliceai" else "local")
+    })
+    summary_now <- shiny::reactive(summary_detail()$summary)
+    request_states <- shiny::reactive(backend$interp_request_states(public_store()[[variant_key()]], spliceai_now(), ld_now()))
+    # Capture only an exact, settled all-before result. Never reconstruct the
+    # no-SpliceAI protein outcome by filtering the current prediction table.
+    summary_baselines <- shiny::reactiveVal(list())
+    baseline_inputs <- shiny::reactive(list(local = local_now(), rna = rna_now(), coloc = coloc_now()))
+    shiny::observe({
+      if (!all(request_states() == "before")) return()
+      x <- local_ready(); if (is.null(x) || is.null(protein_now())) return()
+      if (!is.null(x$local) && nrow(backend$interp_coloc_traits(x$local)) >= 2L && is.null(coloc_now())) return()
+      k <- key(); inputs <- baseline_inputs(); cache <- shiny::isolate(summary_baselines())
+      if (is.null(cache[[k]]) || !identical(cache[[k]]$inputs, inputs)) {
+        cache[[k]] <- list(inputs = inputs, summary = summary_now()[, c("question", "level")]); summary_baselines(cache)
+      }
+    })
+    baseline_now <- shiny::reactive({
+      b <- summary_baselines()[[key()]]
+      if (!is.null(b) && identical(b$inputs, baseline_inputs())) b$summary else NULL
+    })
+    summary_identifiers <- shiny::reactive({
+      x <- local_now(); known <- x$local$known
+      rs <- if (!is.null(known) && !inherits(known, "error") && length(known$rs_id) == 1L) known$rs_id else ""
+      p <- public_now()
+      if (!nzchar(rs) && !is.null(p) && !inherits(p$open_targets, "error") && length(p$open_targets$summary$rs_ids)) rs <- strsplit(p$open_targets$summary$rs_ids, ", ", fixed = TRUE)[[1L]][[1L]]
+      interpretation_summary_identifiers(x$variant, rs)
     })
 
     show_table <- function(expr, digits = 3L, empty = "No rows.") DT::renderDT({
@@ -549,13 +571,21 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
         if (!inherits(raw$open_targets, "error") && !isTRUE(raw$open_targets$found)) " Open Targets has no record of this variant." else "",
         if (!inherits(raw$gtex, "error") && identical(raw$gtex$variant_in_gtex, FALSE)) " GTEx did not test this variant." else "")
     })
-    output$summary <- shiny::renderUI(interpretation_summary_cards(summary_now()))
+    output$request_states <- shiny::renderUI({
+      p <- public_store()[[variant_key()]]
+      shiny::div(class = "regshiny-request-states", interpretation_step_tags(request_states()),
+        if (!is.null(p) && !inherits(p, "error") && !is.null(p$queried_at)) shiny::tags$small(paste("Public query:", p$queried_at)))
+    })
+    output$summary <- shiny::renderUI({
+      if (identical(input$summary_view, "Map")) interpretation_summary_map(summary_now(), summary_detail()$items, request_states(), summary_identifiers()) else
+        interpretation_summary_cards(summary_now(), items = summary_detail()$items, states = request_states(), baseline = baseline_now(), identifiers = summary_identifiers())
+    })
     reading_now <- shiny::reactive(backend$interp_overall_reading(summary_now(), list(public = !is.null(public_now()),
       spliceai = !is.null(spliceai_now()) && !inherits(spliceai_now(), "error"), ld = !is.null(ld_now()) && !inherits(ld_now(), "error"))))
     mechanism_now <- shiny::reactive({ x <- local_now(); backend$interp_mechanism(x$local, splice_protein_table(), coloc_now()) })
     output$reading <- shiny::renderUI({
       mechanism <- mechanism_now()
-      shiny::div(class = "regshiny-context regshiny-reading", lapply(reading_now(), shiny::p),
+      shiny::div(class = "regshiny-context regshiny-reading", lapply(backend$interp_overall_reading(summary_now(), list(public = TRUE, spliceai = TRUE, ld = TRUE)), shiny::p),
         if (length(mechanism)) shiny::tagList(shiny::p(shiny::strong("What fine-mapping, the splice prediction and colocalisation add")),
           shiny::tags$ul(lapply(mechanism, shiny::tags$li))))
     })
@@ -852,7 +882,7 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     output$download_json <- shiny::downloadHandler(function() paste0("interpretation_", gsub(":", "_", local_now()$variant$id), ".json"),
       function(file) writeLines(jsonlite::toJSON(export(), dataframe = "rows", auto_unbox = TRUE, na = "null", null = "null", digits = NA, pretty = TRUE), file))
     output$download_summary <- shiny::downloadHandler("evidence_summary.csv", function(file)
-      utils::write.csv(summary_now(), file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8"))
+      utils::write.csv(backend$interp_summary_csv(summary_now(), request_states()), file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8"))
     output$download_consequences <- shiny::downloadHandler("transcript_consequences.csv", function(file)
       utils::write.csv(local_now()$consequences, file, row.names = FALSE, na = "NA", fileEncoding = "UTF-8"))
     invisible(list(summary = summary_now, local = local_now, public = public_now, spliceai = spliceai_now, ld = ld_now, splice_protein = protein_now,

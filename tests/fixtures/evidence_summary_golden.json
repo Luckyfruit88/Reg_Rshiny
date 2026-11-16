@@ -1,0 +1,3725 @@
+[
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Strong",
+      "finding": "The variant itself does not change the protein sequence. Through the splice change (observed and predicted): a stop codon follows residue 11: the protein ends there (11 instead of 39 residues). Nonsense-mediated decay of that mRNA is predicted.",
+      "evidence": "intron_variant in SPL, 1 of 1 transcripts | reference transcript SP: intron_variant c.40+20A>G | through splicing (observed and predicted), SP: alternative donor: intron chrS:151-200 in place of intron 1; 10 exonic nt removed; premature stop; nonsense-mediated decay predicted: the new stop codon ends 54 nt before the last exon junction, so the mRNA is expected to be degraded | 2 more splice outcome(s) in the table",
+      "sources": "GENCODE + reference (computed here); splice outcome prediction (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in SPL).",
+      "evidence": "intron_variant in SPL, 1 of 1 transcripts | reference transcript SP: intron_variant c.40+20A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "The variant itself does not change the protein sequence. Through the splice change (observed): residues 15 to 34 (20 residues) are removed; the rest of the protein is unchanged (19 instead of 39 residues).",
+      "evidence": "intron_variant in SPL, 1 of 1 transcripts | reference transcript SP: intron_variant c.40+20A>G | through splicing (observed), SP: exon skipping: 1 exon(s) left out (60 nt); 60 exonic nt removed; in-frame deletion",
+      "sources": "GENCODE + reference (computed here); splice outcome prediction (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "The variant itself does not change the protein sequence. Through the splice change (observed and predicted): a stop codon follows residue 11: the protein ends there (11 instead of 39 residues). Nonsense-mediated decay of that mRNA is predicted.",
+      "evidence": "intron_variant in SPL, 1 of 1 transcripts | reference transcript SP: intron_variant c.40+20A>G | through splicing (observed and predicted), SP: alternative donor: intron chrS:151-200 in place of intron 1; 10 exonic nt removed; premature stop; nonsense-mediated decay predicted: the new stop codon ends 54 nt before the last exon junction, so the mRNA is expected to be degraded",
+      "sources": "GENCODE + reference (computed here); splice outcome prediction (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Limited",
+      "finding": "The variant itself does not change the protein sequence. Through the splice change (weakly predicted): after residue 14 the sequence differs from the annotated protein and no stop codon follows before the end of the transcript (37 residues read).",
+      "evidence": "intron_variant in SPL, 1 of 1 transcripts | reference transcript SP: intron_variant c.40+20A>G | through splicing (weakly predicted), SP: alternative acceptor: intron chrS:161-205 in place of intron 1; 5 exonic nt removed; no stop codon",
+      "sources": "GENCODE + reference (computed here); splice outcome prediction (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Limited",
+      "finding": "The variant itself does not change the protein sequence. Through the splice change (assumed outcome): after residue 13 the sequence differs from the annotated protein: 2 residues, then a stop codon (15 instead of 39 residues). Nonsense-mediated decay of that mRNA is predicted.",
+      "evidence": "intron_variant in SPL, 1 of 1 transcripts | reference transcript SP: intron_variant c.40+20A>G | through splicing (assumed outcome), SP: if the intron is retained (40 nt); 40 intronic nt kept; frameshift; nonsense-mediated decay predicted: the new stop codon ends 92 nt before the last exon junction, so the mRNA is expected to be degraded",
+      "sources": "GENCODE + reference (computed here); splice outcome prediction (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in SPL).",
+      "evidence": "intron_variant in SPL, 1 of 1 transcripts | reference transcript SP: intron_variant c.40+20A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Strong",
+      "finding": "Predicted loss of the normal product: stop_gained in SPL on the reference transcript.",
+      "evidence": "stop_gained in SPL, 1 of 1 transcripts | reference transcript SP: stop_gained c.9G>A p.Trp3Ter | through splicing (observed), SP: exon skipping: 1 exon(s) left out (60 nt); 60 exonic nt removed; in-frame deletion",
+      "sources": "GENCODE + reference (computed here); splice outcome prediction (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Strong",
+      "finding": "Predicted loss of the normal product: stop_gained in PLUS on the reference transcript.",
+      "evidence": "stop_gained in PLUS, 1 of 2 transcripts | reference transcript TP: stop_gained c.9G>A p.Trp3Ter",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (5_prime_UTR_variant in PLUS).",
+      "evidence": "5_prime_UTR_variant in PLUS, 1 of 2 transcripts | reference transcript TP: 5_prime_UTR_variant c.-11A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "The variant lies outside every annotated transcript.",
+      "evidence": "",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Not assessed",
+      "finding": "No splicing source was available.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No gene overlaps the variant or is a QTL target of it.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Limited",
+      "finding": "Essential splice site of an intron outside the coding sequence (2 transcript(s) of PLUS); the protein sequence is not changed directly. See Splicing.",
+      "evidence": "splice_donor_variant in PLUS, 2 of 2 transcripts | reference transcript TP: splice_donor_variant c.*2+1A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Predicted to alter splicing; no RNA association was found in the sources consulted.",
+      "evidence": "annotation: splice_donor_variant in 2 transcript(s) of PLUS | SpliceAI not run",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Limited",
+      "finding": "Essential splice site of an intron outside the coding sequence (2 transcript(s) of PLUS); the protein sequence is not changed directly. See Splicing.",
+      "evidence": "splice_donor_variant in PLUS, 2 of 2 transcripts | reference transcript TP: splice_donor_variant c.*2+1A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Predicted to alter splicing; no RNA association was found in the sources consulted.",
+      "evidence": "annotation: splice_donor_variant in 2 transcript(s) of PLUS | SpliceAI not run",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Strong",
+      "finding": "Predicted loss of the normal product: splice_donor_variant in PLUS on the reference transcript.",
+      "evidence": "splice_donor_variant in PLUS, 2 of 2 transcripts | reference transcript TP: splice_donor_variant c.40+1A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Predicted to alter splicing; no RNA association was found in the sources consulted.",
+      "evidence": "annotation: splice_donor_variant in 2 transcript(s) of PLUS | SpliceAI not run",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Predicted loss of the normal product: stop_gained in PLUS on non-reference transcripts only.",
+      "evidence": "stop_gained in PLUS, 1 of 3 transcripts | reference transcript REF: intron_variant c.9G>A p.Trp3Ter",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr); predictors call it damaging.",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr | AlphaMissense likely_pathogenic (0.900) | REVEL 0.81",
+      "sources": "GENCODE + reference (computed here); Open Targets; MyVariant.info"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Strong",
+      "finding": "In 2 pQTL credible set(s), 1 in cis; leading set: GENE1 in blood plasma (cis), posterior probability 0.95.",
+      "evidence": "GENE1 in blood plasma: PIP 0.95, beta +0.50, p 1.0e-30 | FAR in blood plasma: PIP 0.99, beta +0.50, p 1.0e-12 (trans)",
+      "sources": "Open Targets"
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "GTEx sQTL in 1 tissue(s) for GENE1; smallest p 1.0e-12 (Liver) | SpliceAI not run",
+      "sources": "GTEx"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "GTEx eQTL in 2 tissue(s) for GENE1; smallest p 1.0e-20 (Lung) | Open Targets: 1 eQTL credible set(s), highest PIP 0.20 (GENE2, lung)",
+      "sources": "GTEx; Open Targets"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Strong",
+      "finding": "Reported as disease-causing, or fine-mapped as the likely causal variant of a GWAS signal.",
+      "evidence": "ClinVar: pathogenic, benign | GWAS credible sets: 2 (1 with PIP >= 0.5, 1 with PIP >= 0.1); top: D high; D other (PIP 0.97), D low (PIP 0.05) | Pharmacogenomics: drugA; drugB",
+      "sources": "ClinVar via MyVariant.info; Open Targets"
+    },
+    {
+      "question": "Pathway",
+      "level": "Context",
+      "finding": "GENE1: Transport",
+      "evidence": "Open Targets, GENE1: 1 Reactome pathway(s), 2 GO term(s), 12 associated disease(s)",
+      "sources": "Reactome and GO via Open Targets"
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "GTEx: QTL in 3 of 50 tissues; whole blood included | GENE1 expression: highest in Liver (99 TPM); whole blood 1.0 TPM, rank 3 of 3; tau 0.67",
+      "sources": "GTEx"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr); predictors call it damaging.",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr | AlphaMissense likely_pathogenic (0.900) | REVEL 0.81",
+      "sources": "GENCODE + reference (computed here); Open Targets; MyVariant.info"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Moderate",
+      "finding": "In 1 pQTL credible set(s), 0 in cis; leading set: FAR in blood plasma (trans), posterior probability 0.99.",
+      "evidence": "FAR in blood plasma: PIP 0.99, beta +0.50, p 1.0e-12 (trans)",
+      "sources": "Open Targets"
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "GTEx sQTL in 1 tissue(s) for GENE1; smallest p 1.0e-12 (Liver) | SpliceAI not run",
+      "sources": "GTEx"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "GTEx eQTL in 2 tissue(s) for GENE1; smallest p 1.0e-20 (Lung)",
+      "sources": "GTEx"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Strong",
+      "finding": "Reported as disease-causing, or fine-mapped as the likely causal variant of a GWAS signal.",
+      "evidence": "ClinVar: pathogenic, benign | GWAS credible sets: 2 (1 with PIP >= 0.5, 1 with PIP >= 0.1); top: D high; D other (PIP 0.97), D low (PIP 0.05) | Pharmacogenomics: drugA; drugB",
+      "sources": "ClinVar via MyVariant.info; Open Targets"
+    },
+    {
+      "question": "Pathway",
+      "level": "Context",
+      "finding": "GENE1: Transport",
+      "evidence": "Open Targets, GENE1: 1 Reactome pathway(s), 2 GO term(s), 12 associated disease(s)",
+      "sources": "Reactome and GO via Open Targets"
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "GTEx: QTL in 3 of 50 tissues; whole blood included | GENE1 expression: highest in Liver (99 TPM); whole blood 1.0 TPM, rank 3 of 3; tau 0.67",
+      "sources": "GTEx"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr); predictors call it damaging.",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr | AlphaMissense likely_pathogenic (0.900) | REVEL 0.81",
+      "sources": "GENCODE + reference (computed here); Open Targets; MyVariant.info"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Limited",
+      "finding": "In 1 pQTL credible set(s), 1 in cis; leading set: GENE1 in blood plasma (cis), posterior probability 0.02.",
+      "evidence": "GENE1 in blood plasma: PIP 0.02, beta +0.50, p 1.0e-30",
+      "sources": "Open Targets"
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "GTEx sQTL in 1 tissue(s) for GENE1; smallest p 1.0e-12 (Liver) | SpliceAI not run",
+      "sources": "GTEx"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "GTEx eQTL in 2 tissue(s) for GENE1; smallest p 1.0e-20 (Lung)",
+      "sources": "GTEx"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Strong",
+      "finding": "Reported as disease-causing, or fine-mapped as the likely causal variant of a GWAS signal.",
+      "evidence": "ClinVar: pathogenic, benign | GWAS credible sets: 2 (1 with PIP >= 0.5, 1 with PIP >= 0.1); top: D high; D other (PIP 0.97), D low (PIP 0.05) | Pharmacogenomics: drugA; drugB",
+      "sources": "ClinVar via MyVariant.info; Open Targets"
+    },
+    {
+      "question": "Pathway",
+      "level": "Context",
+      "finding": "GENE1: Transport",
+      "evidence": "Open Targets, GENE1: 1 Reactome pathway(s), 2 GO term(s), 12 associated disease(s)",
+      "sources": "Reactome and GO via Open Targets"
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "GTEx: QTL in 3 of 50 tissues; whole blood included | GENE1 expression: highest in Liver (99 TPM); whole blood 1.0 TPM, rank 3 of 3; tau 0.67",
+      "sources": "GTEx"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr); predictors call it damaging.",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr | AlphaMissense likely_pathogenic (0.900) | REVEL 0.81",
+      "sources": "GENCODE + reference (computed here); Open Targets; MyVariant.info"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "None found",
+      "finding": "Not in any pQTL credible set in Open Targets.",
+      "evidence": "",
+      "sources": "Open Targets"
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "GTEx sQTL in 1 tissue(s) for GENE1; smallest p 1.0e-12 (Liver) | SpliceAI not run",
+      "sources": "GTEx"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "GTEx eQTL in 2 tissue(s) for GENE1; smallest p 1.0e-20 (Lung) | Open Targets: 1 eQTL credible set(s), highest PIP 0.20 (GENE2, lung)",
+      "sources": "GTEx; Open Targets"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Strong",
+      "finding": "Reported as disease-causing, or fine-mapped as the likely causal variant of a GWAS signal.",
+      "evidence": "ClinVar: pathogenic, benign | GWAS credible sets: 2 (1 with PIP >= 0.5, 1 with PIP >= 0.1); top: D high; D other (PIP 0.97), D low (PIP 0.05) | Pharmacogenomics: drugA; drugB",
+      "sources": "ClinVar via MyVariant.info; Open Targets"
+    },
+    {
+      "question": "Pathway",
+      "level": "Context",
+      "finding": "GENE1: Transport",
+      "evidence": "Open Targets, GENE1: 1 Reactome pathway(s), 2 GO term(s), 12 associated disease(s)",
+      "sources": "Reactome and GO via Open Targets"
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "GTEx: QTL in 3 of 50 tissues; whole blood included | GENE1 expression: highest in Liver (99 TPM); whole blood 1.0 TPM, rank 3 of 3; tau 0.67",
+      "sources": "GTEx"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr); predictors call it damaging.",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr | AlphaMissense likely_pathogenic (0.900) | REVEL 0.81",
+      "sources": "GENCODE + reference (computed here); Open Targets; MyVariant.info"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Strong",
+      "finding": "In 2 pQTL credible set(s), 1 in cis; leading set: GENE1 in blood plasma (cis), posterior probability 0.95.",
+      "evidence": "GENE1 in blood plasma: PIP 0.95, beta +0.50, p 1.0e-30 | FAR in blood plasma: PIP 0.99, beta +0.50, p 1.0e-12 (trans)",
+      "sources": "Open Targets"
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "GTEx sQTL in 1 tissue(s) for GENE1; smallest p 1.0e-12 (Liver) | SpliceAI not run",
+      "sources": "GTEx"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "GTEx eQTL in 2 tissue(s) for GENE1; smallest p 1.0e-20 (Lung) | Open Targets: 1 eQTL credible set(s), highest PIP 0.20 (GENE2, lung)",
+      "sources": "GTEx; Open Targets"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Moderate",
+      "finding": "Linked to a disease, trait or drug response, without being singled out as causal.",
+      "evidence": "ClinVar: pathogenic, benign | GWAS credible sets: 2 (0 with PIP >= 0.5, 0 with PIP >= 0.1); top: D low (PIP 0.05) | Pharmacogenomics: drugA; drugB",
+      "sources": "ClinVar via MyVariant.info; Open Targets"
+    },
+    {
+      "question": "Pathway",
+      "level": "Context",
+      "finding": "GENE1: Transport",
+      "evidence": "Open Targets, GENE1: 1 Reactome pathway(s), 2 GO term(s), 12 associated disease(s)",
+      "sources": "Reactome and GO via Open Targets"
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "GTEx: QTL in 3 of 50 tissues; whole blood included | GENE1 expression: highest in Liver (99 TPM); whole blood 1.0 TPM, rank 3 of 3; tau 0.67",
+      "sources": "GTEx"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr); predictors call it damaging.",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr | AlphaMissense likely_pathogenic (0.900) | REVEL 0.81",
+      "sources": "GENCODE + reference (computed here); Open Targets; MyVariant.info"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Strong",
+      "finding": "In 2 pQTL credible set(s), 1 in cis; leading set: GENE1 in blood plasma (cis), posterior probability 0.95.",
+      "evidence": "GENE1 in blood plasma: PIP 0.95, beta +0.50, p 1.0e-30 | FAR in blood plasma: PIP 0.99, beta +0.50, p 1.0e-12 (trans)",
+      "sources": "Open Targets"
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "GTEx sQTL in 1 tissue(s) for GENE1; smallest p 1.0e-12 (Liver) | SpliceAI not run",
+      "sources": "GTEx"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "GTEx eQTL in 2 tissue(s) for GENE1; smallest p 1.0e-20 (Lung) | Open Targets: 1 eQTL credible set(s), highest PIP 0.20 (GENE2, lung)",
+      "sources": "GTEx; Open Targets"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Limited",
+      "finding": "Present in ClinVar or in GWAS records with weak support for this variant.",
+      "evidence": "ClinVar: uncertain significance | GWAS credible sets: 2 (0 with PIP >= 0.5, 0 with PIP >= 0.1); top: D low (PIP 0.05)",
+      "sources": "ClinVar via MyVariant.info; Open Targets"
+    },
+    {
+      "question": "Pathway",
+      "level": "Context",
+      "finding": "GENE1: Transport",
+      "evidence": "Open Targets, GENE1: 1 Reactome pathway(s), 2 GO term(s), 12 associated disease(s)",
+      "sources": "Reactome and GO via Open Targets"
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "GTEx: QTL in 3 of 50 tissues; whole blood included | GENE1 expression: highest in Liver (99 TPM); whole blood 1.0 TPM, rank 3 of 3; tau 0.67",
+      "sources": "GTEx"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr); predictors call it damaging.",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr | AlphaMissense likely_pathogenic (0.900) | REVEL 0.81",
+      "sources": "GENCODE + reference (computed here); Open Targets; MyVariant.info"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Strong",
+      "finding": "In 2 pQTL credible set(s), 1 in cis; leading set: GENE1 in blood plasma (cis), posterior probability 0.95.",
+      "evidence": "GENE1 in blood plasma: PIP 0.95, beta +0.50, p 1.0e-30 | FAR in blood plasma: PIP 0.99, beta +0.50, p 1.0e-12 (trans)",
+      "sources": "Open Targets"
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "GTEx sQTL in 1 tissue(s) for GENE1; smallest p 1.0e-12 (Liver) | SpliceAI not run",
+      "sources": "GTEx"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "GTEx eQTL in 2 tissue(s) for GENE1; smallest p 1.0e-20 (Lung) | Open Targets: 1 eQTL credible set(s), highest PIP 0.20 (GENE2, lung)",
+      "sources": "GTEx; Open Targets"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "None found",
+      "finding": "No clinical record and no published GWAS association for this variant in ClinVar via MyVariant.info, Open Targets.",
+      "evidence": "",
+      "sources": "ClinVar via MyVariant.info; Open Targets"
+    },
+    {
+      "question": "Pathway",
+      "level": "Context",
+      "finding": "GENE1: Transport",
+      "evidence": "Open Targets, GENE1: 1 Reactome pathway(s), 2 GO term(s), 12 associated disease(s)",
+      "sources": "Reactome and GO via Open Targets"
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "GTEx: QTL in 3 of 50 tissues; whole blood included | GENE1 expression: highest in Liver (99 TPM); whole blood 1.0 TPM, rank 3 of 3; tau 0.67",
+      "sources": "GTEx"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Limited",
+      "finding": "Near a splice site or weakly predicted; no RNA association found.",
+      "evidence": "SpliceAI (GENE1): donor gain 0.25 at exon base 124, donor loss 0.10 at exon base 99",
+      "sources": "SpliceAI"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Predicted to alter splicing; no RNA association was found in the sources consulted.",
+      "evidence": "SpliceAI (GENE1): donor gain 0.80 at exon base 124, donor loss 0.37 at exon base 99",
+      "sources": "SpliceAI"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "this cohort: bin ratio at donor:+:chr1:100: -0.300 per ALT allele (permutation p 1.0e-04, n = 900) | this cohort: 1 site(s) set aside: no depth drop at the site itself | this cohort: junction chr1:100-300: -1.200 reads per 100 per ALT allele (permutation p 2.0e-04, n = 900) | SpliceAI not run",
+      "sources": "Model 1 of this result"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Strong",
+      "finding": "Splicing differs by genotype, and prediction or fine-mapping points to this variant itself.",
+      "evidence": "SpliceAI (GENE1): donor gain 0.80 at exon base 124, donor loss 0.37 at exon base 99 | this cohort: bin ratio at donor:+:chr1:100: -0.300 per ALT allele (permutation p 1.0e-04, n = 900) | this cohort: 1 site(s) set aside: no depth drop at the site itself | this cohort: junction chr1:100-300: -1.200 reads per 100 per ALT allele (permutation p 2.0e-04, n = 900)",
+      "sources": "SpliceAI; Model 1 of this result"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "SpliceAI (GENE1): donor gain 0.25 at exon base 124, donor loss 0.10 at exon base 99 | this cohort: bin ratio at donor:+:chr1:100: -0.300 per ALT allele (permutation p 1.0e-04, n = 900) | this cohort: 1 site(s) set aside: no depth drop at the site itself | this cohort: junction chr1:100-300: -1.200 reads per 100 per ALT allele (permutation p 2.0e-04, n = 900)",
+      "sources": "SpliceAI; Model 1 of this result"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Strong",
+      "finding": "Predicted loss of the normal product: splice_donor_variant in PLUS on the reference transcript.",
+      "evidence": "splice_donor_variant in PLUS, 2 of 2 transcripts | reference transcript TP: splice_donor_variant c.40+1A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Predicted to alter splicing; no RNA association was found in the sources consulted.",
+      "evidence": "annotation: splice_donor_variant in 2 transcript(s) of PLUS | SpliceAI not run",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Strong",
+      "finding": "Predicted loss of the normal product: splice_donor_variant in PLUS on the reference transcript.",
+      "evidence": "splice_donor_variant in PLUS, 2 of 2 transcripts | reference transcript TP: splice_donor_variant c.40+1A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Strong",
+      "finding": "Splicing differs by genotype, and prediction or fine-mapping points to this variant itself.",
+      "evidence": "annotation: splice_donor_variant in 2 transcript(s) of PLUS | this cohort: bin ratio at donor:+:chr1:100: -0.300 per ALT allele (permutation p 1.0e-04, n = 900) | this cohort: 1 site(s) set aside: no depth drop at the site itself | this cohort: junction chr1:100-300: -1.200 reads per 100 per ALT allele (permutation p 2.0e-04, n = 900) | SpliceAI not run",
+      "sources": "GENCODE + reference (computed here); Model 1 of this result"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (splice_region_variant in PLUS).",
+      "evidence": "splice_region_variant in PLUS, 2 of 2 transcripts | reference transcript TP: splice_region_variant&intron_variant c.40+7A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Limited",
+      "finding": "Near a splice site or weakly predicted; no RNA association found.",
+      "evidence": "annotation: splice_region_variant in 2 transcript(s) of PLUS | SpliceAI not run",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G | CADD PHRED 31.0",
+      "sources": "GENCODE + reference (computed here); CADD v1.7"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "TOPMed sQTL significant in 2 of 2 contexts (Lung, PBMC); strongest Lung, slope +2.00, p 1.0e-50 | FHS whole-blood isoform ratio: 1 transcript(s) of G replicate; strongest T1, log10 p -30.0 (discovery) and -12.0 (replication) | SpliceAI not run",
+      "sources": "TOPMed cis-sQTL; FHS sQTL"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "TOPMed eQTL for ENSG2.1, ENSG3.1, ENSG4.1, ENSG5.1 in Lung, PBMC; strongest ENSG3.1 in Lung, slope +0.60, p 1.0e-25",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only ClinVar 2023-10 (VEP cache) could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar 2023-10 (VEP cache)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed sQTL ENSG1.1 intron 10-90: shared: significant in every tested context | TOPMed eQTL ENSG3.1: context-specific: significant only in Lung, effect differs elsewhere | TOPMed eQTL ENSG4.1: opposite directions between contexts | TOPMed eQTL ENSG5.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G | CADD PHRED 31.0",
+      "sources": "GENCODE + reference (computed here); CADD v1.7"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Strong",
+      "finding": "Splicing differs by genotype, and prediction or fine-mapping points to this variant itself.",
+      "evidence": "TOPMed sQTL significant in 2 of 2 contexts (Lung, PBMC); strongest Lung, slope +2.00, p 1.0e-50; highest SuSiE PIP 0.90 | FHS whole-blood isoform ratio: 1 transcript(s) of G replicate; strongest T1, log10 p -30.0 (discovery) and -12.0 (replication) | SpliceAI not run",
+      "sources": "TOPMed cis-sQTL; FHS sQTL"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Strong",
+      "finding": "Associated with expression, and fine-mapping gives this variant a posterior probability of at least 0.5.",
+      "evidence": "TOPMed eQTL for ENSG2.1, ENSG3.1, ENSG4.1, ENSG5.1 in Lung, PBMC; strongest ENSG3.1 in Lung, slope +0.60, p 1.0e-25 | TOPMed SuSiE: PIP 0.70 for ENSG2",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only ClinVar 2023-10 (VEP cache) could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar 2023-10 (VEP cache)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed sQTL ENSG1.1 intron 10-90: shared: significant in every tested context | TOPMed eQTL ENSG3.1: context-specific: significant only in Lung, effect differs elsewhere | TOPMed eQTL ENSG4.1: opposite directions between contexts | TOPMed eQTL ENSG5.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G | CADD PHRED 31.0",
+      "sources": "GENCODE + reference (computed here); CADD v1.7"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "TOPMed sQTL significant in 2 of 2 contexts (Lung, PBMC); strongest Lung, slope +2.00, p 1.0e-50 | SpliceAI not run",
+      "sources": "TOPMed cis-sQTL"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Limited",
+      "finding": "Associated with the expression of ENSG2, ENSG3, ENSG4, ENSG5, but SuSiE, which allows several signals, leaves this variant out of every credible set (or gives it a PIP under 0.1): the association is most likely through linkage disequilibrium.",
+      "evidence": "TOPMed eQTL for ENSG2.1, ENSG3.1, ENSG4.1, ENSG5.1 in Lung, PBMC; strongest ENSG3.1 in Lung, slope +0.60, p 1.0e-25 | TOPMed SuSiE: this variant is in no credible set, or has a PIP under 0.1, for the eQTL of ENSG2, ENSG3, ENSG4, ENSG5",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only ClinVar 2023-10 (VEP cache) could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar 2023-10 (VEP cache)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed sQTL ENSG1.1 intron 10-90: shared: significant in every tested context | TOPMed eQTL ENSG3.1: context-specific: significant only in Lung, effect differs elsewhere | TOPMed eQTL ENSG4.1: opposite directions between contexts | TOPMed eQTL ENSG5.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G | CADD PHRED 31.0",
+      "sources": "GENCODE + reference (computed here); CADD v1.7"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "TOPMed sQTL significant in 2 of 2 contexts (Lung, PBMC); strongest Lung, slope +2.00, p 1.0e-50 | SpliceAI not run",
+      "sources": "TOPMed cis-sQTL"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant. For ENSG2, ENSG4, ENSG5 SuSiE leaves it out of every credible set (or gives it a PIP under 0.1), so that association is most likely through linkage disequilibrium.",
+      "evidence": "TOPMed eQTL for ENSG2.1, ENSG3.1, ENSG4.1, ENSG5.1 in Lung, PBMC; strongest ENSG3.1 in Lung, slope +0.60, p 1.0e-25 | TOPMed SuSiE: this variant is in no credible set, or has a PIP under 0.1, for the eQTL of ENSG2, ENSG4, ENSG5",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only ClinVar 2023-10 (VEP cache) could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar 2023-10 (VEP cache)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed sQTL ENSG1.1 intron 10-90: shared: significant in every tested context | TOPMed eQTL ENSG3.1: context-specific: significant only in Lung, effect differs elsewhere | TOPMed eQTL ENSG4.1: opposite directions between contexts | TOPMed eQTL ENSG5.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G | CADD PHRED 31.0",
+      "sources": "GENCODE + reference (computed here); CADD v1.7"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "TOPMed sQTL significant in 2 of 2 contexts (Lung, PBMC); strongest Lung, slope +2.00, p 1.0e-50 | SpliceAI not run",
+      "sources": "TOPMed cis-sQTL"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Limited",
+      "finding": "Associated with the expression of ENSG2, ENSG3, ENSG4, ENSG5, but SuSiE, which allows several signals, leaves this variant out of every credible set (or gives it a PIP under 0.1): the association is most likely through linkage disequilibrium.",
+      "evidence": "TOPMed eQTL for ENSG2.1, ENSG3.1, ENSG4.1, ENSG5.1 in Lung, PBMC; strongest ENSG3.1 in Lung, slope +0.60, p 1.0e-25 | TOPMed SuSiE: this variant is in no credible set, or has a PIP under 0.1, for the eQTL of ENSG2, ENSG3, ENSG4, ENSG5",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only ClinVar 2023-10 (VEP cache) could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar 2023-10 (VEP cache)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed sQTL ENSG1.1 intron 10-90: shared: significant in every tested context | TOPMed eQTL ENSG3.1: context-specific: significant only in Lung, effect differs elsewhere | TOPMed eQTL ENSG4.1: opposite directions between contexts | TOPMed eQTL ENSG5.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G | CADD PHRED 31.0",
+      "sources": "GENCODE + reference (computed here); CADD v1.7"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "TOPMed sQTL significant in 2 of 2 contexts (Lung, PBMC); strongest Lung, slope +2.00, p 1.0e-50 | SpliceAI not run",
+      "sources": "TOPMed cis-sQTL"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant. For ENSG3, ENSG4, ENSG5 SuSiE leaves it out of every credible set (or gives it a PIP under 0.1), so that association is most likely through linkage disequilibrium.",
+      "evidence": "TOPMed eQTL for ENSG2.1, ENSG3.1, ENSG4.1, ENSG5.1 in Lung, PBMC; strongest ENSG3.1 in Lung, slope +0.60, p 1.0e-25 | TOPMed SuSiE: this variant is in no credible set, or has a PIP under 0.1, for the eQTL of ENSG3, ENSG4, ENSG5; PIP 0.30 for ENSG2",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only ClinVar 2023-10 (VEP cache) could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar 2023-10 (VEP cache)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed sQTL ENSG1.1 intron 10-90: shared: significant in every tested context | TOPMed eQTL ENSG3.1: context-specific: significant only in Lung, effect differs elsewhere | TOPMed eQTL ENSG4.1: opposite directions between contexts | TOPMed eQTL ENSG5.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G | CADD PHRED 31.0",
+      "sources": "GENCODE + reference (computed here); CADD v1.7"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "TOPMed sQTL significant in 2 of 2 contexts (Lung, PBMC); strongest Lung, slope +2.00, p 1.0e-50 | SpliceAI not run",
+      "sources": "TOPMed cis-sQTL"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant. For ENSG3, ENSG4, ENSG5 SuSiE leaves it out of every credible set (or gives it a PIP under 0.1), so that association is most likely through linkage disequilibrium.",
+      "evidence": "TOPMed eQTL for ENSG2.1, ENSG3.1, ENSG4.1, ENSG5.1 in Lung, PBMC; strongest ENSG3.1 in Lung, slope +0.60, p 1.0e-25 | TOPMed SuSiE: this variant is in no credible set, or has a PIP under 0.1, for the eQTL of ENSG3, ENSG4, ENSG5; PIP 0.30 for ENSG2",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only ClinVar 2023-10 (VEP cache) could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar 2023-10 (VEP cache)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed sQTL ENSG1.1 intron 10-90: shared: significant in every tested context | TOPMed eQTL ENSG3.1: context-specific: significant only in Lung, effect differs elsewhere | TOPMed eQTL ENSG4.1: opposite directions between contexts | TOPMed eQTL ENSG5.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G | CADD PHRED 31.0",
+      "sources": "GENCODE + reference (computed here); CADD v1.7"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "TOPMed sQTL significant in 2 of 2 contexts (Lung, PBMC); strongest Lung, slope +2.00, p 1.0e-50 | SpliceAI not run",
+      "sources": "TOPMed cis-sQTL"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "TOPMed eQTL for ENSG2.1, ENSG3.1, ENSG4.1, ENSG5.1 in Lung, PBMC; strongest ENSG3.1 in Lung, slope +0.60, p 1.0e-25",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only ClinVar 2023-10 (VEP cache) could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar 2023-10 (VEP cache)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed sQTL ENSG1.1 intron 10-90: shared: significant in every tested context | TOPMed eQTL ENSG3.1: context-specific: significant only in Lung, effect differs elsewhere | TOPMed eQTL ENSG4.1: opposite directions between contexts | TOPMed eQTL ENSG5.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G | CADD PHRED 31.0",
+      "sources": "GENCODE + reference (computed here); CADD v1.7"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "TOPMed sQTL significant in 2 of 2 contexts (Lung, PBMC); strongest Lung, slope +2.00, p 1.0e-50 | FHS whole-blood isoform ratio: 1 transcript(s) of G replicate; strongest T1, log10 p -30.0 (discovery) and -12.0 (replication) | SpliceAI not run",
+      "sources": "TOPMed cis-sQTL; FHS sQTL"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "TOPMed eQTL for ENSG2.1, ENSG3.1, ENSG4.1, ENSG5.1 in Lung, PBMC; strongest ENSG3.1 in Lung, slope +0.60, p 1.0e-25",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Strong",
+      "finding": "Reported as disease-causing, or fine-mapped as the likely causal variant of a GWAS signal.",
+      "evidence": "ClinVar: pathogenic, likely pathogenic | GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar 2023-10 (VEP cache)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed sQTL ENSG1.1 intron 10-90: shared: significant in every tested context | TOPMed eQTL ENSG3.1: context-specific: significant only in Lung, effect differs elsewhere | TOPMed eQTL ENSG4.1: opposite directions between contexts | TOPMed eQTL ENSG5.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Splicing differs by genotype; this variant is not singled out from its neighbours in LD.",
+      "evidence": "TOPMed sQTL significant in 1 of 0 contexts (A); strongest A, slope +2.00, p 1.0e-50 | SpliceAI not run",
+      "sources": "TOPMed cis-sQTL"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "TOPMed eQTL for ENSG1.1, ENSG2.1 in A, C, B; strongest ENSG2.1 in B, slope +0.60, p 1.0e-09",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed sQTL ENSG1.1 intron 10-90: tested in one context only | TOPMed eQTL ENSG2.1: context-specific: significant only in B, effect differs elsewhere; model: effect in 1 of 3 tested contexts (B) | TOPMed eQTL ENSG1.1: shared: significant in every tested context; model: effect in all 2 tested contexts, similar size; predicted in B",
+      "sources": "TOPMed cis-QTL (6 contexts); cross-context model"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "The variant lies outside every annotated transcript.",
+      "evidence": "",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Not assessed",
+      "finding": "No splicing source was available.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run | gene-level context, not evidence about this variant: ClinVar has pathogenic variants in GENEA (overlaps; 3 variants; Disease one); GENEAB (sQTL target (TOPMed); 1 variants; Disease one)",
+      "sources": "ClinVar pathogenic variants per gene (2099-02-03) (local)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No gene overlaps the variant or is a QTL target of it.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "The variant lies outside every annotated transcript.",
+      "evidence": "",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Not assessed",
+      "finding": "No splicing source was available.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Context",
+      "finding": "GENEA (overlaps): Metabolism · GENEAB (sQTL target (TOPMed)): Signal Transduction",
+      "evidence": "GENEA: 2 Reactome pathway(s), 3 gene set(s) | GENEAB: 1 Reactome pathway(s), 0 gene set(s) | no pathway annotation: ENSG00000000003",
+      "sources": "Reactome (reactome.tsv); MSigDB 2099.1"
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No protein-level association is reported at this position in the GWAS Catalog (variants in LD not checked: run the LD scan); pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Strong",
+      "finding": "Reported as disease-causing, or fine-mapped as the likely causal variant of a GWAS signal.",
+      "evidence": "ClinVar: pathogenic, likely pathogenic for Disease one (criteria provided, single submitter) | GWAS Catalog: 4 association(s) reported at this position, 3 at p <= 5e-8, 4 distinct trait(s); strongest: strong trait; middle trait; pair trait; weak trait | GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar VCF 2099-02-03 (local); GWAS Catalog e999_r2099-01-01"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No protein-level association is reported at this position in the GWAS Catalog (variants in LD not checked: run the LD scan); pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Moderate",
+      "finding": "Linked to a disease, trait or drug response, without being singled out as causal.",
+      "evidence": "GWAS Catalog: 4 association(s) reported at this position, 3 at p <= 5e-8, 4 distinct trait(s); strongest: strong trait; middle trait; pair trait; weak trait | GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "GWAS Catalog e999_r2099-01-01"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No protein-level association is reported at this position in the GWAS Catalog (variants in LD not checked: run the LD scan); pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Limited",
+      "finding": "Present in ClinVar or in GWAS records with weak support for this variant.",
+      "evidence": "GWAS Catalog: 1 association(s) reported at this position, 0 at p <= 5e-8, 1 distinct trait(s); strongest: weak trait | GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "GWAS Catalog e999_r2099-01-01"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No protein-level association is reported at this position in the GWAS Catalog (variants in LD not checked: run the LD scan); pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "None found",
+      "finding": "No clinical record and no published GWAS association for this variant in ClinVar VCF 2099-02-03 (local), GWAS Catalog e999_r2099-01-01.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar VCF 2099-02-03 (local); GWAS Catalog e999_r2099-01-01"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only ClinVar VCF 2099-02-03 (local) could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar VCF 2099-02-03 (local)"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No protein-level association is reported at this position in the GWAS Catalog (variants in LD not checked: run the LD scan); pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only GWAS Catalog e999_r2099-01-01 could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "GWAS Catalog e999_r2099-01-01"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No protein-level association is reported at this position in the GWAS Catalog (variants in LD not checked: run the LD scan); pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Only GWAS Catalog e999_r2099-01-01 could be consulted and reports nothing; run the public query for GWAS and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "GWAS Catalog e999_r2099-01-01"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Strong",
+      "finding": "Associated in cis with the plasma level of PLUS, and this variant is itself predicted to change that gene's product.",
+      "evidence": "cis-pQTL at this variant: PROTD in FHS: -0.300 per ALT allele, p < 1e-300; PLUS in UKB-PPP: +0.500 per ALT allele, p 1.0e-40, n 30,000; PLUS in FHS: +0.400 per ALT allele, p 1.0e-09 | single-signal fine-mapping of the cis window (one causal variant assumed): PLUS in UKB-PPP posterior 0.00, 95% credible set of 1 of 2 variant(s), lead rs1b (posterior 1.00, 0 bp away) | seen in both scans in the same direction: PLUS | tested against 3 nearby protein(s) in UKB-PPP and 2 nearby protein(s) in FHS | pQTL credible sets not consulted: public query not run",
+      "sources": "UKB-PPP cis-pQTL; FHS cis-pQTL"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Moderate",
+      "finding": "Associated in cis with the plasma level of PROTD, PLUS; not fine-mapped to this variant.",
+      "evidence": "cis-pQTL at this variant: PROTD in FHS: -0.300 per ALT allele, p < 1e-300; PLUS in UKB-PPP: +0.500 per ALT allele, p 1.0e-40, n 30,000; PLUS in FHS: +0.400 per ALT allele, p 1.0e-09 | single-signal fine-mapping of the cis window (one causal variant assumed): PLUS in UKB-PPP posterior 0.00, 95% credible set of 1 of 2 variant(s), lead rs1b (posterior 1.00, 0 bp away) | seen in both scans in the same direction: PLUS | tested against 3 nearby protein(s) in UKB-PPP and 2 nearby protein(s) in FHS | pQTL credible sets not consulted: public query not run",
+      "sources": "UKB-PPP cis-pQTL; FHS cis-pQTL"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Strong",
+      "finding": "Associated in cis with the plasma level of PLUS, and single-signal fine-mapping gives this variant a posterior probability of 0.93.",
+      "evidence": "cis-pQTL at this variant: PROTD in FHS: -0.300 per ALT allele, p < 1e-300; PLUS in UKB-PPP: +0.500 per ALT allele, p 1.0e-40, n 30,000; PLUS in FHS: +0.400 per ALT allele, p 1.0e-09 | single-signal fine-mapping of the cis window (one causal variant assumed): PLUS in UKB-PPP posterior 0.93, 95% credible set of 1 of 2 variant(s), this variant leads | seen in both scans in the same direction: PLUS | tested against 3 nearby protein(s) in UKB-PPP and 2 nearby protein(s) in FHS | pQTL credible sets not consulted: public query not run",
+      "sources": "UKB-PPP cis-pQTL; FHS cis-pQTL"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Moderate",
+      "finding": "Associated in cis with the plasma level of PROTD, PLUS; single-signal fine-mapping makes this variant the leading candidate for PLUS (posterior 0.68) without settling it.",
+      "evidence": "cis-pQTL at this variant: PROTD in FHS: -0.300 per ALT allele, p < 1e-300; PLUS in UKB-PPP: +0.500 per ALT allele, p 1.0e-40, n 30,000; PLUS in FHS: +0.400 per ALT allele, p 1.0e-09 | single-signal fine-mapping of the cis window (one causal variant assumed): PLUS in UKB-PPP posterior 0.68, 95% credible set of 1 of 2 variant(s), this variant leads | seen in both scans in the same direction: PLUS | tested against 3 nearby protein(s) in UKB-PPP and 2 nearby protein(s) in FHS | pQTL credible sets not consulted: public query not run",
+      "sources": "UKB-PPP cis-pQTL; FHS cis-pQTL"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Limited",
+      "finding": "Only a suggestive cis association with the plasma level of PROTB (p between 5e-8 and 1e-5).",
+      "evidence": "suggestive cis-pQTL: PROTB in UKB-PPP: +0.100 per ALT allele, p 6.3e-07, n 30,000 | tested against 3 nearby protein(s) in UKB-PPP and 2 nearby protein(s) in FHS | pQTL credible sets not consulted: public query not run",
+      "sources": "UKB-PPP cis-pQTL; FHS cis-pQTL"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "None found",
+      "finding": "No cis-pQTL at this variant: tested against 3 nearby protein(s) in UKB-PPP and 2 nearby protein(s) in FHS, smallest p < 1e-300.",
+      "evidence": "pQTL credible sets not consulted: public query not run",
+      "sources": "UKB-PPP cis-pQTL; FHS cis-pQTL"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "None found",
+      "finding": "No cis-pQTL at this variant: tested against 3 nearby protein(s) in UKB-PPP and 2 nearby protein(s) in FHS, smallest p < 1e-300.",
+      "evidence": "pQTL credible sets not consulted: public query not run",
+      "sources": "UKB-PPP cis-pQTL; FHS cis-pQTL"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "This variant is not in the local cis-pQTL scans (no measured protein is encoded within their window, or the variant was not tested). No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "This variant is not in the local cis-pQTL scans (no measured protein is encoded within their window, or the variant was not tested). No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "None found",
+      "finding": "No cis-pQTL at this variant: tested against 3 nearby protein(s) in UKB-PPP and 2 nearby protein(s) in FHS, smallest p < 1e-300.",
+      "evidence": "pQTL credible sets not consulted: public query not run",
+      "sources": "UKB-PPP cis-pQTL; FHS cis-pQTL"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "None found",
+      "finding": "No clinical record and no published GWAS association for this variant in ClinVar VCF 2099-02-03 (local), GWAS Catalog e999_r2099-01-01.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "ClinVar VCF 2099-02-03 (local); GWAS Catalog e999_r2099-01-01"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Moderate",
+      "finding": "Associated with the blood level of 2 protein(s) in published GWAS; not fine-mapped to this variant (1 encoded near the variant, cis; 1 encoded elsewhere, trans).",
+      "evidence": "GWAS Catalog, at this variant: protein X (trans, PROTX is on chr2), acting protein (cis) | pQTL credible sets not consulted: public query not run",
+      "sources": "GWAS Catalog"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Moderate",
+      "finding": "Linked to a disease, trait or drug response, without being singled out as causal.",
+      "evidence": "GWAS Catalog: 2 association(s) reported at this position, 2 at p <= 5e-8, 2 distinct trait(s); strongest: level of protein X in blood; level of acting protein in blood | GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "GWAS Catalog e999_r2099-01-01"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "GTEx v12 eQTL (local): GENEA in 1 of 4 tested tissue(s); strongest GENEA in Lung, slope +0.25, p 1.0e-06",
+      "sources": "GTEx v12 (local)"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "GTEx v12 GENEA: eQTL in 1 tissue(s) of the 4 that tested the gene (Lung); ALT raises expression in every significant tissue; whole blood: pair not significant (gene tested)",
+      "sources": "GTEx v12 (local)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "GTEx v11 eQTL (local): GENEA in 3 of 4 tested tissue(s), GENEB in 2 of 2 tested tissue(s); strongest GENEA in Whole Blood, slope +0.30, p 1.0e-20",
+      "sources": "GTEx v11 (local)"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "GTEx v11 GENEA: eQTL in 3 tissue(s) of the 4 that tested the gene (Whole Blood, Lung, Brain Cortex); ALT raises expression in every significant tissue; whole blood: significant; the gene's lead variant in 2 tissue(s) | GTEx v11 GENEB: eQTL in 2 tissue(s) of the 2 that tested the gene (Liver, Lung); mixed: raises in 1, lowers in 1; whole blood: gene not tested",
+      "sources": "GTEx v11 (local)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "None found",
+      "finding": "No eQTL reported for this variant.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "GTEx v11 (local): not a significant cis-eQTL in any tissue",
+      "sources": "GTEx v11 (local)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "This variant is not in the local cis-pQTL scans (no measured protein is encoded within their window, or the variant was not tested). No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant (posterior 1.00; this variant's share of the shared signal 1.00) | colocalisation, eQTL ENSGB (Lung) and pQTL PA (UKB-PPP): two different causal variants (posterior 1.00)",
+      "sources": "colocalisation (computed here)"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant. For ENSGB SuSiE leaves it out of every credible set (or gives it a PIP under 0.1), so that association is most likely through linkage disequilibrium. Colocalisation agrees: the expression of ENSGB has a different leading causal variant from the plasma level of PA, which this variant leads.",
+      "evidence": "TOPMed eQTL for GA, ENSGB.1 in Lung, PBMC; strongest GA in Lung, slope +0.80, p 1.0e-50 | TOPMed SuSiE: this variant is in no credible set, or has a PIP under 0.1, for the eQTL of ENSGB | colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant (posterior 1.00; this variant's share of the shared signal 1.00) | colocalisation, eQTL GA (Lung) and eQTL ENSGB (Lung): two different causal variants (posterior 1.00) | colocalisation, eQTL ENSGB (Lung) and pQTL PA (UKB-PPP): two different causal variants (posterior 1.00)",
+      "sources": "TOPMed cis-eQTL; colocalisation (computed here)"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed eQTL GA: shared: significant in every tested context | TOPMed eQTL ENSGB.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "This variant is not in the local cis-pQTL scans (no measured protein is encoded within their window, or the variant was not tested). No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant (posterior 1.00; this variant's share of the shared signal 1.00) | colocalisation, eQTL ENSGB (Lung) and pQTL PA (UKB-PPP): two different causal variants (posterior 1.00)",
+      "sources": "colocalisation (computed here)"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant. Colocalisation gives the expression of ENSGB a different leading causal variant from the plasma level of PA, which this variant leads: this variant reaches it through linkage disequilibrium or through a separate, weaker signal of its own.",
+      "evidence": "TOPMed eQTL for GA, ENSGB.1 in Lung, PBMC; strongest GA in Lung, slope +0.80, p 1.0e-50 | colocalisation, eQTL GA (Lung) and pQTL PA (UKB-PPP): one shared causal variant (posterior 1.00; this variant's share of the shared signal 1.00) | colocalisation, eQTL GA (Lung) and eQTL ENSGB (Lung): two different causal variants (posterior 1.00) | colocalisation, eQTL ENSGB (Lung) and pQTL PA (UKB-PPP): two different causal variants (posterior 1.00)",
+      "sources": "TOPMed cis-eQTL; colocalisation (computed here)"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed eQTL GA: shared: significant in every tested context | TOPMed eQTL ENSGB.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in PLUS).",
+      "evidence": "intron_variant in PLUS, 2 of 2 transcripts | reference transcript TP: intron_variant c.40+15A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "This variant is not in the local cis-pQTL scans (no measured protein is encoded within their window, or the variant was not tested). No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Moderate",
+      "finding": "Associated with expression; not fine-mapped to this variant.",
+      "evidence": "TOPMed eQTL for GA, ENSGB.1 in Lung, PBMC; strongest GA in Lung, slope +0.80, p 1.0e-50",
+      "sources": "TOPMed cis-eQTL"
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Context",
+      "finding": "Where the effect and the gene are seen; this cohort's RNA is whole blood.",
+      "evidence": "TOPMed eQTL GA: shared: significant in every tested context | TOPMed eQTL ENSGB.1: tested in one context only",
+      "sources": "TOPMed cis-QTL (6 contexts)"
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Strong",
+      "finding": "Predicted loss of the normal product: splice_donor_variant in SPL on the reference transcript.",
+      "evidence": "splice_donor_variant in SPL, 1 of 1 transcripts | reference transcript SP: splice_donor_variant c.40+1G>A | through splicing (assumed outcome), SP: if the intron is retained (40 nt); 40 intronic nt kept; frameshift; nonsense-mediated decay predicted: the new stop codon ends 92 nt before the last exon junction, so the mRNA is expected to be degraded",
+      "sources": "GENCODE + reference (computed here); splice outcome prediction (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Predicted to alter splicing; no RNA association was found in the sources consulted.",
+      "evidence": "annotation: splice_donor_variant in 1 transcript(s) of SPL | SpliceAI not run",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "No change to the protein sequence is predicted (intron_variant in SPL).",
+      "evidence": "intron_variant in SPL, 1 of 1 transcripts | reference transcript SP: intron_variant c.40+20A>G",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "None found",
+      "finding": "The variant lies outside every annotated transcript.",
+      "evidence": "",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Not assessed",
+      "finding": "No splicing source was available.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No gene overlaps the variant or is a QTL target of it.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Strong",
+      "finding": "Predicted loss of the normal product: splice_donor_variant in SPL on the reference transcript.",
+      "evidence": "splice_donor_variant in SPL, 1 of 1 transcripts | reference transcript SP: splice_donor_variant c.40+1G>A | through splicing (assumed outcome), SP: if the intron is retained (40 nt); 40 intronic nt kept; frameshift; nonsense-mediated decay predicted: the new stop codon ends 92 nt before the last exon junction, so the mRNA is expected to be degraded",
+      "sources": "GENCODE + reference (computed here); splice outcome prediction (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No local pQTL source was readable; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "Moderate",
+      "finding": "Predicted to alter splicing; no RNA association was found in the sources consulted.",
+      "evidence": "annotation: splice_donor_variant in 1 transcript(s) of SPL | SpliceAI not run",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Not assessed",
+      "finding": "Run the public query to consult ClinVar, GWAS credible sets and curated evidence.",
+      "evidence": "GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": ""
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for SPL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ]
+]
