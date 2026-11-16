@@ -32,6 +32,8 @@ The obsolete 2,600-visible-character limit is removed. The browser contract fixe
 
 The inline SVG uses the same source registry and metadata. Solid edges represent contributed evidence/context; dashed gray edges represent scoped steps not completed. Private/cohort sources and app computations have no external links. Public-database local copies link to the same public entity when a verified template and identifier are available, and are marked local copy. Each graph node has a title and text is bounded within its viewBox. SVG height follows its width without a max-height squeeze. Generated numeric node IDs and pure CSS :has() selectors highlight a hovered/focused node's edges and fade the others; no JavaScript was added.
 
+Source badges and Map nodes use one shared display/identity function. Gene-dependent destinations show the gene in the label (for example Reactome (COMT)). Linked identities combine the complete displayed label/provenance marker and destination URL; unlinked identities use only the source key. Map edges are unioned onto the retained node: distinct question connections remain, and repeated contributions to the same question/source connection are counted in `data-contributions` and the edge title. Evidence-item links and legacy evidence/source strings are unchanged.
+
 ## Validated link templates
 
 Only whitelisted scalar public identifiers can enter URLs. Arbitrary caller fields (including sample, genotype and cohort fields) are ignored. Rendering makes no requests; external pages open only on a click, using `target="_blank" rel="noopener noreferrer"`.

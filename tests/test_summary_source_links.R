@@ -48,3 +48,25 @@ x <- pub_summary$items[[5L]]; row <- x[x$source == "clinvar_api", ]
 stopifnot(nrow(row) == 1L, row$clinvar_id == "17591", grepl("VCV000017591", as.character(interpretation_evidence_link(row$text, row, list())), fixed = TRUE))
 unlink(c(f, paste0(f, ".tbi")))
 cat("SUMMARY_SOURCE_LINKS_OK: every template; notice exclusion; local VCF and API ClinVar identity\n")
+
+source("tests/fixtures/summary_fixture.R")
+dedup <- summary_source_dedup_fixture(); original_summary <- dedup$summary
+x <- dedup$items[[6L]]
+displays <- lapply(seq_len(nrow(x)), function(i) interpretation_source_display(x[i, ], dedup$identifiers))
+stopifnot(identical(vapply(displays, `[[`, character(1), "label"), c("Reactome (COMT)", "Reactome (TXNRD2)", "MSigDB", "MSigDB")),
+  displays[[1L]]$identity != displays[[2L]]$identity, displays[[3L]]$identity == displays[[4L]]$identity)
+# Duplicate linked entries also collapse when their displayed text and URL match.
+badges <- as.character(interpretation_source_badges(rbind(x, x[1L, ]), dedup$identifiers))
+count <- function(text, pattern) sum(gregexpr(pattern, text, fixed = TRUE)[[1L]] > 0L)
+stopifnot(count(badges, 'class="regshiny-source-badge"') == 3L, count(badges, 'Reactome (') == 2L, count(badges, '>MSigDB<') == 1L,
+  grepl('href="https://reactome.org/content/query?q=COMT"', badges, fixed = TRUE),
+  grepl('href="https://reactome.org/content/query?q=TXNRD2"', badges, fixed = TRUE))
+# Evidence entries retain their original text and individual destinations.
+for (i in 1:2) stopifnot(grepl(paste0('href="https://reactome.org/content/query?q=', x$gene[[i]], '"'),
+  as.character(interpretation_evidence_link(x$text[[i]], x[i, ], list())), fixed = TRUE))
+graph <- as.character(interpretation_summary_map(dedup$summary, dedup$items, interp_request_states(list(), list(), list())))
+stopifnot(count(graph, 'class="regshiny-map-source"') == 3L, count(graph, 'class="regshiny-map-edge contributed"') == 4L,
+  count(graph, 'data-contributions="2"') == 2L, count(graph, 'data-contributions="1"') == 2L,
+  count(graph, 'data-question="Pathway"') == 3L, count(graph, 'data-question="Tissue"') == 1L,
+  identical(dedup$summary, original_summary))
+cat("SUMMARY_SOURCE_DEDUP_OK: Table Reactome=2 distinct labels, MSigDB=1; Map sources=3, question-source edges=4, contributions=6 (none lost)\n")
