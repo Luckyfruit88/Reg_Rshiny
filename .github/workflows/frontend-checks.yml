@@ -41,6 +41,14 @@ jobs:
           app_pid=$!
           trap 'kill "$app_pid" 2>/dev/null || true' EXIT
           python tests/test_audit_layout_browser.py || { tail -n 100 test-artifacts/audit-layout/shiny.log; exit 1; }
+      - name: Check evidence-summary presentation in Chromium
+        timeout-minutes: 5
+        run: |
+          mkdir -p test-artifacts/evidence-summary
+          Rscript tests/evidence_summary_app.R > test-artifacts/evidence-summary/shiny.log 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          python tests/test_evidence_summary_browser.py || { tail -n 100 test-artifacts/evidence-summary/shiny.log; exit 1; }
       - name: Preserve synthetic test logs and browser evidence
         if: always()
         uses: actions/upload-artifact@v4
