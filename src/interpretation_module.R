@@ -73,7 +73,8 @@ interpretation_ui <- function(id) {
         interpretation_table_output(ns("gtex_local_genes")),
         interpretation_table_output(ns("gtex_local_pairs")),
         shiny::p("Read from the local copy of the GTEx significant variant-gene pairs; nothing is sent. One row per gene in the first table and per gene and tissue in the second. Slopes are per ALT allele on GTEx's normalised expression. tissues_tested counts the tissues in which GTEx tested the gene at all, so a tissue missing from the list is either not significant there or did not test the gene (or this variant, which the files do not record); a tissue with few donors can miss an effect. lead_variant marks tissues where this variant is the gene's most significant variant, which is a hint, not fine-mapping. GTEx tissues differ in donors and sample size, so a count of tissues is descriptive."),
-        shiny::h5("GTEx v10 (public query)"),
+        shiny::h5("GTEx v11 (public query)"),
+        shiny::p("QTL and expression use GTEx v11 with GENCODE v47. Variant existence is checked in the GTEx v10 catalog because the public variant endpoint has no v11 release."),
         interpretation_table_output(ns("gtex_qtl")),
         shiny::plotOutput(ns("expression_plot"), height = 900)),
       bslib::nav_panel("Disease and traits",
@@ -252,7 +253,7 @@ interpretation_plot_expression <- function(expression, gene) {
   x <- x[order(x$median_tpm), , drop = FALSE]
   old <- graphics::par(mar = c(4.2, 17, 2.6, 1), cex = .8); on.exit(graphics::par(old))
   graphics::barplot(x$median_tpm, names.arg = x$tissue, horiz = TRUE, las = 1, border = NA,
-    col = ifelse(x$tissue == "Whole Blood", "#B7410E", "#7A9CC6"), xlab = "Median TPM (GTEx v10)",
+    col = ifelse(x$tissue == "Whole Blood", "#B7410E", "#7A9CC6"), xlab = "Median TPM (GTEx v11)",
     main = paste0(gene, " expression by tissue · whole blood in orange"))
   invisible(x)
 }

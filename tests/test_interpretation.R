@@ -445,9 +445,17 @@ http_gtex <- function(url, body = NULL, timeout = 45) {
   stop("unexpected URL ", url)
 }
 gtex <- interp_gtex(v, "ENSG1.4", http_gtex)
-stopifnot(gtex$variant_in_gtex, gtex$dataset == "gtex_v10", nrow(gtex$qtl) == 3L, gtex$qtl$tissue[[1L]] == "Lung", gtex$qtl$qtl_type[[2L]] == "sQTL",
+stopifnot(gtex$variant_in_gtex, gtex$dataset == "gtex_v11", gtex$variant_dataset == "gtex_v10", gtex$gencode_version == "v47",
+  nrow(gtex$qtl) == 3L, gtex$qtl$tissue[[1L]] == "Lung", gtex$qtl$qtl_type[[2L]] == "sQTL",
   "Whole Blood" %in% gtex$qtl$tissue, nrow(gtex$expression) == 3L, gtex$genes_mapped == "ENSG1.9",
   any(grepl("variantId=chr1_100_G_A_b38", gtex_urls, fixed = TRUE)), any(grepl("genomeBuild=GRCh38%2Fhg38", gtex_urls, fixed = TRUE)))
+# Every page uses the endpoint's own release; expression resolves a v47 gene ID.
+for (path in c("singleTissueEqtl", "singleTissueSqtl", "medianGeneExpression")) {
+  urls <- gtex_urls[grepl(path, gtex_urls, fixed = TRUE)]
+  stopifnot(length(urls) > 0L, all(grepl("datasetId=gtex_v11", urls, fixed = TRUE)))
+}
+stopifnot(all(grepl("datasetId=gtex_v10", gtex_urls[grepl("dataset/variant", gtex_urls, fixed = TRUE)], fixed = TRUE)),
+  all(grepl("gencodeVersion=v47", gtex_urls[grepl("reference/gene", gtex_urls, fixed = TRUE)], fixed = TRUE)))
 spec <- interp_tissue_specificity(gtex$expression)
 stopifnot(spec$top_tissue == "Liver", spec$whole_blood_rank == 3L, spec$tissues == 3L, spec$tau > 0, spec$tau < 1,
   !nrow(interp_tissue_specificity(NULL)))

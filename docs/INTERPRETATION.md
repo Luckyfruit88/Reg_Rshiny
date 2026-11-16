@@ -177,10 +177,13 @@ Pathways describe the gene. They do not show that the variant changes the pathwa
 |---|---|
 | Open Targets Platform (variant) | GWAS credible sets containing the variant, with its posterior probability and the top locus-to-gene prediction; eQTL, sQTL, pQTL and single-cell eQTL credible sets; ClinVar and other curated evidence; in-silico predictors; pharmacogenomics |
 | Open Targets Platform (gene) | Function, UniProt ID, Reactome pathways, Gene Ontology terms, loss-of-function constraint, most associated diseases |
-| GTEx v10 | Significant single-tissue eQTL and sQTL for the variant; median expression of the overlapped genes in each tissue |
+| GTEx v11 | Significant single-tissue eQTL and sQTL for the variant; median expression of the overlapped genes in each tissue, with gene IDs resolved against GENCODE v47 |
+| GTEx v10 variant catalog | Variant-existence lookup only: `dataset/variant` has no v11 release and rejects `gtex_v11`; QTL and expression requests use v11 |
 | MyVariant.info | ClinVar records with condition and review status, rsID, gnomAD frequency, REVEL |
 
 Each source fails on its own: the others are still shown and the failure is named. Up to 2,000 GWAS and 2,000 molecular-QTL credible sets are read per variant; the count is shown when more exist. `tau` in the Tissue line is the usual tissue-specificity index of the gene's GTEx medians (0 = even, 1 = one tissue).
+
+GTEx result metadata records `dataset` (QTL/expression), `variant_dataset` (catalog lookup), and `gencode_version` separately, including in the interpretation JSON download.
 
 ## Evidence summary
 

@@ -1128,7 +1128,7 @@ interp_open_targets_genes <- function(gene_ids, http = interp_http_json) {
 interp_gtex_url <- function(path, query) paste0("https://gtexportal.org/api/v2/", path, "?",
   paste(paste0(names(query), "=", vapply(query, function(v) utils::URLencode(as.character(v), reserved = TRUE), character(1))), collapse = "&"))
 
-interp_gtex_dataset <- function() "gtex_v10"
+interp_gtex_dataset <- function() "gtex_v11"
 
 interp_gtex_empty <- function() list(
   qtl = data.frame(qtl_type = character(), tissue = character(), gene = character(), gene_id = character(), phenotype = character(),
@@ -1152,9 +1152,11 @@ interp_gtex_all <- function(url, http) {
 interp_gtex <- function(variant, gene_ids = character(), http = interp_http_json) {
   out <- interp_gtex_empty()
   out$dataset <- interp_gtex_dataset(); out$variant_in_gtex <- NA; out$genes_mapped <- character()
+  # The variant catalog has no v11 release; QTL and expression do (GENCODE v47).
+  out$variant_dataset <- "gtex_v10"; out$gencode_version <- "v47"
   # GTEx only holds SNVs and short indels on chr1-22 and chrX.
   id <- paste0(paste(variant$chrom, variant$pos1, variant$ref, variant$alt, sep = "_"), "_b38")
-  found <- http(interp_gtex_url("dataset/variant", list(variantId = id, datasetId = out$dataset)))
+  found <- http(interp_gtex_url("dataset/variant", list(variantId = id, datasetId = out$variant_dataset)))
   out$variant_in_gtex <- length(interp_get(found, "data", default = list())) > 0L
   tissue <- function(x) gsub("_", " ", interp_get(x, "tissueSiteDetailId", default = ""))
   if (isTRUE(out$variant_in_gtex)) for (type in c("eQTL", "sQTL")) {
@@ -1169,7 +1171,7 @@ interp_gtex <- function(variant, gene_ids = character(), http = interp_http_json
   ids <- unique(interp_bare_gene(gene_ids)); ids <- head(ids[grepl("^ENSG[0-9]+$", ids)], 5L)
   for (g in ids) {
     # The expression endpoint needs the gene version of the GTEx release.
-    ref <- http(interp_gtex_url("reference/gene", list(geneId = g, gencodeVersion = "v39", genomeBuild = "GRCh38/hg38")))
+    ref <- http(interp_gtex_url("reference/gene", list(geneId = g, gencodeVersion = out$gencode_version, genomeBuild = "GRCh38/hg38")))
     versioned <- interp_get(ref, "data", 1L, "gencodeId", default = NA)
     if (is.na(versioned)) next
     out$genes_mapped <- c(out$genes_mapped, versioned)

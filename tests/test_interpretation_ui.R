@@ -147,6 +147,9 @@ stopifnot(inherits(tab, "datatables"), length(rendered) == 2L, identical(as.nume
   # A short table needs no search box or pager.
   tab$x$options$dom == "t", interpretation_datatable(data.frame(n = 1:11))$x$options$dom == "ftip")
 # Plots draw with and without data.
+stopifnot(grepl("GTEx v11 (public query)", ui, fixed = TRUE), grepl("GENCODE v47", ui, fixed = TRUE),
+  grepl("GTEx v10 catalog because the public variant endpoint has no v11 release", ui, fixed = TRUE),
+  grepl("Median TPM (GTEx v11)", paste(deparse(body(interpretation_plot_expression)), collapse = " "), fixed = TRUE))
 pair <- function(type, context, phenotype, slope, significant) data.frame(qtl_type = type, context = context, phenotype = phenotype,
   gene_id = "ENSG1.1", gene = "ONE", alt_frequency = .1, n_estimated = 500L, slope_alt = slope, slope_se = .1, p_nominal = 1e-9,
   p_threshold = 1e-5, significant = significant, pip = NA_real_, credible_set = "", tss_distance = 1L, stringsAsFactors = FALSE)
