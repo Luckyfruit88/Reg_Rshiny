@@ -1,10 +1,27 @@
 """Synthetic 1728 x 895 summary contract, real Chromium layout and screenshots."""
-import json, os
+import json, os, time
 from pathlib import Path
 from urllib.parse import urlsplit
+from urllib.request import urlopen
+from urllib.error import URLError
 from playwright.sync_api import sync_playwright
 root = Path(os.environ.get('SUMMARY_EVIDENCE_DIR', 'test-artifacts/evidence-summary'))
 root.mkdir(parents=True, exist_ok=True)
+test_url = os.environ.get('SUMMARY_TEST_URL', 'http://127.0.0.1:8765')
+assert urlsplit(test_url).hostname in ('127.0.0.1', 'localhost')
+# CI starts R and this process together. Wait for readiness, not a fixed delay;
+# startup failures still fail within 30 seconds and expose the Shiny log.
+deadline = time.monotonic() + 30
+while True:
+    try:
+        with urlopen(test_url, timeout=1) as response:
+            if response.status == 200:
+                break
+    except (URLError, TimeoutError, ConnectionError):
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Synthetic Shiny fixture did not become ready within 30 seconds')
+    time.sleep(.1)
+print('SUMMARY_FIXTURE_READY', flush=True)
 visible_js = r'''root => {
   let count = 0;
   const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -33,7 +50,7 @@ with sync_playwright() as p:
     page = browser.new_page(viewport={'width':1728, 'height':895}, device_scale_factor=1)
     external = []
     page.on('request', lambda r: external.append(r.url) if urlsplit(r.url).hostname not in ('127.0.0.1','localhost',None) else None)
-    page.goto(os.environ.get('SUMMARY_TEST_URL','http://127.0.0.1:8765'), wait_until='networkidle')
+    page.goto(test_url, wait_until='networkidle')
     page.locator('.regshiny-evidence-row').nth(6).wait_for()
     expected = json.loads(page.locator('#fixture-expected').text_content())
     report=[]
