@@ -26,27 +26,35 @@ The earlier level is displayed only from a captured all-Before summary after loc
 
 The splice-outcome source is computed here; when its calculation includes structured SpliceAI events its presentation step is SpliceAI. This describes the inputs to that computation, not proof that SpliceAI alone causes a biological effect. Gene-level pathway/expression background and overflow notices are context; not-run lines are notices.
 
-The shared visible-evidence constant is two. Only evidence-role items enter that preview. Findings are clamped to two lines and long evidence previews are ellipsized. One Full details disclosure reveals the full finding, unclamps the preview evidence and exposes every remaining line, including notices and context. No evidence text is deleted. The narrow-screen layout stacks the same fields.
+The shared preview count remains two. Evidence-role items are preferred; if a row has no evidence, its first two context items form the preview (for example Pathway). Notices always stay in details and never become links. A three-column row places the question/level/states in about 240 px, the finding and preview together in the remaining width, and sources in about 220 px. Findings and each preview wrap normally and clamp to two lines, with no character-width cap or nowrap. Full details is at the end of the body column; opening it unclamps the finding and previews and reveals the remaining items. State/source labels and baseline notes are at least 12 px. The narrow-screen layout stacks the same fields.
 
-The inline SVG uses the same source registry and metadata. Solid edges represent contributed evidence/context; dashed gray edges represent scoped steps not completed. Local sources and app computations have no external links. Each graph node has a title and text is bounded within its viewBox.
+The obsolete 2,600-visible-character limit is removed. The browser contract fixes the summary container at 1,260 px within a 1728×895 viewport: a long preview must expose at least 150 characters before truncation; a shorter preview must be complete; at most two previews, each at most two lines; total collapsed height at most 1,050 px.
+
+The inline SVG uses the same source registry and metadata. Solid edges represent contributed evidence/context; dashed gray edges represent scoped steps not completed. Private/cohort sources and app computations have no external links. Public-database local copies link to the same public entity when a verified template and identifier are available, and are marked local copy. Each graph node has a title and text is bounded within its viewBox. SVG height follows its width without a max-height squeeze. Generated numeric node IDs and pure CSS :has() selectors highlight a hovered/focused node's edges and fade the others; no JavaScript was added.
 
 ## Validated link templates
 
 Only whitelisted scalar public identifiers can enter URLs. Arbitrary caller fields (including sample, genotype and cohort fields) are ignored. Rendering makes no requests; external pages open only on a click, using `target="_blank" rel="noopener noreferrer"`.
 
-Checked 2026-11-16 with rs4680, 22_19963748_G_A and COMT / ENSG00000093010:
+Checked with rs4680, 22_19963748_G_A and COMT / ENSG00000093010:
 
-| Template | Test URL | HTTP | SPA | Enabled |
-|---|---|---:|---|---|
-| `https://platform.opentargets.org/variant/{variant}` | https://platform.opentargets.org/variant/22_19963748_G_A | 200 | yes | yes |
-| `https://platform.opentargets.org/target/{gene_id}` | https://platform.opentargets.org/target/ENSG00000093010 | 200 | yes | yes |
-| `https://gtexportal.org/home/snp/{rs_id}` | https://gtexportal.org/home/snp/rs4680 | 200 | yes | yes |
-| `https://gtexportal.org/home/gene/{gene}` | https://gtexportal.org/home/gene/COMT | 200 | yes | yes |
+| Template | Test URL | Verification | Result |
+|---|---|---|---|
+| `https://platform.opentargets.org/variant/{variant}` | https://platform.opentargets.org/variant/22_19963748_G_A | HTTP + entity API; user confirmed browser | 200; enabled (SPA) |
+| `https://platform.opentargets.org/target/{gene_id}` | https://platform.opentargets.org/target/ENSG00000093010 | HTTP + entity API | 200; enabled (SPA) |
+| `https://gtexportal.org/home/snp/{rs_id}` | https://gtexportal.org/home/snp/rs4680 | HTTP + entity API; user confirmed browser | 200; enabled for public and local-copy records (SPA) |
+| `https://gtexportal.org/home/gene/{gene}` | https://gtexportal.org/home/gene/COMT | HTTP + entity API | 200; enabled (SPA) |
+| `https://www.ebi.ac.uk/gwas/variants/{rs_id}` | https://www.ebi.ac.uk/gwas/variants/rs4680 | HTTP + user confirmed rs4680, position and COMT | 200; local copy |
+| `https://reactome.org/content/query?q={gene}` | https://reactome.org/content/query?q=COMT | HTTP + user confirmed Search results for COMT | 200; Reactome local-copy gene entries |
+| `https://www.ncbi.nlm.nih.gov/clinvar/variation/{clinvar_id}` | https://www.ncbi.nlm.nih.gov/clinvar/variation/VCV000017591 | E-utilities esummary, db=clinvar, id=17591 | 200; identity verified; page may present a bot challenge |
+| `https://cadd.gs.washington.edu/snv/GRCh38-v1.7/{cadd_variant}` | https://cadd.gs.washington.edu/snv/GRCh38-v1.7/22%3A19963748_G_A | Server-rendered variant, Direct link and matching CADD API | 200; local copy (SNVs only) |
 
-A SPA's HTTP 200 alone is not entity verification. The Open Targets GraphQL variant and target queries also returned the exact variant, rs4680, ENSG00000093010 and COMT. GTEx `dataset/variant?snpId=rs4680&datasetId=gtex_v10` and `reference/gene?geneId=COMT&gencodeVersion=v39` independently returned those entities. The SPA destinations still merit interactive browser review.
+GTEx local-copy links have a title explaining that the portal shows Release V10 and may differ from the local release (such as v11).
 
-The tested MyVariant hg38 endpoint returned 404 and is not a link template. ClinVar search returned 200 but did not verify a specific variation page, so no ClinVar template was added. Ensembl redirected to a SPA; it is not used for locally computed GENCODE evidence. Local TOPMed, FHS, GWAS Catalog copies, ClinVar copies, CADD, cohort LD/RNA and computed results remain unlinked.
+NCBI esummary returned accession VCV000017591, dbSNP 4680, gene COMT, GRCh38 position 19963748 and canonical SPDI `NC_000022.11:19963747:G:A`. The local ClinVar parser already reads the VCF ID column into `records$variation_id`; MyVariant supplies `clinvar_variant_id`. These identifiers now accompany the evidence metadata without changing the legacy summary strings. Both paths link to ClinVar. Missing or ambiguous IDs are not guessed. A VEP-cache record without an ID remains unlinked. MyVariant-only evidence (such as REVEL) is labelled via API rather than as an unlinked external page.
+
+MSigDB has no independently verified gene-direct template in this change and remains unlinked local copy. Aggregate pathway/ClinVar gene context without a single public entity identifier also remains unlinked. TOPMed, FHS, cohort LD/RNA, colocalisation, splice outcome and pQTL fine-mapping retain local/computed markers and no href. Every registered key/template, the notice exclusion, unsafe identifier rejection and both ClinVar ingestion paths have tests. No network request is made while rendering.
 
 ## Regression evidence
 
-The golden JSON contains only synthetic outputs captured at baseline e6d2ed6. The contract test runs the existing backend scenarios, compares legacy strings and checks metadata/text correspondence and step scope. UI tests cover per-variant cache restoration, failures, exact/missing baselines and the actual CSV download. Browser tests use seven synthetic rows (eight evidence items each, approximately 9,000 characters), measure at 1728×895, check visible text via character rectangles respecting clipping/closed details, and retain all text in the DOM. Screenshots and metrics are written under `test-artifacts/evidence-summary/`; no controlled data is used.
+The golden JSON contains only synthetic outputs captured at baseline e6d2ed6. The contract test runs the existing backend scenarios, compares legacy strings and checks metadata/text correspondence and step scope. UI tests cover per-variant cache restoration, failures, exact/missing baselines and the actual CSV download. Browser tests use seven synthetic rows (eight evidence items each, approximately 9,000 characters), measure in a fixed 1,260 px container at 1728×895, check each preview via character rectangles respecting two-line clipping, and retain all text in the DOM. The fixture includes a context-only Pathway row and all-before/all-after scenarios. Screenshots and metrics are written under `test-artifacts/evidence-summary-1260/`; no controlled data is used.
