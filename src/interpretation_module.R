@@ -155,7 +155,16 @@ interpretation_summary_cards <- function(summary, shown = 4L) {
 
 # Table placeholder of the tab. The class lets the stylesheet keep the "no rows"
 # message visible: as a fill item an empty table otherwise collapses to nothing.
-interpretation_table_output <- function(id) shiny::div(class = "regshiny-interp-table", DT::DTOutput(id))
+interpretation_deferred_tables <- function() list(
+  public = c("gtex_qtl", "gwas", "clinical", "pgx", "ot_qtl", "genes", "pathways", "go", "gene_diseases", "frequencies"),
+  spliceai = "spliceai_table", ld = "ld_table")
+
+interpretation_table_output <- function(id, defer = TRUE) {
+  # Keep each table in its original position; its DT output exists only after the action.
+  if (defer && sub("^.*-", "", id) %in% unlist(interpretation_deferred_tables(), use.names = FALSE))
+    return(shiny::uiOutput(paste0(id, "_slot")))
+  shiny::div(class = "regshiny-interp-table", DT::DTOutput(id))
+}
 
 # One table style for the tab: cells stay on one line (the table scrolls
 # sideways), long text gets a fixed-width wrapping block (cut at 160 characters,
@@ -503,6 +512,23 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
       x <- expr()
       shiny::validate(shiny::need(is.data.frame(x) && nrow(x) > 0L, empty))
       interpretation_datatable(x, digits)
+    })
+
+    # Completion is tracked per variant, including failed/empty answers. After an
+    # attempt, existing table renderers retain their original data and messages.
+    for (operation in names(interpretation_deferred_tables())) local({
+      action <- operation
+      prompt <- switch(action, public = "Use Query public databases to show this table.",
+        spliceai = "Use Run SpliceAI to show this table.", ld = "Use LD with GWAS variants to show this table.")
+      for (table in interpretation_deferred_tables()[[action]]) local({
+        table_id <- table
+        output[[paste0(table_id, "_slot")]] <- shiny::renderUI({
+          completed <- switch(action, public = !is.null(public_store()[[variant_key()]]),
+            spliceai = !is.null(spliceai_now()), ld = !is.null(ld_now()))
+          if (!completed) return(shiny::p(prompt))
+          interpretation_table_output(session$ns(table_id), defer = FALSE)
+        })
+      })
     })
 
     output$header <- shiny::renderUI({

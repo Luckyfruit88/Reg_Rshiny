@@ -115,10 +115,17 @@ writeLines(c(
 
 # Static pieces.
 ui <- as.character(interpretation_ui("x"))
-for (id in c("x-public", "x-spliceai", "x-summary", "x-consequences", "x-context_plot", "x-gwas", "x-pathways", "x-local_sources", "x-pqtl_table",
+for (id in c("x-public", "x-spliceai", "x-summary", "x-consequences", "x-context_plot", "x-gwas_slot", "x-pathways_slot", "x-local_sources", "x-pqtl_table",
   "x-pqtl_status", "x-gtex_local_plot_box", "x-gtex_local_genes", "x-gtex_local_pairs", "x-splice_protein", "x-splice_protein_status", "x-coloc_table",
   "x-coloc_status", "x-gene_disease", "x-gene_disease_status"))
   stopifnot(grepl(paste0('id="', id, '"'), ui, fixed = TRUE))
+# No deferred DT containers in the initial UI; local tables are still present.
+deferred <- interpretation_deferred_tables()
+stopifnot(length(unlist(deferred)) == 12L)
+for (id in unlist(deferred)) stopifnot(!grepl(paste0('id="x-', id, '"'), ui, fixed = TRUE),
+  grepl(paste0('id="x-', id, '_slot"'), ui, fixed = TRUE))
+for (id in c("clinvar", "catalog", "gtex_local_pairs", "linked_genes"))
+  stopifnot(grepl(paste0('id="x-', id, '"'), ui, fixed = TRUE))
 stopifnot(grepl("sends only the variant", ui, fixed = TRUE), grepl("not a clinical classification", ui, fixed = TRUE))
 cards <- as.character(interpretation_summary_cards(data.frame(question = c("Splicing", "Tissue"), level = c("Strong", "Not assessed"),
   finding = c("f1", "f2"), evidence = c("a | b", ""), sources = c("S", ""), stringsAsFactors = FALSE)))
@@ -195,6 +202,14 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   annotation_resources = function() list(release = release()), annotation_file = annotation_source, reference = list(fasta = "/synthetic.fa"),
   splice_file = splice_source, interpretation_file = fixture_backend, bin_ratio = reactive(bins()), junctions = NULL), {
   session$flushReact(); await(session, local_task, function() !is.null(local_now()))
+  check_slots <- function(ids, ready) {
+    for (id in ids) {
+      html <- html_text(output[[paste0(id, "_slot")]])
+      if (ready) stopifnot(grepl("datatables", html, fixed = TRUE), grepl(paste0('id="', session$ns(id), '"'), html, fixed = TRUE)) else
+        stopifnot(!grepl("datatables", html, fixed = TRUE), grepl("Use .* to show this table", html))
+    }
+  }
+  check_slots(unlist(deferred), FALSE)
   x <- isolate(local_now())
   stopifnot(x$variant$id == "chrT:161:A:G", x$consequences$consequence == "splice_donor_variant", x$consequences$hgvs_c == "c.40+1A>G",
     x$release == "48", x$reference_base == "A", is.null(x$annotation_error), !any(x$local$status$available))
@@ -250,6 +265,7 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   stopifnot(grepl("has not been run", html_text(output$spliceai_status), fixed = TRUE))
   # Nothing is sent until the user asks.
   session$setInputs(public = 1L); await(session, public_task, function() !is.null(public_now()))
+  check_slots(deferred$public, TRUE); check_slots(c(deferred$spliceai, deferred$ld), FALSE)
   p <- isolate(public_now()); s <- isolate(summary_now()); sent <- paste(readLines(request_log), collapse = "\n")
   stopifnot(p$open_targets$found, nrow(p$open_targets$gwas) == 1L, level(s, "Disease and traits") == "Strong", level(s, "Pathway") == "Context",
     level(s, "Tissue") == "Context", level(s, "Protein abundance (pQTL)") == "Strong", grepl("GTEx sQTL in 1 tissue", s$evidence[s$question == "Splicing"], fixed = TRUE),
@@ -258,6 +274,7 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
     !grepl("bin ratio|donor:|800|FHS", sent))
   stopifnot(grepl("Public sources queried", html_text(output$public_status), fixed = TRUE))
   session$setInputs(spliceai = 1L); await(session, spliceai_task, function() !is.null(spliceai_now()))
+  check_slots(deferred$spliceai, TRUE)
   sites <- isolate(spliceai_sites())
   stopifnot(nrow(sites) == 1L, sites$effect == "donor loss", sites$site_position == 161L, sites$annotated_site == "yes",
     grepl("bin ratio -0.400", sites$observed_in_cohort, fixed = TRUE), grepl("SYNTHETIC SpliceAI", html_text(output$spliceai_status), fixed = TRUE))
@@ -269,6 +286,7 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   # The LD scan runs on request with the record's own VCF and feeds Disease and the pQTL question.
   stopifnot(is.null(isolate(ld_now())), grepl("Not computed for this variant yet", html_text(output$ld_status), fixed = TRUE))
   session$setInputs(ld = 1L); await(session, ld_task, function() !is.null(ld_now()))
+  check_slots(deferred$ld, TRUE)
   l <- isolate(ld_now()); s <- isolate(summary_now())
   stopifnot(l$release == "/synthetic/chrT.vcf.gz", grepl("3 GWAS Catalog position(s) within 500 kb", html_text(output$ld_status), fixed = TRUE),
     grepl("1 variant(s) with r2 of at least 0.2, 1 of them at 0.8 or more", html_text(output$ld_status), fixed = TRUE),
@@ -277,6 +295,7 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   # A new variant starts clean: earlier public and SpliceAI answers are not shown for it.
   current(record(pos = 124L, ref = "G", alt = "A")); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 124L))
   stopifnot(is.null(isolate(public_now())), is.null(isolate(spliceai_now())), is.null(isolate(ld_now())))
+  check_slots(unlist(deferred), FALSE)
   s <- isolate(summary_now())
   stopifnot(isolate(local_now())$consequences$hgvs_p == "p.Ala2Thr", level(s, "Protein sequence") == "Moderate", level(s, "Disease and traits") == "Not assessed",
     # This position is in neither the scan nor GTEx.
@@ -288,6 +307,7 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   # Going back shows the answers already fetched for that variant.
   current(record()); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 161L))
   stopifnot(!is.null(isolate(public_now())), !is.null(isolate(spliceai_now())), !is.null(isolate(ld_now())))
+  check_slots(unlist(deferred), TRUE)
   # Changing the GENCODE release recomputes consequences and keeps the public answer.
   release("50"); session$flushReact(); await(session, local_task, function() identical(local_now()$release, "50"))
   stopifnot(!is.null(isolate(public_now())))
