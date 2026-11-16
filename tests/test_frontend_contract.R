@@ -1,6 +1,7 @@
 # Native-free structure and dynamic-input checks. No app startup or SCC access.
 suppressPackageStartupMessages(library(shiny))
 suppressPackageStartupMessages(library(bslib))
+source("src/plot_hover.R")
 source("src/annotation_module.R")
 source("src/splice_evidence_module.R")
 source("src/interpretation_module.R")
