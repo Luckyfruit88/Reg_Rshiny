@@ -44,8 +44,9 @@ shiny::testServer(display_test_server, {
 # Genotype association layout: download buttons keep their width, definitions fold
 # below the figures, and every fill-container table escapes DT's fixed 400px box.
 ui_html <- as.character(variant_ui("layout"))
-stopifnot(grepl('<div class="regshiny-actions">\\s*<a id="layout-download_bin_ratio"', ui_html),
-          grepl('<div class="regshiny-actions">\\s*<a id="layout-download_association"', ui_html),
+# HTML attribute order is not part of the contract (Shiny can emit id last).
+stopifnot(grepl('<div class="regshiny-actions">[[:space:]]*<a[[:space:]]+([^>]*[[:space:]])?id="layout-download_bin_ratio"', ui_html),
+          grepl('<div class="regshiny-actions">[[:space:]]*<a[[:space:]]+([^>]*[[:space:]])?id="layout-download_association"', ui_html),
           grepl('<summary>Bin ratio definitions, bin_check and status rules</summary>', ui_html, fixed = TRUE),
           grepl('<summary>Junction model status rules and column definitions</summary>', ui_html, fixed = TRUE),
           grepl('id="layout-association_plot_ui"', ui_html, fixed = TRUE))
