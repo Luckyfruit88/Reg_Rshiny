@@ -1,4 +1,7 @@
 # Golden outputs captured from e6d2ed6 using the existing synthetic scenarios.
+# The file holds every scenario in call order as run with bcftools, tabix and bgzip (75 on SCC);
+# an environment that skips the tool-backed scenarios produces a subset, which is why order is
+# compared only when the counts agree.
 # Compare legacy columns, and verify that metadata never reconstructs text.
 expressions <- parse("tests/test_interpretation.R")
 eval(expressions[[1L]], .GlobalEnv)
