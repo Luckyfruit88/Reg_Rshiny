@@ -4,6 +4,7 @@ missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing)) stop("ANNOTATION_UI_DEPENDENCIES_MISSING: ", paste(missing, collapse = ", "))
 suppressPackageStartupMessages(library(shiny))
 suppressPackageStartupMessages(library(bslib))
+source("src/plot_hover.R")
 source("src/annotation_module.R")
 future::plan(future::sequential)
 fixture_dir <- tempfile("regshiny-annotation-ui-"); dir.create(fixture_dir)

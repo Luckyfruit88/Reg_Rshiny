@@ -5,6 +5,7 @@ missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing)) stop("UI_TEST_DEPENDENCIES_MISSING: ", paste(missing, collapse = ", "))
 suppressPackageStartupMessages(library(shiny))
 suppressPackageStartupMessages(library(bslib))
+source("src/plot_hover.R")
 source("src/annotation_module.R")
 source("src/splice_evidence_module.R")
 source("src/interpretation_module.R")

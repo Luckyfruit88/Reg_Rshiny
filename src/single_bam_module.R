@@ -243,13 +243,14 @@ single_bam_server <- function(id, bundle, is_active = reactive(TRUE), annotation
       } else x$reference_note <- "A reference chromosome length is unavailable; annotation requires compatible reference metadata."
       x
     }), display_range = view_range, junctions = reactive(result()$junctions), allow_confirmation = TRUE)
-  output$depth_plot <- renderPlot({
+  output$depth_plot <- renderPlot(hover_send(session, "depth_plot", {
     r <- result(); w <- view_range()
     d <- r$depth[r$depth$pos1 >= w[[1L]] & r$depth$pos1 <= w[[2L]], , drop = FALSE]
     plot(d$pos1, d$depth, type = "l", xlab = paste0(r$config$chrom, " · 1-based position"),
          ylab = "Read depth", main = "Aligned-base coverage", ylim = c(0, max(1, d$depth)))
     abline(v = c(input$target_start, input$target_end), lty = 2)
-  })
+    hover_columns(d$pos1, paste0(r$config$chrom, ":", hover_position(d$pos1), "\ndepth ", hover_position(d$depth)))
+  }), execOnResize = TRUE)
   junction_rows <- reactive({
     r <- result(); j <- r$junctions
     j <- j[order(-j$score, j$intron_start1), , drop = FALSE]
@@ -259,7 +260,7 @@ single_bam_server <- function(id, bundle, is_active = reactive(TRUE), annotation
     j$target_class <- ifelse(exact, "exact", ifelse(near, "near", "other"))
     j
   })
-  output$junction_plot <- renderPlot({
+  output$junction_plot <- renderPlot(hover_send(session, "junction_plot", {
     w <- view_range(); j <- junction_rows()
     j <- head(j[j$intron_start1 >= w[[1L]] & j$intron_end1 <= w[[2L]], , drop = FALSE], 30L)
     plot(NA, xlim = w, ylim = c(0, 1.25), xlab = "Intron positions (1-based)", ylab = "",
@@ -273,10 +274,12 @@ single_bam_server <- function(id, bundle, is_active = reactive(TRUE), annotation
       lines(x, y, lwd = if (j$target_class[[i]] == "exact") 3 else 1,
             lty = if (j$target_class[[i]] == "near") 2 else 1)
       text(mean(range(x)), height + .035, labels = paste0(j$score[[i]], " ", j$strand[[i]]), cex = .8)
+      hover_arc(j$intron_start1[[i]], j$intron_end1[[i]], height, paste0("intron ", hover_position(j$intron_start1[[i]]), "-",
+        hover_position(j$intron_end1[[i]]), " (", j$strand[[i]], ")\n", hover_position(j$score[[i]]), " reads · ", j$target_class[[i]], " target match"))
     }
     mtext("Labels: reads per junction. Arc height = 0.2 + 0.75 x reads / largest arc shown, so heights change with the display window.",
           side = 3, line = .2, cex = .72)
-  })
+  }), execOnResize = TRUE)
   output$junction_table <- DT::renderDT({
     j <- junction_rows()
     j[, c("chrom", "intron_start1", "intron_end1", "strand", "score", "target_class",
