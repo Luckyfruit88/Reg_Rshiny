@@ -17,11 +17,13 @@ for (name in names(scenarios)) {
       if (present) stopifnot(grepl(interp_step_label(step, states[[step]]), html, fixed = TRUE))
     }
     for (line in f$items[[i]]$text) stopifnot(lengths(regmatches(html, gregexpr(htmltools::htmlEscape(line), html, fixed = TRUE))) == 1L)
-    # Every hidden notice/context remains in details; only evidence is in preview.
+    # Notices stay folded; context is a preview only when the row has no evidence.
     preview <- sub('.*<div class="regshiny-evidence-preview">', '', html)
     preview <- strsplit(preview, '</div>', fixed = TRUE)[[1L]][[1L]]
     stopifnot(lengths(regmatches(preview, gregexpr('<li ', preview, fixed = TRUE))) <= 2L,
-      !grepl('data-role="notice"', preview, fixed = TRUE), !grepl('data-role="context"', preview, fixed = TRUE))
+      !grepl('data-role="notice"', preview, fixed = TRUE))
+    if (any(f$items[[i]]$role == "evidence")) stopifnot(!grepl('data-role="context"', preview, fixed = TRUE)) else
+      stopifnot(grepl('data-role="context"', preview, fixed = TRUE))
   }
   graph <- as.character(interpretation_summary_map(f$summary, f$items, states, f$identifiers))
   stopifnot(lengths(regmatches(graph, gregexpr('class="regshiny-map-question ', graph, fixed = TRUE))) == 7L)
@@ -34,7 +36,7 @@ for (name in names(scenarios)) {
 f <- summary_stress_fixture(scenarios$after)
 for (key in interp_source_links()$key) {
   u <- interp_source_url(key, f$identifiers);stopifnot(!is.null(u))
-  item <- data.frame(source = key, gene_id = "ENSG00000093010", gene = "COMT")
+  item <- data.frame(source = key, gene_id = "ENSG00000093010", gene = "COMT", clinvar_id = "17591")
   html <- as.character(interpretation_evidence_link("a verified source", item, f$identifiers))
   stopifnot(grepl(htmltools::htmlEscape(u, attribute = TRUE), html, fixed = TRUE), grepl('target="_blank"', html, fixed = TRUE), grepl('rel="noopener noreferrer"', html, fixed = TRUE))
 }
