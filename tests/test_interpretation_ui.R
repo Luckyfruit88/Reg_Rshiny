@@ -124,14 +124,14 @@ stopifnot(grepl("sends only the variant", ui, fixed = TRUE), grepl("not a clinic
 cards <- as.character(interpretation_summary_cards(data.frame(question = c("Splicing", "Tissue"), level = c("Strong", "Not assessed"),
   finding = c("f1", "f2"), evidence = c("a | b", ""), sources = c("S", ""), stringsAsFactors = FALSE)))
 stopifnot(grepl("regshiny-level-strong", cards, fixed = TRUE), grepl("regshiny-level-unknown", cards, fixed = TRUE),
-  lengths(regmatches(cards, gregexpr("<li>", cards, fixed = TRUE))) == 2L, grepl("Sources: S", cards, fixed = TRUE))
+  lengths(regmatches(cards, gregexpr("<li ", cards, fixed = TRUE))) == 2L, grepl("Sources: S", cards, fixed = TRUE))
 stopifnot(interpretation_level_class("Moderate") == "regshiny-level-moderate", interpretation_level_class("Context") == "regshiny-level-context")
-# A long evidence list shows its first four lines; the rest open on request and nothing is dropped.
+# A long evidence list shows its first two evidence lines; the rest open on request and nothing is dropped.
 long_card <- as.character(interpretation_summary_cards(data.frame(question = "Splicing", level = "Strong", finding = "f", evidence = paste(paste0("line", 1:6), collapse = " | "),
   sources = "S", stringsAsFactors = FALSE)))
-stopifnot(lengths(regmatches(long_card, gregexpr("<li>", long_card, fixed = TRUE))) == 6L, grepl("<summary>2 more evidence lines</summary>", long_card, fixed = TRUE),
-  regexpr("line4", long_card, fixed = TRUE) < regexpr("<details", long_card, fixed = TRUE), regexpr("line5", long_card, fixed = TRUE) > regexpr("<details", long_card, fixed = TRUE),
-  !grepl("<details", cards, fixed = TRUE), grepl(".regshiny-evidence-more", css <- paste(readLines("www/frontend.css", warn = FALSE), collapse = "\n"), fixed = TRUE))
+stopifnot(lengths(regmatches(long_card, gregexpr("<li ", long_card, fixed = TRUE))) == 6L, grepl("<summary>Full details</summary>", long_card, fixed = TRUE),
+  regexpr("line2", long_card, fixed = TRUE) < regexpr("<details", long_card, fixed = TRUE), regexpr("line3", long_card, fixed = TRUE) > regexpr("<details", long_card, fixed = TRUE),
+  grepl("<details", cards, fixed = TRUE), grepl(".regshiny-evidence-more", css <- paste(readLines("www/frontend.css", warn = FALSE), collapse = "\n"), fixed = TRUE))
 css <- paste(readLines("www/frontend.css", warn = FALSE), collapse = "\n")
 for (cls in c("regshiny-level-strong", "regshiny-level-moderate", "regshiny-level-limited", "regshiny-level-none", "regshiny-level-context",
   "regshiny-level-unknown", "regshiny-evidence-row", "regshiny-cell-wrap", "regshiny-site-list")) stopifnot(grepl(paste0(".", cls), css, fixed = TRUE))
@@ -247,10 +247,15 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   stopifnot(grepl("regshiny-level-strong", html_text(output$summary), fixed = TRUE), !length(readLines(request_log)))
   # The reading names the best-supported effect and the steps that have not been run.
   stopifnot(grepl("Best-supported molecular effect: a change to the protein sequence and protein abundance and splicing (Strong)", html_text(output$reading), fixed = TRUE),
-    grepl("Not run yet: SpliceAI", html_text(output$reading), fixed = TRUE))
+    !grepl("Not run yet:", html_text(output$reading), fixed = TRUE),
+    grepl("Before Run SpliceAI", html_text(output$request_states), fixed = TRUE))
   stopifnot(grepl("has not been run", html_text(output$spliceai_status), fixed = TRUE))
+  stopifnot(all(isolate(request_states()) == "before"))
   # Nothing is sent until the user asks.
   session$setInputs(public = 1L); await(session, public_task, function() !is.null(public_now()))
+  stopifnot(identical(unname(isolate(request_states())), c("after", "before", "before")),
+    grepl("After Query public databases", html_text(output$summary), fixed = TRUE),
+    !is.null(isolate(baseline_now())), grepl("Not assessed before the on-request steps", html_text(output$summary), fixed = TRUE))
   p <- isolate(public_now()); s <- isolate(summary_now()); sent <- paste(readLines(request_log), collapse = "\n")
   stopifnot(p$open_targets$found, nrow(p$open_targets$gwas) == 1L, level(s, "Disease and traits") == "Strong", level(s, "Pathway") == "Context",
     level(s, "Tissue") == "Context", level(s, "Protein abundance (pQTL)") == "Strong", grepl("GTEx sQTL in 1 tissue", s$evidence[s$question == "Splicing"], fixed = TRUE),
@@ -267,9 +272,12 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
   await(session, protein_task, function() !is.null(protein_now()) && nrow(protein_now()$events) == 2L)
   stopifnot(identical(isolate(protein_now())$events$source, c("this cohort", "SpliceAI")), all(isolate(protein_now())$events$effect == "loss"), nrow(isolate(splice_protein_table())) == 1L,
     grepl("1 SpliceAI site(s);", html_text(output$splice_protein_status), fixed = TRUE))
+  protein_items <- isolate(summary_detail())$items[[1L]]
+  stopifnot(all(protein_items$step[protein_items$source == "splice_outcome"] == "spliceai"))
   # The LD scan runs on request with the record's own VCF and feeds Disease and the pQTL question.
   stopifnot(is.null(isolate(ld_now())), grepl("Not computed for this variant yet", html_text(output$ld_status), fixed = TRUE))
   session$setInputs(ld = 1L); await(session, ld_task, function() !is.null(ld_now()))
+  stopifnot(all(isolate(request_states()) == "after"))
   l <- isolate(ld_now()); s <- isolate(summary_now())
   stopifnot(l$release == "/synthetic/chrT.vcf.gz", grepl("3 GWAS Catalog position(s) within 500 kb", html_text(output$ld_status), fixed = TRUE),
     grepl("1 variant(s) with r2 of at least 0.2, 1 of them at 0.8 or more", html_text(output$ld_status), fixed = TRUE),
@@ -277,7 +285,7 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
     grepl("through LD (r2 >= 0.8 in this cohort): protein Z (rs88, r2 0.93)", s$evidence[s$question == "Protein abundance (pQTL)"], fixed = TRUE))
   # A new variant starts clean: earlier public and SpliceAI answers are not shown for it.
   current(record(pos = 124L, ref = "G", alt = "A")); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 124L))
-  stopifnot(is.null(isolate(public_now())), is.null(isolate(spliceai_now())), is.null(isolate(ld_now())))
+  stopifnot(is.null(isolate(public_now())), is.null(isolate(spliceai_now())), is.null(isolate(ld_now())), all(isolate(request_states()) == "before"))
   s <- isolate(summary_now())
   stopifnot(isolate(local_now())$consequences$hgvs_p == "p.Ala2Thr", level(s, "Protein sequence") == "Moderate", level(s, "Disease and traits") == "Not assessed",
     # This position is in neither the scan nor GTEx.
@@ -288,7 +296,17 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(current(
     !length(isolate(mechanism_now())), !grepl("What fine-mapping", html_text(output$reading), fixed = TRUE))
   # Going back shows the answers already fetched for that variant.
   current(record()); session$flushReact(); await(session, local_task, function() identical(local_now()$variant$pos1, 161L))
-  stopifnot(!is.null(isolate(public_now())), !is.null(isolate(spliceai_now())), !is.null(isolate(ld_now())))
+  stopifnot(!is.null(isolate(public_now())), !is.null(isolate(spliceai_now())), !is.null(isolate(ld_now())), all(isolate(request_states()) == "after"))
+  cached <- isolate(public_store()); failed <- cached; failed[[isolate(variant_key())]] <- simpleError("synthetic request failure")
+  public_store(failed); session$flushReact()
+  stopifnot(isolate(request_states())[["public"]] == "failed", grepl("Query public databases failed", html_text(output$summary), fixed = TRUE))
+  public_store(cached); session$flushReact()
+  stopifnot(isolate(request_states())[["public"]] == "after")
+  downloaded <- utils::read.csv(output$download_summary, stringsAsFactors = FALSE, check.names = FALSE)
+  stopifnot(identical(names(downloaded), c(names(isolate(summary_now())), "on_request_steps")),
+    all(grepl("public: after", downloaded$on_request_steps, fixed = TRUE)),
+    identical(isolate(export())$summary, isolate(summary_now())),
+    identical(names(isolate(export())), c("variant", "gencode_release", "reading", "mechanism", "summary", "gene_summary", "consequences", "local", "public", "spliceai", "gwas_ld", "rna_evidence", "splice_protein", "colocalisation")))
   # Changing the GENCODE release recomputes consequences and keeps the public answer.
   release("50"); session$flushReact(); await(session, local_task, function() identical(local_now()$release, "50"))
   stopifnot(!is.null(isolate(public_now())))
@@ -350,7 +368,7 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(record()
     grepl("will start as soon as they are in", html_text(output$public_status), fixed = TRUE))
   await(session, spliceai_task, function() !is.null(spliceai_now())); await(session, public_task, function() !is.null(public_now()))
   stopifnot(!inherits(isolate(spliceai_now()), "error"), isolate(public_now())$open_targets$found, is.null(isolate(pending$spliceai)),
-    is.null(isolate(pending$public)), grepl("T_161_A_G", paste(readLines(request_log), collapse = "\n"), fixed = TRUE))
+    is.null(isolate(pending$public)), is.null(isolate(baseline_now())), grepl("T_161_A_G", paste(readLines(request_log), collapse = "\n"), fixed = TRUE))
 })
 # A click whose variant was replaced before the lookup came back is dropped: nothing is sent for either variant.
 writeLines(character(), request_log)
