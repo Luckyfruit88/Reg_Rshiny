@@ -27,3 +27,20 @@ summary_stress_fixture <- function(states = interp_request_states()) {
   list(summary = do.call(rbind, rows), items = items,
     identifiers = list(chrom = "22", pos = 19963748L, ref = "G", alt = "A", rs_id = "rs4680", gene_id = "ENSG00000093010", gene = "COMT", clinvar_id = "17591"))
 }
+
+# Two gene-specific Reactome targets and one unlinked MSigDB source. Tissue
+# repeats MSigDB to check that node merging preserves all question connections.
+summary_source_dedup_fixture <- function() {
+  entries <- interp_evidence_combine(
+    interp_evidence_tag("COMT Reactome context", "reactome_local", role = "context", gene = "COMT"),
+    interp_evidence_tag("TXNRD2 Reactome context", "reactome_local", role = "context", gene = "TXNRD2"),
+    interp_evidence_tag("COMT MSigDB context", "msigdb", role = "context", gene = "COMT"),
+    interp_evidence_tag("TXNRD2 MSigDB context", "msigdb", role = "context", gene = "TXNRD2"))
+  items <- lapply(names(interp_summary_scope()), function(q) {
+    if (q == "Pathway") interp_evidence_items(entries) else if (q == "Tissue") interp_evidence_items(entries)[3:4, ] else interp_empty_evidence_items()
+  })
+  rows <- lapply(seq_along(items), function(i) data.frame(question = names(interp_summary_scope())[[i]], level = "Context",
+    finding = "Synthetic source identity check.", evidence = paste(items[[i]]$text, collapse = " | "),
+    sources = if (i == 6L) "Reactome; MSigDB" else if (i == 7L) "MSigDB" else "", stringsAsFactors = FALSE))
+  list(summary = do.call(rbind, rows), items = items, identifiers = list())
+}
