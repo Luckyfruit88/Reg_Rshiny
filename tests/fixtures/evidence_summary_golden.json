@@ -3521,6 +3521,108 @@
   [
     {
       "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Moderate",
+      "finding": "Associated with the blood level of 1 protein(s) in published GWAS; not fine-mapped to this variant (1 encoded elsewhere, trans).",
+      "evidence": "GWAS Catalog, through LD (r2 >= 0.8 in this cohort): protein x (rs150, r2 1.00, trans, PROTX is on chr2) | pQTL credible sets not consulted: public query not run",
+      "sources": "GWAS Catalog; cohort WGS genotypes"
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "Moderate",
+      "finding": "Linked to a disease, trait or drug response, without being singled out as causal.",
+      "evidence": "LD in this cohort: r2 >= 0.8 with 4 other reported variant(s) (4 association(s), 3 at p <= 5e-8) for level of protein x in blood; third allele trait; opposite trait; partial trait | GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "cohort WGS genotypes"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
+      "level": "Moderate",
+      "finding": "Changes the protein of PLUS (missense_variant p.Ala2Thr).",
+      "evidence": "missense_variant in PLUS, 1 of 2 transcripts | reference transcript TP: missense_variant c.4G>A p.Ala2Thr",
+      "sources": "GENCODE + reference (computed here)"
+    },
+    {
+      "question": "Protein abundance (pQTL)",
+      "level": "Not assessed",
+      "finding": "No protein-level association is reported at this position in the GWAS Catalog; pQTL credible sets need the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Splicing",
+      "level": "None found",
+      "finding": "No splicing effect predicted or observed.",
+      "evidence": "SpliceAI not run",
+      "sources": ""
+    },
+    {
+      "question": "Gene expression (eQTL)",
+      "level": "Not assessed",
+      "finding": "No expression-QTL source was available.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Disease and traits",
+      "level": "None found",
+      "finding": "No clinical record and no published GWAS association for this variant in ClinVar VCF 2099-02-03 (local), GWAS Catalog e999_r2099-01-01.",
+      "evidence": "LD in this cohort: no other reported variant with r2 >= 0.2 (0 GWAS Catalog variant(s) within 0 kb, 0 samples) | GWAS fine-mapping (credible sets) not consulted: public query not run",
+      "sources": "cohort WGS genotypes"
+    },
+    {
+      "question": "Pathway",
+      "level": "Not assessed",
+      "finding": "No pathway source was available for PLUS, PARTIAL; run the public query.",
+      "evidence": "",
+      "sources": ""
+    },
+    {
+      "question": "Tissue",
+      "level": "Not assessed",
+      "finding": "No tissue source was available or the variant is not a QTL in any of them.",
+      "evidence": "",
+      "sources": ""
+    }
+  ],
+  [
+    {
+      "question": "Protein sequence",
       "level": "Strong",
       "finding": "Predicted loss of the normal product: splice_donor_variant in SPL on the reference transcript.",
       "evidence": "splice_donor_variant in SPL, 1 of 1 transcripts | reference transcript SP: splice_donor_variant c.40+1G>A | through splicing (assumed outcome), SP: if the intron is retained (40 nt); 40 intronic nt kept; frameshift; nonsense-mediated decay predicted: the new stop codon ends 92 nt before the last exon junction, so the mRNA is expected to be degraded",
