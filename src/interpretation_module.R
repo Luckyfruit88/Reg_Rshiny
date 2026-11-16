@@ -207,9 +207,12 @@ interpretation_plot_contexts <- function(pairs, heterogeneity, max_panels = 4L, 
     graphics::segments(lo, y, hi, y, col = "#1F4E79", lwd = 2)
     significant <- x$significant %in% TRUE
     graphics::points(x$slope_alt, y, pch = ifelse(significant, 19, 21), col = "#1F4E79", bg = "white", cex = 1.5)
+    hover_points(x$slope_alt, y, paste0(contexts, "\nslope per ALT allele ", hover_number(x$slope_alt), " (95% CI ", hover_number(lo), " to ",
+      hover_number(hi), ")\n", ifelse(significant, "significant", "not significant")))
     if (is.data.frame(model) && nrow(model)) {
       m <- model[model$qtl_type == h$qtl_type[[i]] & model$phenotype == h$phenotype[[i]], , drop = FALSE]
       m <- m[match(contexts, m$context), , drop = FALSE]
+      hover_points(m$posterior_slope, y - .27, paste0(contexts, "\nmodel posterior slope ", hover_number(m$posterior_slope), " · ", m$call))
       graphics::points(m$posterior_slope, y - .27, pch = 23, col = "#B7410E", bg = ifelse(m$call %in% "effect", "#B7410E", ifelse(m$call %in% "predicted effect", "#F2B48C", "white")), cex = 1.05)
     }
     missing <- is.na(x$slope_alt)
@@ -240,6 +243,8 @@ interpretation_plot_gtex <- function(pairs, gene_id, release = "") {
   graphics::segments(lo, y, hi, y, col = ifelse(blood, "#B7410E", "#1F4E79"), lwd = 2)
   graphics::points(x$slope_alt, y, pch = ifelse(x$lead_variant %in% TRUE, 23, 19), col = ifelse(blood, "#B7410E", "#1F4E79"),
     bg = ifelse(blood, "#B7410E", "#1F4E79"), cex = 1.2)
+  hover_points(x$slope_alt, y, paste0(x$tissue, "\nslope per ALT allele ", hover_number(x$slope_alt), " (95% CI ", hover_number(lo), " to ",
+    hover_number(hi), ")", ifelse(x$lead_variant %in% TRUE, "\nthe gene's lead variant in this tissue", "")))
   name <- if (nzchar(x$gene[[1L]])) x$gene[[1L]] else sub("\\..*$", "", gene_id)
   graphics::title(main = trimws(paste0("GTEx ", release, " eQTL \u00b7 ", name, " \u00b7 ", nrow(x), " significant tissue(s)")), cex.main = 1, line = 2)
   graphics::mtext("bar: 95% CI; whole blood in orange; diamond: the gene's lead variant in that tissue", side = 3, line = .5, cex = .76, col = "#555555")
@@ -251,9 +256,11 @@ interpretation_plot_expression <- function(expression, gene) {
   if (!nrow(x)) { graphics::plot.new(); graphics::text(.5, .5, "Run the public query to see GTEx expression by tissue"); return(invisible(NULL)) }
   x <- x[order(x$median_tpm), , drop = FALSE]
   old <- graphics::par(mar = c(4.2, 17, 2.6, 1), cex = .8); on.exit(graphics::par(old))
-  graphics::barplot(x$median_tpm, names.arg = x$tissue, horiz = TRUE, las = 1, border = NA,
+  mid <- graphics::barplot(x$median_tpm, names.arg = x$tissue, horiz = TRUE, las = 1, border = NA,
     col = ifelse(x$tissue == "Whole Blood", "#B7410E", "#7A9CC6"), xlab = "Median TPM (GTEx v10)",
     main = paste0(gene, " expression by tissue · whole blood in orange"))
+  usr <- graphics::par("usr")
+  hover_rects(usr[[1L]], mid - .6, usr[[2L]], mid + .6, paste0(x$tissue, "\nmedian TPM ", hover_number(x$median_tpm)))
   invisible(x)
 }
 
@@ -648,8 +655,8 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     output$coloc_table <- show_table(function() { co <- coloc_now(); if (is.null(co) || inherits(co, "error")) NULL else co$pairs[, intersect(coloc_columns, names(co$pairs)), drop = FALSE] },
       empty = "No pair of traits to compare, or too few variants tested on both.")
     tissue_now <- shiny::reactive({ t <- local_part("tissue"); if (is.null(t) || !isTRUE(t$available)) NULL else t })
-    output$context_plot <- shiny::renderPlot(interpretation_plot_contexts(topmed_now()$pairs, heterogeneity_now(),
-      model = if (is.null(tissue_now())) NULL else tissue_now()$contexts), res = 96)
+    output$context_plot <- shiny::renderPlot(hover_send(session, "context_plot", interpretation_plot_contexts(topmed_now()$pairs, heterogeneity_now(),
+      model = if (is.null(tissue_now())) NULL else tissue_now()$contexts)), res = 96, execOnResize = TRUE)
     output$tissue_status <- shiny::renderUI({
       t <- tissue_now()
       if (is.null(t)) return(shiny::p("No trained cross-context model is readable from this session; the comparison above still applies."))
@@ -708,9 +715,9 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     })
     output$gtex_local_plot <- shiny::renderPlot({
       g <- gtex_local_now()
-      if (is.null(g) || !nrow(g$genes)) return(interpretation_plot_gtex(NULL, ""))
-      interpretation_plot_gtex(g$pairs, gtex_gene(), g$release)
-    }, res = 96)
+      hover_send(session, "gtex_local_plot", if (is.null(g) || !nrow(g$genes)) interpretation_plot_gtex(NULL, "") else
+        interpretation_plot_gtex(g$pairs, gtex_gene(), g$release))
+    }, res = 96, execOnResize = TRUE)
     output$gtex_local_genes <- show_table(function() { g <- gtex_local_now(); if (is.null(g)) NULL else g$genes },
       empty = "No significant GTEx cis-eQTL for this variant in the local copy.")
     output$gtex_local_pairs <- show_table(function() { g <- gtex_local_now(); if (is.null(g)) NULL else g$pairs },
@@ -742,9 +749,10 @@ interpretation_server <- function(id, variant, annotation_resources, annotation_
     })
     output$expression_plot <- shiny::renderPlot({
       p <- public_now()
-      if (is.null(p) || inherits(p$gtex, "error") || !nrow(p$gtex$expression)) return(interpretation_plot_expression(backend$interp_gtex_empty()$expression, ""))
-      interpretation_plot_expression(p$gtex$expression, expression_gene())
-    }, res = 96)
+      hover_send(session, "expression_plot", if (is.null(p) || inherits(p$gtex, "error") || !nrow(p$gtex$expression))
+        interpretation_plot_expression(backend$interp_gtex_empty()$expression, "") else
+        interpretation_plot_expression(p$gtex$expression, expression_gene()))
+    }, res = 96, execOnResize = TRUE)
     local_part <- function(name) {
       x <- local_now()
       if (is.null(x$local) || is.null(x$local[[name]]) || inherits(x$local[[name]], "error")) NULL else x$local[[name]]

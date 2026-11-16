@@ -4,6 +4,7 @@ needed <- c("shiny", "bslib", "DT", "future", "promises", "later", "jsonlite")
 missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing)) stop("INTERPRETATION_UI_DEPENDENCIES_MISSING: ", paste(missing, collapse = ", "))
 suppressPackageStartupMessages(library(shiny))
+source("src/plot_hover.R")
 source("src/interpretation_module.R")
 future::plan(future::sequential)
 # Local sources must not be read from a test: point every one at nothing.

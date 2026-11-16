@@ -77,6 +77,7 @@ annotation_plot_models <- function(annotation, window, selected = character(), m
     graphics::text(window[[1L]], row + .32, label, adj = c(0, .5), cex = .71)
     if (start > end) next
     graphics::segments(start, row, end, row, col = "#737373", lwd = 1)
+    hover_rects(start, row - .2, end, row + .2, paste0(label, "\ntranscript ", hover_position(tx$start1[[i]]), "-", hover_position(tx$end1[[i]])))
     if (end > start && tx$strand[[i]] %in% c("+", "-")) {
       centers <- seq(start, end, length.out = max(3L, min(12L, ceiling((end - start) / max(1, span) * 12L))))
       centers <- centers[centers > start & centers < end]
@@ -89,6 +90,8 @@ annotation_plot_models <- function(annotation, window, selected = character(), m
     # Base-centred like the coverage tiles: an exon covers start1 - 0.5 to end1 + 0.5.
     if (nrow(e)) graphics::rect(pmax(e$start1 - .5, window[[1L]]), row - .10,
       pmin(e$end1 + .5, window[[2L]]), row + .10, col = "#ADB5BD", border = "#697079")
+    if (nrow(e)) hover_rects(pmax(e$start1 - .5, window[[1L]]), row - .17, pmin(e$end1 + .5, window[[2L]]), row + .17,
+      paste0(label, "\nexon ", hover_position(e$start1), "-", hover_position(e$end1), " · ", hover_position(e$end1 - e$start1 + 1L), " bp"))
     if (!is.null(features) && nrow(features)) {
       f <- features[features$transcript_id == tx$transcript_id[[i]] & features$end1 >= window[[1L]] & features$start1 <= window[[2L]], , drop = FALSE]
       for (kind in c("UTR", "CDS")) {
@@ -213,8 +216,8 @@ annotation_server <- function(id, resources, annotation_file, region, display_ra
       shiny::plotOutput(session$ns("track"), height = max(180L, 46L * n + 85L))
     })
     output$track <- shiny::renderPlot({
-      annotation_plot_models(annotation(), display_range(), input$priority, marker(), 20L)
-    })
+      hover_send(session, "track", annotation_plot_models(annotation(), display_range(), input$priority, marker(), 20L))
+    }, execOnResize = TRUE)
     output$display_note <- shiny::renderUI({
       a <- annotation(); n <- nrow(selected_transcripts()); w <- display_range()
       visible <- sum(a$transcripts$end1 >= w[[1L]] & a$transcripts$start1 <= w[[2L]])

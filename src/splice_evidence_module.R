@@ -223,6 +223,14 @@ plot_splice_coverage <- function(model, annotation = NULL, normalized = NULL) {
       cex = .66, col = "#465B70")
   }
   graphics::abline(v = w$variant_pos1, lty = 2, col = "#B13F32", lwd = 1.5)
+  if (hover_recording()) {
+    rows <- vapply(seq_len(n), function(i) {
+      row <- d[d$genotype == g$genotype[[i]], , drop = FALSE]
+      paste0(g$genotype[[i]], ": ", hover_number(row$mean_depth[match(positions, row$pos1)]))
+    }, character(length(positions)))
+    hover_columns(positions, paste0(w$chrom, ":", hover_position(positions), ifelse(valid, paste0(" · reference ", letters), ""), "\n",
+      apply(matrix(rows, nrow = length(positions)), 1L, paste, collapse = "\n")))
+  }
   invisible(list(ymax = ymax, genotypes = g$genotype, positions = positions,
     boundary_positions = boundaries$pos1, boundary_edges = boundaries$edge, exon_source = attr(exon, "source"),
     primary_site = primary))
@@ -279,6 +287,9 @@ plot_splice_junction_support <- function(model, max_junctions = 12L) {
         text_col <- if (maximum > 0 && r$count_mean[[1L]] / maximum > .62) "white" else "#233544"
       } else { label <- "NA\nunavailable"; text_col <- "#676767" }
       graphics::text(k, y, label, cex = .79, col = text_col)
+      hover_rects(k - .47, y - .44, k + .47, y + .44, paste0(g$genotype[[k]], " · intron ", hover_position(start), "-", hover_position(end),
+        " (", strand, ")\n", if (known) paste0("mean ", hover_number(r$count_mean[[1L]]), " reads per successful sample\ntotal ",
+          hover_position(r$count_sum[[1L]]), " reads / ", r$analyzed_n[[1L]], " samples") else "unavailable"))
     }
   }
   graphics::mtext(paste0("Each cell: mean reads per successful sample (raw, per strand; not a rate), then total reads / successful N · color range 0-",
@@ -412,7 +423,8 @@ splice_evidence_server <- function(id, result, reference, model_source,
     })
     output$coverage_plot_ui <- shiny::renderUI(shiny::plotOutput(session$ns("coverage_plot"),
       height = max(340L, 160L + 105L * nrow(splice_called_groups(model())))))
-    output$coverage_plot <- shiny::renderPlot(plot_splice_coverage(model(), answer()$annotation, coverage_scale()))
+    output$coverage_plot <- shiny::renderPlot(hover_send(session, "coverage_plot",
+      plot_splice_coverage(model(), answer()$annotation, coverage_scale())), execOnResize = TRUE)
     output$motif_note <- shiny::renderUI({
       m <- model(); s <- splice_primary_site(m); b <- splice_rna_boundaries(m)
       shiny::tagList(
@@ -428,7 +440,8 @@ splice_evidence_server <- function(id, result, reference, model_source,
       n <- length(unique(splice_junction_display(model())$junction_id))
       shiny::plotOutput(session$ns("junction_plot"), height = max(230L, 120L + 62L * n))
     })
-    output$junction_plot <- shiny::renderPlot(plot_splice_junction_support(model()))
+    output$junction_plot <- shiny::renderPlot(hover_send(session, "junction_plot", plot_splice_junction_support(model())),
+      execOnResize = TRUE)
     output$junction_note <- shiny::renderUI({
       j <- splice_near_junctions(model()); all_n <- length(unique(j$junction_id))
       shiny::p("Showing ", min(12L, all_n), " of ", all_n,

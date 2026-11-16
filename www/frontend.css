@@ -131,3 +131,9 @@
 /* The few-sentence reading above the evidence cards. */
 .regshiny-reading { margin-bottom: 0.8rem; }
 .regshiny-reading p { margin: 0.2rem 0; }
+
+/* Hover read-out on plots (www/plot_hover.js). */
+.regshiny-tip { position: fixed; z-index: 3000; display: none; pointer-events: none; max-width: 30rem;
+  padding: .35rem .55rem; border-radius: .3rem; background: rgba(33, 37, 41, .94); color: #fff;
+  font-size: .8rem; line-height: 1.35; white-space: pre-line; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
+.regshiny-hoverable img { cursor: crosshair; }

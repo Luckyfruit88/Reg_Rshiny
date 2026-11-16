@@ -37,6 +37,7 @@ sys.source(job_source, envir = job_api)
 annotation_file <- normalizePath("src/annotation_backend.R", mustWork = TRUE)
 annotation_backend <- new.env(parent = globalenv())
 sys.source(annotation_file, envir = annotation_backend)
+source("src/plot_hover.R", local = TRUE)
 source("src/annotation_module.R", local = TRUE)
 splice_file <- normalizePath("src/splice_evidence_backend.R", mustWork = TRUE)
 splice_backend <- new.env(parent = globalenv())
@@ -73,7 +74,8 @@ bundle_annotation <- function(bundle, release) {
 ui <- page_navbar(
   title = "Reg_Shiny", id = "workspace", selected = "Data sources", fillable = FALSE,
   # The version query makes a browser fetch the stylesheet again after an update instead of using its cached copy.
-  header = tagList(tags$head(tags$link(rel = "stylesheet", href = paste0("frontend.css?v=", as.integer(file.info("www/frontend.css")$mtime)))),
+  header = tagList(tags$head(tags$link(rel = "stylesheet", href = paste0("frontend.css?v=", as.integer(file.info("www/frontend.css")$mtime))),
+      tags$script(src = paste0("plot_hover.js?v=", as.integer(file.info("www/plot_hover.js")$mtime)))),
     uiOutput("active_data_banner", role = "status", `aria-live` = "polite")),
   nav_panel("Data sources", data_sources_ui("sources")),
   nav_panel("WGS genotype comparison", uiOutput("variant_workspace")),

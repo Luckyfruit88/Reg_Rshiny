@@ -25,6 +25,7 @@ suites <- list(
   suite("tests/test_data_sources.R", full = "--native"),
   suite("tests/test_autoload.R", unit = "app.R"),
   suite("tests/test_frontend_contract.R"),
+  suite("tests/test_plot_hover.R"),
   suite("tests/test_variant_ui.R"),
   suite("tests/test_annotation_ui.R"),
   suite("tests/test_splice_evidence_ui.R"),

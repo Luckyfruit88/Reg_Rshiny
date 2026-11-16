@@ -186,6 +186,13 @@ plot_variant_depth <- function(r, cfg, cols, normalized = NULL) {
     graphics::lines(x$pos1, x$mean_depth, col = cols[[g]], lwd = 1.8)
   }
   graphics::abline(v = r$variant$pos1[[1L]], lty = 2, col = "gray40")
+  if (hover_recording()) {
+    positions <- sort(unique(d$pos1)); groups <- unique(as.character(d$genotype))
+    lines <- vapply(groups, function(g) paste0(g, ": ", hover_number(d$mean_depth[d$genotype == g][match(positions, d$pos1[d$genotype == g])])),
+      character(length(positions)))
+    hover_columns(positions, paste0(r$variant$chrom[[1L]], ":", hover_position(positions), "\n",
+      apply(matrix(lines, nrow = length(positions)), 1L, paste, collapse = "\n")))
+  }
   variant_draw_bin_sites(if (is.list(r$bin_ratio) && !isTRUE(r$bin_ratio$disabled)) r$bin_ratio$sites else NULL, graphics::par("usr")[[4L]])
   shown <- unique(as.character(d$genotype[finite]))
   graphics::legend("topright", legend = shown, col = cols[shown], lty = 1, lwd = 2, bty = "n", cex = .85)
@@ -248,6 +255,11 @@ plot_bin_ratio_by_dosage <- function(samples, association) {
     graphics::points(s$dosage + ((seq_len(nrow(s)) * .618034) %% 1 - .5) / 2, y, pch = 16, cex = .45,
                      col = grDevices::adjustcolor("gray30", .25))
     graphics::points(0:2, means, pch = 23, bg = "#d95f02", cex = 1.6)
+    # Per-sample read-outs carry the value only, never a sample identifier.
+    hover_points(s$dosage + ((seq_len(nrow(s)) * .618034) %% 1 - .5) / 2, y, paste0("ratio ", hover_number(s$ratio),
+      ifelse(s$ratio != y, " (drawn at the axis edge)", "")))
+    hover_points(0:2, means, paste0(sites[[i]], "\ndosage ", 0:2, " · mean ratio ", hover_number(means),
+      " · n = ", c(a$n_dosage0, a$n_dosage1, a$n_dosage2)))
     if (is.finite(a$beta)) {
       xbar <- sum(c(0, 1, 2) * c(a$n_dosage0, a$n_dosage1, a$n_dosage2)) / a$n
       ybar <- sum(c(a$n_dosage0, a$n_dosage1, a$n_dosage2) * ifelse(is.na(means), 0, means)) / a$n
@@ -279,6 +291,8 @@ plot_junction_rate_by_dosage <- function(association, top = 6L) {
       xaxt = "n", xlab = "ALT dosage", ylab = "Exact reads per 100 denominator reads")
     variant_fit_mtext(paste0(r$intron_start1, "-", r$intron_end1, " (", r$strands, ")"), 2.6, 1, font = 2L)
     graphics::axis(1, at = 0:2, labels = paste0(0:2, "\nn=", n), padj = .5)
+    hover_points(0:2, m, paste0(r$intron_start1, "-", r$intron_end1, " (", r$strands, ")\ndosage ", 0:2,
+      " · mean ", hover_number(m), " exact reads per 100 denominator reads · n = ", n))
     graphics::abline(a = ybar - r$beta * xbar, b = r$beta, col = "#7570b3", lwd = 2)
     variant_fit_mtext(paste0("beta ", signif(r$beta, 3), " · p ", variant_format_p_label(r$p_value)), 1.4)
     variant_fit_mtext(sub("^ · ", "", variant_perm_label(r, n_perm)), .3)
@@ -1405,7 +1419,8 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
             plotOutput(session$ns("bin_ratio_plot"), height = 360L * ceiling(nrow(a) / cols))),
         bslib::card_footer("Points: per-sample ratio of the samples Model 1 analyses (exon-bin reads at or above the threshold), jittered by ALT dosage. Diamonds: mean_ratio_dosage0/1/2. Line: fitted OLS slope (beta). Points beyond the 1st–99th percentile are drawn at the axis edge and counted above the panel. NO_DEPTH_DROP_AT_SITE: depth does not fall across that site, so its ratio reflects neighbouring sites (see bin_check)."))
     })
-    output$bin_ratio_plot <- renderPlot(plot_bin_ratio_by_dosage(bin_ratio_samples(), bin_ratio_association()))
+    output$bin_ratio_plot <- renderPlot(hover_send(session, "bin_ratio_plot",
+      plot_bin_ratio_by_dosage(bin_ratio_samples(), bin_ratio_association())), execOnResize = TRUE)
     output$association_plot_ui <- renderUI({
       a <- association()
       req(!inherits(a, "error"))
@@ -1418,8 +1433,8 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
     output$association_plot <- renderPlot({
       a <- association()
       req(!inherits(a, "error"))
-      plot_junction_rate_by_dosage(a)
-    })
+      hover_send(session, "association_plot", plot_junction_rate_by_dosage(a))
+    }, execOnResize = TRUE)
     output$download_bin_ratio <- downloadHandler("genotype_association_splice_site_bin_ratio.csv", function(file) {
       a <- bin_ratio_association()
       if (inherits(a, "error")) stop(conditionMessage(a))
@@ -1539,12 +1554,13 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
       out
     })
     depth_display <- reactive(switch(depth_scale(), normalized = normalized_depth(), relative = relative_depth(), NULL))
-    output$depth_plot <- renderPlot(plot_variant_depth(result(), launched_config(), group_colors(), depth_display()))
+    output$depth_plot <- renderPlot(hover_send(session, "depth_plot",
+      plot_variant_depth(result(), launched_config(), group_colors(), depth_display())), execOnResize = TRUE)
     output$junction_chart <- renderUI({
       n <- max(1L, nrow(result()$group_summary))
       plotOutput(session$ns("junction_plot"), height = max(260, 170 * n))
     })
-    output$junction_plot <- renderPlot({
+    output$junction_plot <- renderPlot(hover_send(session, "junction_plot", {
       r <- result(); gs <- r$group_summary; cfg <- launched_config(); cols <- group_colors()
       if (!nrow(gs)) { plot.new(); text(.5, .5, "No linked RNA genotype groups"); return(invisible(NULL)) }
       old <- par(mfrow = c(nrow(gs), 1L), mar = c(2.8, 4.1, 2.2, 2.1))
@@ -1567,6 +1583,9 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
           h <- .15 + .65 * j$count_mean[[k]] / max(1, r$junctions$count_mean, na.rm = TRUE)
           x <- j$intron_start1[[k]] + t * (j$intron_end1[[k]] - j$intron_start1[[k]])
           lines(x, 4 * h * t * (1 - t), col = cols[[g]], lwd = 1.6)
+          hover_arc(j$intron_start1[[k]], j$intron_end1[[k]], h, paste0(g, " · intron ", hover_position(j$intron_start1[[k]]), "-",
+            hover_position(j$intron_end1[[k]]), " (", j$strand[[k]], ")\nmean ", hover_number(j$count_mean[[k]]),
+            " reads per successful sample\ntotal ", hover_position(j$count_sum[[k]]), " reads / ", gs$analyzed_n[[i]], " samples"))
           # An arc that leaves the interval is cut at the plot edge: label the
           # visible part and name the boundary that lies outside.
           shown <- pmin(pmax(range(x), cfg$start1), cfg$end1); mid <- mean(shown)
@@ -1577,7 +1596,7 @@ variant_server <- function(id, backend, resources, backend_file, variant_file,
             if (length(leaves)) paste0(" (", paste(leaves, collapse = ", "), ")") else ""), cex = .7)
         }
       }
-    })
+    }), execOnResize = TRUE)
     output$rna_status <- renderUI({
       r <- result(); v <- r$variant
       is_snv <- identical(r$provenance$rna_evidence_status, "SNV_BASE_COUNTS")
