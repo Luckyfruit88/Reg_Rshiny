@@ -42,7 +42,7 @@ stopifnot(length(kept) <= 100L, kept[[1L]] == 1L, kept[[length(kept)]] == 10000L
 # Rectangles are normalised to lower-left / upper-right.
 marks <- hover_capture({ graphics::plot(0:1, 0:1); hover_rects(.8, .9, .2, .1, "cell") })
 stopifnot(marks[[1L]]$x0 < marks[[1L]]$x1, marks[[1L]]$y0 < marks[[1L]]$y1)
-stopifnot(identical(hover_number(c(1234.567, NA, 0)), c("1,235", "unavailable", "0")))
+stopifnot(identical(hover_number(c(1234.567, NA, 0, 26.9876, 15.08)), c("1,235", "unavailable", "0", "26.99", "15.08")))
 
 # Depth plot: one read-out per position listing every genotype; NA reads as unavailable.
 fixture <- list(variant = data.frame(chrom = "c", pos1 = 12L), bin_ratio = list(disabled = TRUE),

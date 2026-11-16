@@ -13,7 +13,8 @@ hover_recording <- function() is.list(.hover_state$groups)
 
 hover_number <- function(x, digits = 4L) {
   out <- rep("unavailable", length(x)); ok <- is.finite(x)
-  out[ok] <- format(signif(x[ok], digits), trim = TRUE, big.mark = ",")
+  # One value at a time: format() on a vector would pad every value to the same number of decimals.
+  out[ok] <- vapply(signif(x[ok], digits), format, character(1), trim = TRUE, big.mark = ",")
   out
 }
 hover_position <- function(x) format(x, big.mark = ",", trim = TRUE, scientific = FALSE)
