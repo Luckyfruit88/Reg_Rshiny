@@ -363,5 +363,9 @@ shiny::testServer(interpretation_server, args = list(variant = reactive(moving()
   for (i in 1:5) { later::run_now(.05); session$flushReact() }
   stopifnot(is.null(isolate(pending$public)), is.null(isolate(public_now())), !length(readLines(request_log)))
 })
+# The transcript-rule caveat is visible beside the predicted splice outcomes.
+stopifnot(grepl("NMD is a transcript-based rule inference, not a measured loss of expression.", ui, fixed = TRUE),
+  grepl("In validation, predicted decay did not distinguish ALT-lowered expression from in-frame changes.", ui, fixed = TRUE),
+  regexpr("NMD is a transcript-based", ui, fixed = TRUE) < regexpr('id="x-splice_protein"', ui, fixed = TRUE))
 unlink(scratch, recursive = TRUE)
 cat("interpretation UI tests passed\n")
